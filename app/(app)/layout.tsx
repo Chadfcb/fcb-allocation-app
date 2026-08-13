@@ -8,7 +8,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <div className="min-h-screen bg-black">
       <header className="border-b border-neutral-800 bg-neutral-950">
-        <div className="mx-auto flex max-w-[1600px] items-center justify-between px-4 py-3">
+        <div className="mx-auto flex max-w-[2200px] items-center justify-between px-4 py-3">
           <div className="flex items-center gap-6">
             <span className="font-semibold text-neutral-100">FCB Allocation</span>
             <nav className="flex gap-4 text-sm text-neutral-400">
@@ -45,7 +45,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-[1600px] px-4 py-6">{children}</main>
+      <main className="mx-auto max-w-[2200px] px-4 py-6">{children}</main>
     </div>
   );
 }
