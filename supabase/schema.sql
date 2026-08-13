@@ -22,16 +22,20 @@ create table if not exists profiles (
 -- First user in the system becomes admin automatically; everyone after is basic
 -- (an admin can promote others later from the Admin > Users screen).
 create or replace function handle_new_user()
-returns trigger as $$
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
 declare
   existing_count int;
 begin
-  select count(*) into existing_count from profiles;
-  insert into profiles (id, email, role)
+  select count(*) into existing_count from public.profiles;
+  insert into public.profiles (id, email, role)
   values (new.id, new.email, case when existing_count = 0 then 'admin' else 'basic' end);
   return new;
 end;
-$$ language plpgsql security definer;
+$$;
 
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
@@ -119,10 +123,26 @@ create table if not exists allocations (
   distributor_id uuid not null references distributors(id),
   product_id uuid not null references products(id),
   quantity numeric(12,2) not null default 0,
-  po_number text,
+  status_flag text check (status_flag in
+    ('dont_have','have_some','need_to_package','need_pakteks','need_labels','need_cans','old_product')),
   updated_by uuid references profiles(id),
   updated_at timestamptz not null default now(),
   unique (week_id, distributor_id, product_id)
+);
+
+-- =========================================================
+-- One PO number per distributor per week (used to find the order in Ekos).
+-- Separate table because the grain is (week, distributor) — one PO number
+-- total for that distributor's whole order, not one per product line.
+-- =========================================================
+create table if not exists distributor_pos (
+  id uuid primary key default gen_random_uuid(),
+  week_id uuid not null references weeks(id) on delete cascade,
+  distributor_id uuid not null references distributors(id),
+  po_number text,
+  updated_by uuid references profiles(id),
+  updated_at timestamptz not null default now(),
+  unique (week_id, distributor_id)
 );
 
 -- =========================================================
@@ -191,6 +211,7 @@ alter table weeks enable row level security;
 alter table inventory_snapshots enable row level security;
 alter table distributor_inventory enable row level security;
 alter table allocations enable row level security;
+alter table distributor_pos enable row level security;
 alter table audit_log enable row level security;
 
 -- Everyone signed in can read their own profile + see other profiles (for
@@ -222,6 +243,7 @@ create policy "weeks_write_admin" on weeks for all using (
 create policy "inventory_rw" on inventory_snapshots for all using (auth.uid() is not null);
 create policy "distributor_inventory_rw" on distributor_inventory for all using (auth.uid() is not null);
 create policy "allocations_rw" on allocations for all using (auth.uid() is not null);
+create policy "distributor_pos_rw" on distributor_pos for all using (auth.uid() is not null);
 
 -- Audit log: everyone can insert (so their own changes get logged); only
 -- admins can read/undo the full history.

@@ -80,6 +80,16 @@ export interface Allocation {
   distributor_id: string;
   product_id: string;
   quantity: number;
+  status_flag: StatusFlag;
+  updated_by: string | null;
+  updated_at: string;
+}
+
+// One PO number per distributor per week — used to find the order in Ekos.
+export interface DistributorPO {
+  id: string;
+  week_id: string;
+  distributor_id: string;
   po_number: string | null;
   updated_by: string | null;
   updated_at: string;

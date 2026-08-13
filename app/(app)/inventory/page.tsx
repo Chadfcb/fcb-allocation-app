@@ -9,11 +9,23 @@ import type {
   Distributor,
   InventoryWithRemaining,
   Allocation,
+  DistributorPO,
   StatusFlag,
 } from "@/lib/types/db";
-import { STATUS_FLAG_LABELS } from "@/lib/types/db";
+import { STATUS_FLAG_LABELS, STATUS_FLAG_COLORS } from "@/lib/types/db";
 
 type InventoryEditableField = "on_hand" | "unlabeled" | "to_be_packaged";
+
+type AllocationCell = {
+  id: string;
+  quantity: number;
+  status_flag: StatusFlag;
+};
+
+const currencyFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+});
 
 export default function InventoryPage() {
   const supabase = useMemo(() => createClient(), []);
@@ -22,8 +34,10 @@ export default function InventoryPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [distributors, setDistributors] = useState<Distributor[]>([]);
   const [inventory, setInventory] = useState<Record<string, InventoryWithRemaining>>({});
-  const [allocations, setAllocations] = useState<Record<string, number>>({}); // key: productId:distributorId
+  const [allocations, setAllocations] = useState<Record<string, AllocationCell>>({}); // key: productId:distributorId
+  const [pos, setPos] = useState<Record<string, DistributorPO>>({}); // key: distributorId
   const [userId, setUserId] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState<string | null>(null);
 
@@ -34,6 +48,15 @@ export default function InventoryPage() {
       data: { user },
     } = await supabase.auth.getUser();
     setUserId(user?.id ?? null);
+
+    if (user) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .maybeSingle();
+      setIsAdmin(profile?.role === "admin");
+    }
 
     const { data: weekData } = await supabase
       .from("weeks")
@@ -74,11 +97,26 @@ export default function InventoryPage() {
         .select("*")
         .eq("week_id", weekData.id);
 
-      const allocMap: Record<string, number> = {};
+      const allocMap: Record<string, AllocationCell> = {};
       (allocData as Allocation[] | null)?.forEach((row) => {
-        allocMap[`${row.product_id}:${row.distributor_id}`] = row.quantity;
+        allocMap[`${row.product_id}:${row.distributor_id}`] = {
+          id: row.id,
+          quantity: row.quantity,
+          status_flag: row.status_flag,
+        };
       });
       setAllocations(allocMap);
+
+      const { data: poData } = await supabase
+        .from("distributor_pos")
+        .select("*")
+        .eq("week_id", weekData.id);
+
+      const poMap: Record<string, DistributorPO> = {};
+      (poData as DistributorPO[] | null)?.forEach((row) => {
+        poMap[row.distributor_id] = row;
+      });
+      setPos(poMap);
     }
 
     setLoading(false);
@@ -96,11 +134,21 @@ export default function InventoryPage() {
   }
 
   function allocatedFor(productId: string) {
-    return distributors.reduce((sum, d) => sum + (allocations[`${productId}:${d.id}`] ?? 0), 0);
+    return distributors.reduce(
+      (sum, d) => sum + (allocations[`${productId}:${d.id}`]?.quantity ?? 0),
+      0
+    );
   }
 
   function remainingFor(productId: string) {
     return totalFor(productId) - allocatedFor(productId);
+  }
+
+  function orderValueFor(distributorId: string) {
+    return products.reduce((sum, p) => {
+      const qty = allocations[`${p.id}:${distributorId}`]?.quantity ?? 0;
+      return sum + (p.avg_price ?? 0) * qty;
+    }, 0);
   }
 
   async function handleInventoryChange(
@@ -164,69 +212,18 @@ export default function InventoryPage() {
     setSavingKey(null);
   }
 
-  async function handleStatusFlagChange(productId: string, value: StatusFlag) {
-    if (!week || !userId) return;
-    const existing = inventory[productId];
-    const oldValue = existing?.status_flag ?? null;
-
-    setInventory((prev) => ({
-      ...prev,
-      [productId]: {
-        ...(prev[productId] ?? {
-          id: "",
-          week_id: week.id,
-          product_id: productId,
-          on_hand: 0,
-          unlabeled: 0,
-          to_be_packaged: 0,
-          total: 0,
-          remaining: 0,
-          updated_by: userId,
-          updated_at: new Date().toISOString(),
-        }),
-        status_flag: value,
-      },
-    }));
-
-    const { data, error } = await supabase
-      .from("inventory_snapshots")
-      .upsert(
-        {
-          week_id: week.id,
-          product_id: productId,
-          on_hand: existing?.on_hand ?? 0,
-          unlabeled: existing?.unlabeled ?? 0,
-          to_be_packaged: existing?.to_be_packaged ?? 0,
-          status_flag: value,
-          updated_by: userId,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "week_id,product_id" }
-      )
-      .select()
-      .single();
-
-    if (!error && data) {
-      await logChange(supabase, {
-        weekId: week.id,
-        tableName: "inventory_snapshots",
-        recordId: data.id,
-        fieldName: "status_flag",
-        oldValue,
-        newValue: value,
-        changedBy: userId,
-      });
-    }
-  }
-
   async function handleAllocationChange(productId: string, distributorId: string, value: number) {
     if (!week || !userId) return;
     const key = `alloc:${productId}:${distributorId}`;
     setSavingKey(key);
 
     const mapKey = `${productId}:${distributorId}`;
-    const oldValue = allocations[mapKey] ?? 0;
-    setAllocations((prev) => ({ ...prev, [mapKey]: value }));
+    const existing = allocations[mapKey];
+    const oldValue = existing?.quantity ?? 0;
+    setAllocations((prev) => ({
+      ...prev,
+      [mapKey]: { id: existing?.id ?? "", quantity: value, status_flag: existing?.status_flag ?? null },
+    }));
 
     const { data, error } = await supabase
       .from("allocations")
@@ -236,6 +233,7 @@ export default function InventoryPage() {
           product_id: productId,
           distributor_id: distributorId,
           quantity: value,
+          status_flag: existing?.status_flag ?? null,
           updated_by: userId,
           updated_at: new Date().toISOString(),
         },
@@ -245,11 +243,147 @@ export default function InventoryPage() {
       .single();
 
     if (!error && data) {
+      setAllocations((prev) => ({
+        ...prev,
+        [mapKey]: { ...prev[mapKey], id: data.id },
+      }));
       await logChange(supabase, {
         weekId: week.id,
         tableName: "allocations",
         recordId: data.id,
         fieldName: "quantity",
+        oldValue,
+        newValue: value,
+        changedBy: userId,
+      });
+    }
+
+    setSavingKey(null);
+  }
+
+  async function handleAllocationFlagChange(
+    productId: string,
+    distributorId: string,
+    value: StatusFlag
+  ) {
+    if (!week || !userId) return;
+    const mapKey = `${productId}:${distributorId}`;
+    const key = `flag:${mapKey}`;
+    setSavingKey(key);
+
+    const existing = allocations[mapKey];
+    const oldValue = existing?.status_flag ?? null;
+    setAllocations((prev) => ({
+      ...prev,
+      [mapKey]: { id: existing?.id ?? "", quantity: existing?.quantity ?? 0, status_flag: value },
+    }));
+
+    const { data, error } = await supabase
+      .from("allocations")
+      .upsert(
+        {
+          week_id: week.id,
+          product_id: productId,
+          distributor_id: distributorId,
+          quantity: existing?.quantity ?? 0,
+          status_flag: value,
+          updated_by: userId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "week_id,product_id,distributor_id" }
+      )
+      .select()
+      .single();
+
+    if (!error && data) {
+      setAllocations((prev) => ({
+        ...prev,
+        [mapKey]: { ...prev[mapKey], id: data.id },
+      }));
+      await logChange(supabase, {
+        weekId: week.id,
+        tableName: "allocations",
+        recordId: data.id,
+        fieldName: "status_flag",
+        oldValue,
+        newValue: value,
+        changedBy: userId,
+      });
+    }
+
+    setSavingKey(null);
+  }
+
+  async function handleAvgPriceChange(productId: string, value: number) {
+    if (!userId) return;
+    const key = `price:${productId}`;
+    setSavingKey(key);
+
+    const existing = products.find((p) => p.id === productId);
+    const oldValue = existing?.avg_price ?? 0;
+    setProducts((prev) => prev.map((p) => (p.id === productId ? { ...p, avg_price: value } : p)));
+
+    const { error } = await supabase
+      .from("products")
+      .update({ avg_price: value })
+      .eq("id", productId);
+
+    if (!error) {
+      await logChange(supabase, {
+        weekId: week?.id ?? null,
+        tableName: "products",
+        recordId: productId,
+        fieldName: "avg_price",
+        oldValue,
+        newValue: value,
+        changedBy: userId,
+      });
+    }
+
+    setSavingKey(null);
+  }
+
+  async function handlePoNumberChange(distributorId: string, value: string) {
+    if (!week || !userId) return;
+    const key = `po:${distributorId}`;
+    setSavingKey(key);
+
+    const existing = pos[distributorId];
+    const oldValue = existing?.po_number ?? "";
+    setPos((prev) => ({
+      ...prev,
+      [distributorId]: {
+        id: existing?.id ?? "",
+        week_id: week.id,
+        distributor_id: distributorId,
+        po_number: value,
+        updated_by: userId,
+        updated_at: new Date().toISOString(),
+      },
+    }));
+
+    const { data, error } = await supabase
+      .from("distributor_pos")
+      .upsert(
+        {
+          week_id: week.id,
+          distributor_id: distributorId,
+          po_number: value,
+          updated_by: userId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "week_id,distributor_id" }
+      )
+      .select()
+      .single();
+
+    if (!error && data) {
+      setPos((prev) => ({ ...prev, [distributorId]: data as DistributorPO }));
+      await logChange(supabase, {
+        weekId: week.id,
+        tableName: "distributor_pos",
+        recordId: data.id,
+        fieldName: "po_number",
         oldValue,
         newValue: value,
         changedBy: userId,
@@ -273,12 +407,25 @@ export default function InventoryPage() {
 
   return (
     <div className="flex h-[calc(100vh-7rem)] flex-col space-y-3">
-      <div className="flex items-baseline justify-between">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <h1 className="text-lg font-semibold text-neutral-100">Inventory & Allocation</h1>
           <p className="text-sm text-neutral-400">{week.label}</p>
         </div>
         {savingKey && <p className="text-xs text-neutral-500">Saving…</p>}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-xs">
+        <span className="text-neutral-500">Cell colors (click a distributor cell&apos;s swatch):</span>
+        {Object.entries(STATUS_FLAG_LABELS).map(([value, label]) => (
+          <div key={value} className="flex items-center gap-1.5">
+            <span
+              className="h-3 w-3 shrink-0 rounded-sm"
+              style={{ backgroundColor: STATUS_FLAG_COLORS[value as keyof typeof STATUS_FLAG_COLORS] }}
+            />
+            <span className="text-neutral-400">{label}</span>
+          </div>
+        ))}
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-neutral-800 bg-neutral-950">
@@ -288,8 +435,8 @@ export default function InventoryPage() {
               <th className="sticky top-0 left-0 z-20 whitespace-nowrap bg-neutral-900 px-3 py-2 text-left">
                 Product
               </th>
-              <th className="sticky top-0 z-10 whitespace-nowrap bg-neutral-900 px-2 py-2 text-left">
-                Status
+              <th className="sticky top-0 z-10 whitespace-nowrap bg-neutral-900 px-2 py-2 text-right">
+                Avg Price
               </th>
               <th className="sticky top-0 z-10 whitespace-nowrap bg-neutral-900 px-2 py-2 text-right">
                 On Hand
@@ -316,6 +463,28 @@ export default function InventoryPage() {
                 Remaining
               </th>
             </tr>
+            <tr className="text-[10px] uppercase tracking-wide text-neutral-600">
+              <th className="sticky top-9 left-0 z-20 whitespace-nowrap bg-neutral-900 px-3 py-1.5 text-left font-normal">
+                PO # (Ekos)
+              </th>
+              <th className="sticky top-9 z-10 whitespace-nowrap bg-neutral-900 px-2 py-1.5"></th>
+              <th className="sticky top-9 z-10 whitespace-nowrap bg-neutral-900 px-2 py-1.5"></th>
+              <th className="sticky top-9 z-10 whitespace-nowrap bg-neutral-900 px-2 py-1.5"></th>
+              <th className="sticky top-9 z-10 whitespace-nowrap bg-neutral-900 px-2 py-1.5"></th>
+              <th className="sticky top-9 z-10 whitespace-nowrap bg-neutral-900 px-2 py-1.5"></th>
+              {distributors.map((d) => (
+                <th key={d.id} className="sticky top-9 z-10 whitespace-nowrap bg-neutral-900 px-2 py-1.5">
+                  <input
+                    type="text"
+                    placeholder="PO #"
+                    className="w-20 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-[11px] font-normal normal-case text-neutral-100"
+                    value={pos[d.id]?.po_number ?? ""}
+                    onChange={(e) => handlePoNumberChange(d.id, e.target.value)}
+                  />
+                </th>
+              ))}
+              <th className="sticky top-9 right-0 z-10 whitespace-nowrap bg-neutral-900 px-2 py-1.5"></th>
+            </tr>
           </thead>
           <tbody className="divide-y divide-neutral-900">
             {products.map((p) => {
@@ -325,21 +494,16 @@ export default function InventoryPage() {
                   <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 font-medium text-neutral-200 group-hover:bg-neutral-900">
                     {p.name}
                   </td>
-                  <td className="px-2 py-1.5">
-                    <select
-                      className="rounded border border-neutral-700 bg-neutral-900 px-1 py-0.5 text-xs text-neutral-300"
-                      value={inventory[p.id]?.status_flag ?? ""}
-                      onChange={(e) =>
-                        handleStatusFlagChange(p.id, (e.target.value || null) as StatusFlag)
-                      }
-                    >
-                      <option value="">—</option>
-                      {Object.entries(STATUS_FLAG_LABELS).map(([value, label]) => (
-                        <option key={value} value={value}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
+                  <td className="px-2 py-1.5 text-right">
+                    <input
+                      type="number"
+                      step="0.01"
+                      disabled={!isAdmin}
+                      className="w-16 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-neutral-100 disabled:opacity-60"
+                      value={p.avg_price ?? 0}
+                      title={isAdmin ? "Avg price per item" : "Only admins can edit price"}
+                      onChange={(e) => handleAvgPriceChange(p.id, Number(e.target.value) || 0)}
+                    />
                   </td>
                   {(["on_hand", "unlabeled", "to_be_packaged"] as const).map((field) => (
                     <td key={field} className="px-2 py-1.5 text-right">
@@ -356,18 +520,48 @@ export default function InventoryPage() {
                   <td className="px-2 py-1.5 text-right font-semibold text-neutral-300">
                     {totalFor(p.id)}
                   </td>
-                  {distributors.map((d) => (
-                    <td key={d.id} className="px-2 py-1.5 text-right">
-                      <input
-                        type="number"
-                        className="w-14 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-neutral-100"
-                        value={allocations[`${p.id}:${d.id}`] ?? 0}
-                        onChange={(e) =>
-                          handleAllocationChange(p.id, d.id, Number(e.target.value) || 0)
-                        }
-                      />
-                    </td>
-                  ))}
+                  {distributors.map((d) => {
+                    const cell = allocations[`${p.id}:${d.id}`];
+                    const flag = cell?.status_flag ?? null;
+                    const flagColor = flag ? STATUS_FLAG_COLORS[flag] : null;
+                    return (
+                      <td key={d.id} className="px-2 py-1.5 text-right align-top">
+                        <div className="flex flex-col items-end gap-0.5">
+                          <input
+                            type="number"
+                            className="w-16 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-neutral-100"
+                            value={cell?.quantity ?? 0}
+                            onChange={(e) =>
+                              handleAllocationChange(p.id, d.id, Number(e.target.value) || 0)
+                            }
+                          />
+                          <select
+                            className="w-16 rounded border-0 px-0.5 py-0 text-[9px] leading-tight"
+                            style={{
+                              backgroundColor: flagColor ?? "#262626",
+                              color: flagColor ? "#000000" : "#9ca3af",
+                            }}
+                            value={flag ?? ""}
+                            title={flag ? STATUS_FLAG_LABELS[flag] : "Color code this cell"}
+                            onChange={(e) =>
+                              handleAllocationFlagChange(
+                                p.id,
+                                d.id,
+                                (e.target.value || null) as StatusFlag
+                              )
+                            }
+                          >
+                            <option value="">—</option>
+                            {Object.entries(STATUS_FLAG_LABELS).map(([value, label]) => (
+                              <option key={value} value={value}>
+                                {label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </td>
+                    );
+                  })}
                   <td
                     className={`sticky right-0 z-10 bg-neutral-950 px-2 py-1.5 text-right font-semibold group-hover:bg-neutral-900 ${
                       remaining < 0 ? "text-red-400" : "text-neutral-200"
@@ -379,11 +573,30 @@ export default function InventoryPage() {
               );
             })}
           </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-neutral-800 text-xs font-semibold text-neutral-300">
+              <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-2">
+                Order Value
+              </td>
+              <td className="px-2 py-2"></td>
+              <td className="px-2 py-2"></td>
+              <td className="px-2 py-2"></td>
+              <td className="px-2 py-2"></td>
+              <td className="px-2 py-2"></td>
+              {distributors.map((d) => (
+                <td key={d.id} className="whitespace-nowrap px-2 py-2 text-right">
+                  {currencyFormatter.format(orderValueFor(d.id))}
+                </td>
+              ))}
+              <td className="sticky right-0 z-10 bg-neutral-950 px-2 py-2"></td>
+            </tr>
+          </tfoot>
         </table>
       </div>
       <p className="text-xs text-neutral-500">
         Remaining updates live as you type — it&apos;s Total minus everything allocated across
         distributors. A negative number means you&apos;ve allocated more than you actually have.
+        Click a distributor cell&apos;s small color bar to flag it against the legend above.
       </p>
     </div>
   );
