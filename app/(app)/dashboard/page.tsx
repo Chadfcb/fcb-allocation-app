@@ -1,7 +1,15 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getProfile } from "@/lib/getProfile";
 
 export default async function DashboardPage() {
+  const profile = await getProfile();
+  // Basic users' access is limited to Inventory & Allocation.
+  if (profile?.role !== "admin") {
+    redirect("/inventory");
+  }
+
   const supabase = await createClient();
 
   const { data: currentWeek } = await supabase

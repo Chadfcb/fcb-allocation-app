@@ -268,7 +268,12 @@ create policy "weeks_write_admin" on weeks for all using (
 -- Day-to-day data entry (inventory, distributor data, allocations):
 -- both admin and basic users can read/write — this is the weekly working data.
 create policy "inventory_rw" on inventory_snapshots for all using (auth.uid() is not null);
-create policy "distributor_inventory_rw" on distributor_inventory for all using (auth.uid() is not null);
+-- Distributor Data (on-hand qty / rate of sale from VIP/Ekos/distributor) is
+-- admin-only — Basic users' access is limited to the Inventory & Allocation
+-- grid (allocations, inventory_snapshots, distributor_pos) only.
+create policy "distributor_inventory_rw" on distributor_inventory for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
 create policy "allocations_rw" on allocations for all using (auth.uid() is not null);
 create policy "distributor_pos_rw" on distributor_pos for all using (auth.uid() is not null);
 

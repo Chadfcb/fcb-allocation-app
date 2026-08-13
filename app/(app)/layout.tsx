@@ -12,17 +12,17 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           <div className="flex items-center gap-6">
             <span className="font-semibold text-neutral-100">FCB Allocation</span>
             <nav className="flex gap-4 text-sm text-neutral-400">
-              <Link href="/dashboard" className="hover:text-white">
-                Dashboard
-              </Link>
               <Link href="/inventory" className="hover:text-white">
                 Inventory & Allocation
               </Link>
-              <Link href="/distributors" className="hover:text-white">
-                Distributor Data
-              </Link>
               {profile?.role === "admin" && (
                 <>
+                  <Link href="/dashboard" className="hover:text-white">
+                    Dashboard
+                  </Link>
+                  <Link href="/distributors" className="hover:text-white">
+                    Distributor Data
+                  </Link>
                   <Link href="/admin/weeks" className="hover:text-white">
                     Weeks
                   </Link>

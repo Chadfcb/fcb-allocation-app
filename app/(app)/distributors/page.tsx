@@ -4,18 +4,36 @@ import { useEffect, useMemo, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { logChange } from "@/lib/audit";
 import ImportDialog from "@/components/ImportDialog";
-import type { Week, Product, Distributor, DistributorInventory, InventorySource } from "@/lib/types/db";
+import type {
+  Week,
+  Product,
+  Distributor,
+  DistributorInventory,
+  InventorySource,
+  SectionDivider,
+} from "@/lib/types/db";
+
+type CombinedRow =
+  | { kind: "product"; item: Product }
+  | { kind: "divider"; item: SectionDivider };
+
+function rowSortOrder(row: CombinedRow): number {
+  if (row.kind === "divider") return row.item.sort_order;
+  return row.item.sort_order ?? Number.MAX_SAFE_INTEGER;
+}
 
 export default function DistributorsPage() {
   const supabase = useMemo(() => createClient(), []);
 
   const [week, setWeek] = useState<Week | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
+  const [dividers, setDividers] = useState<SectionDivider[]>([]);
   const [distributors, setDistributors] = useState<Distributor[]>([]);
   const [selectedDistributorId, setSelectedDistributorId] = useState<string>("");
   const [data, setData] = useState<Record<string, DistributorInventory>>({});
   const [targetWeeksOfSupply, setTargetWeeksOfSupply] = useState(2);
   const [userId, setUserId] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showImport, setShowImport] = useState(false);
 
@@ -27,6 +45,15 @@ export default function DistributorsPage() {
     } = await supabase.auth.getUser();
     setUserId(user?.id ?? null);
 
+    if (user) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .maybeSingle();
+      setIsAdmin(profile?.role === "admin");
+    }
+
     const { data: weekData } = await supabase
       .from("weeks")
       .select("*")
@@ -35,12 +62,19 @@ export default function DistributorsPage() {
       .maybeSingle();
     setWeek(weekData as Week | null);
 
+    // Same product list, order, and brand dividers as the Inventory &
+    // Allocation grid — whatever's archived/reordered/grouped there is
+    // reflected here too.
     const { data: productData } = await supabase
       .from("products")
       .select("*")
       .eq("active", true)
+      .order("sort_order", { ascending: true, nullsFirst: false })
       .order("name");
     setProducts((productData as Product[]) ?? []);
+
+    const { data: dividerData } = await supabase.from("section_dividers").select("*");
+    setDividers((dividerData as SectionDivider[]) ?? []);
 
     const { data: distributorData } = await supabase
       .from("distributors")
@@ -154,7 +188,21 @@ export default function DistributorsPage() {
     return Math.round(deficit * row.rate_of_sale);
   }
 
+  const combined: CombinedRow[] = [
+    ...products.map((p): CombinedRow => ({ kind: "product", item: p })),
+    ...dividers.map((d): CombinedRow => ({ kind: "divider", item: d })),
+  ].sort((a, b) => rowSortOrder(a) - rowSortOrder(b));
+
   if (loading) return <p className="text-sm text-neutral-400">Loading…</p>;
+
+  if (!isAdmin) {
+    return (
+      <p className="text-sm text-neutral-400">
+        Distributor Data is only available to admins. Basic users can enter allocations from the
+        Inventory & Allocation page.
+      </p>
+    );
+  }
 
   if (!week) {
     return <p className="text-sm text-neutral-400">No week has been started yet.</p>;
@@ -225,7 +273,17 @@ export default function DistributorsPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-900">
-            {products.map((p) => {
+            {combined.map((row) => {
+              if (row.kind === "divider") {
+                return (
+                  <tr key={`divider:${row.item.id}`} className="bg-neutral-900/70">
+                    <td colSpan={6} className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-300">
+                      {row.item.label}
+                    </td>
+                  </tr>
+                );
+              }
+              const p = row.item;
               const wos = weeksOfSupply(p.id);
               const suggestion = suggestedOrder(p.id);
               return (
