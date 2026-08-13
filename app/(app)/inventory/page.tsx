@@ -151,6 +151,8 @@ export default function InventoryPage() {
     }, 0);
   }
 
+  const grandOrderValue = distributors.reduce((sum, d) => sum + orderValueFor(d.id), 0);
+
   async function handleInventoryChange(
     productId: string,
     field: InventoryEditableField,
@@ -431,49 +433,70 @@ export default function InventoryPage() {
       <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-neutral-800 bg-neutral-950">
         <table className="w-full border-collapse text-sm">
           <thead>
-            <tr className="text-xs uppercase tracking-wide text-neutral-500">
-              <th className="sticky top-0 left-0 z-20 whitespace-nowrap bg-neutral-900 px-3 py-2 text-left">
+            <tr className="h-8 text-xs uppercase tracking-wide text-neutral-500">
+              <th className="sticky top-0 left-0 z-20 h-8 whitespace-nowrap bg-neutral-900 px-3 text-left">
                 Product
               </th>
-              <th className="sticky top-0 z-10 whitespace-nowrap bg-neutral-900 px-2 py-2 text-right">
-                Avg Price
+              <th className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right">
+                Avg Price ($)
               </th>
-              <th className="sticky top-0 z-10 whitespace-nowrap bg-neutral-900 px-2 py-2 text-right">
+              <th className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right">
                 On Hand
               </th>
-              <th className="sticky top-0 z-10 whitespace-nowrap bg-neutral-900 px-2 py-2 text-right">
+              <th className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right">
                 Unlabeled
               </th>
-              <th className="sticky top-0 z-10 whitespace-nowrap bg-neutral-900 px-2 py-2 text-right">
+              <th className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right">
                 To Package
               </th>
-              <th className="sticky top-0 z-10 whitespace-nowrap bg-neutral-900 px-2 py-2 text-right font-semibold">
+              <th className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right font-semibold">
                 Total
               </th>
               {distributors.map((d) => (
                 <th
                   key={d.id}
-                  className="sticky top-0 z-10 whitespace-nowrap bg-neutral-900 px-2 py-2 text-right"
+                  className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right"
                   style={{ color: d.color ?? undefined }}
                 >
                   {d.name}
                 </th>
               ))}
-              <th className="sticky top-0 right-0 z-10 whitespace-nowrap bg-neutral-900 px-2 py-2 text-right font-semibold">
+              <th className="sticky top-0 right-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right font-semibold">
                 Remaining
               </th>
             </tr>
-            <tr className="text-[10px] uppercase tracking-wide text-neutral-600">
-              <th className="sticky top-9 left-0 z-20 whitespace-nowrap bg-neutral-900 px-3 py-1.5 text-left font-normal">
+            <tr className="h-7 text-[10px] uppercase tracking-wide text-neutral-400">
+              <th className="sticky top-8 left-0 z-20 h-7 whitespace-nowrap bg-neutral-900 px-3 text-left font-semibold">
+                Order Value
+              </th>
+              <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+              <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+              <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+              <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+              <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+              {distributors.map((d) => (
+                <th
+                  key={d.id}
+                  className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2 text-right font-semibold text-neutral-200"
+                >
+                  {currencyFormatter.format(orderValueFor(d.id))}
+                </th>
+              ))}
+              <th className="sticky top-8 right-0 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2 text-right font-semibold text-neutral-100">
+                Total: {currencyFormatter.format(grandOrderValue)}
+              </th>
+            </tr>
+            <tr className="h-7 text-[10px] uppercase tracking-wide text-neutral-600">
+              <th className="sticky top-[60px] left-0 z-20 h-7 whitespace-nowrap bg-neutral-900 px-3 text-left font-normal">
                 PO # (Ekos)
               </th>
-              <th className="sticky top-9 z-10 whitespace-nowrap bg-neutral-900 px-2 py-1.5"></th>
-              <th className="sticky top-9 z-10 whitespace-nowrap bg-neutral-900 px-2 py-1.5"></th>
-              <th className="sticky top-9 z-10 whitespace-nowrap bg-neutral-900 px-2 py-1.5"></th>
-              <th className="sticky top-9 z-10 whitespace-nowrap bg-neutral-900 px-2 py-1.5"></th>
-              <th className="sticky top-9 z-10 whitespace-nowrap bg-neutral-900 px-2 py-1.5"></th>
+              <th className="sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+              <th className="sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+              <th className="sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+              <th className="sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+              <th className="sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
               {distributors.map((d) => (
-                <th key={d.id} className="sticky top-9 z-10 whitespace-nowrap bg-neutral-900 px-2 py-1.5">
+                <th key={d.id} className="sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2">
                   <input
                     type="text"
                     placeholder="PO #"
@@ -483,7 +506,7 @@ export default function InventoryPage() {
                   />
                 </th>
               ))}
-              <th className="sticky top-9 right-0 z-10 whitespace-nowrap bg-neutral-900 px-2 py-1.5"></th>
+              <th className="sticky top-[60px] right-0 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-900">
@@ -495,15 +518,22 @@ export default function InventoryPage() {
                     {p.name}
                   </td>
                   <td className="px-2 py-1.5 text-right">
-                    <input
-                      type="number"
-                      step="0.01"
-                      disabled={!isAdmin}
-                      className="w-16 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-neutral-100 disabled:opacity-60"
-                      value={p.avg_price ?? 0}
-                      title={isAdmin ? "Avg price per item" : "Only admins can edit price"}
-                      onChange={(e) => handleAvgPriceChange(p.id, Number(e.target.value) || 0)}
-                    />
+                    <div className="flex items-center justify-end gap-0.5">
+                      <span className="text-neutral-500">$</span>
+                      <input
+                        type="number"
+                        step="0.01"
+                        disabled={!isAdmin}
+                        className="w-16 rounded border border-amber-700/60 bg-neutral-900 px-1.5 py-0.5 text-right text-neutral-100 disabled:border-neutral-700 disabled:opacity-60"
+                        value={p.avg_price ?? 0}
+                        title={
+                          isAdmin
+                            ? "Set this product's average price per item — drives the Order Value totals above"
+                            : "Only admins can edit price"
+                        }
+                        onChange={(e) => handleAvgPriceChange(p.id, Number(e.target.value) || 0)}
+                      />
+                    </div>
                   </td>
                   {(["on_hand", "unlabeled", "to_be_packaged"] as const).map((field) => (
                     <td key={field} className="px-2 py-1.5 text-right">
@@ -588,24 +618,6 @@ export default function InventoryPage() {
               );
             })}
           </tbody>
-          <tfoot>
-            <tr className="border-t-2 border-neutral-800 text-xs font-semibold text-neutral-300">
-              <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-2">
-                Order Value
-              </td>
-              <td className="px-2 py-2"></td>
-              <td className="px-2 py-2"></td>
-              <td className="px-2 py-2"></td>
-              <td className="px-2 py-2"></td>
-              <td className="px-2 py-2"></td>
-              {distributors.map((d) => (
-                <td key={d.id} className="whitespace-nowrap px-2 py-2 text-right">
-                  {currencyFormatter.format(orderValueFor(d.id))}
-                </td>
-              ))}
-              <td className="sticky right-0 z-10 bg-neutral-950 px-2 py-2"></td>
-            </tr>
-          </tfoot>
         </table>
       </div>
       <p className="text-xs text-neutral-500">
