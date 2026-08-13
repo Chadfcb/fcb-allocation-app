@@ -11,6 +11,7 @@ import type {
   Allocation,
   DistributorPO,
   StatusFlag,
+  SectionDivider,
 } from "@/lib/types/db";
 import { STATUS_FLAG_LABELS, STATUS_FLAG_COLORS } from "@/lib/types/db";
 
@@ -22,6 +23,23 @@ type AllocationCell = {
   status_flag: StatusFlag;
 };
 
+type CombinedRow =
+  | { kind: "product"; item: Product }
+  | { kind: "divider"; item: SectionDivider };
+
+function rowKey(row: CombinedRow): string {
+  return row.kind === "product" ? `product:${row.item.id}` : `divider:${row.item.id}`;
+}
+
+function rowSortOrder(row: CombinedRow): number {
+  if (row.kind === "divider") return row.item.sort_order;
+  return row.item.sort_order ?? Number.MAX_SAFE_INTEGER;
+}
+
+function rowLabel(row: CombinedRow): string {
+  return row.kind === "product" ? row.item.name : `— ${row.item.label} —`;
+}
+
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -32,6 +50,7 @@ export default function InventoryPage() {
 
   const [week, setWeek] = useState<Week | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
+  const [dividers, setDividers] = useState<SectionDivider[]>([]);
   const [distributors, setDistributors] = useState<Distributor[]>([]);
   const [inventory, setInventory] = useState<Record<string, InventoryWithRemaining>>({});
   const [allocations, setAllocations] = useState<Record<string, AllocationCell>>({}); // key: productId:distributorId
@@ -41,8 +60,12 @@ export default function InventoryPage() {
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [newProductName, setNewProductName] = useState("");
+  const [newProductAfter, setNewProductAfter] = useState("__end__");
   const [addingProduct, setAddingProduct] = useState(false);
   const [addProductError, setAddProductError] = useState<string | null>(null);
+  const [newDividerLabel, setNewDividerLabel] = useState("");
+  const [newDividerAfter, setNewDividerAfter] = useState("__end__");
+  const [addingDivider, setAddingDivider] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -76,6 +99,9 @@ export default function InventoryPage() {
       .order("sort_order", { ascending: true, nullsFirst: false })
       .order("name");
     setProducts((productData as Product[]) ?? []);
+
+    const { data: dividerData } = await supabase.from("section_dividers").select("*");
+    setDividers((dividerData as SectionDivider[]) ?? []);
 
     const { data: distributorData } = await supabase
       .from("distributors")
@@ -156,6 +182,86 @@ export default function InventoryPage() {
   }
 
   const grandOrderValue = distributors.reduce((sum, d) => sum + orderValueFor(d.id), 0);
+
+  // Products and brand dividers share one ordering, sorted together so the
+  // grid can be grouped by brand like the original spreadsheet was.
+  const combined: CombinedRow[] = [
+    ...products.map((p): CombinedRow => ({ kind: "product", item: p })),
+    ...dividers.map((d): CombinedRow => ({ kind: "divider", item: d })),
+  ].sort((a, b) => rowSortOrder(a) - rowSortOrder(b));
+
+  // Used by the "insert after" pickers when adding a new product or divider,
+  // and by the up/down move buttons — finds the sort_order value that lands
+  // a row at a specific spot without having to renumber anything else.
+  function computeInsertSortOrder(afterKey: string): number {
+    const maxOrder = combined.reduce((max, r) => Math.max(max, rowSortOrder(r)), 0);
+    if (afterKey === "__end__") return maxOrder + 1;
+    if (afterKey === "__start__") {
+      const minOrder = combined.reduce((min, r) => Math.min(min, rowSortOrder(r)), maxOrder);
+      return minOrder - 1;
+    }
+    const idx = combined.findIndex((r) => rowKey(r) === afterKey);
+    if (idx === -1) return maxOrder + 1;
+    const anchor = rowSortOrder(combined[idx]);
+    const next = idx + 1 < combined.length ? rowSortOrder(combined[idx + 1]) : anchor + 1;
+    return (anchor + next) / 2;
+  }
+
+  async function handleMoveRow(index: number, direction: "up" | "down") {
+    if (!userId) return;
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= combined.length) return;
+
+    const row = combined[index];
+    const newOrder =
+      direction === "up"
+        ? (() => {
+            const above = targetIndex - 1 >= 0 ? rowSortOrder(combined[targetIndex - 1]) : rowSortOrder(combined[targetIndex]) - 1;
+            return (above + rowSortOrder(combined[targetIndex])) / 2;
+          })()
+        : (() => {
+            const below =
+              targetIndex + 1 < combined.length
+                ? rowSortOrder(combined[targetIndex + 1])
+                : rowSortOrder(combined[targetIndex]) + 1;
+            return (rowSortOrder(combined[targetIndex]) + below) / 2;
+          })();
+
+    if (row.kind === "product") {
+      setProducts((prev) => prev.map((p) => (p.id === row.item.id ? { ...p, sort_order: newOrder } : p)));
+      await supabase.from("products").update({ sort_order: newOrder }).eq("id", row.item.id);
+    } else {
+      setDividers((prev) => prev.map((d) => (d.id === row.item.id ? { ...d, sort_order: newOrder } : d)));
+      await supabase.from("section_dividers").update({ sort_order: newOrder }).eq("id", row.item.id);
+    }
+  }
+
+  async function handleAddDivider() {
+    const label = newDividerLabel.trim();
+    if (!label || !userId) return;
+    setAddingDivider(true);
+
+    const sortOrder = computeInsertSortOrder(newDividerAfter);
+    const { data, error } = await supabase
+      .from("section_dividers")
+      .insert({ label, sort_order: sortOrder })
+      .select()
+      .single();
+
+    if (!error && data) {
+      setDividers((prev) => [...prev, data as SectionDivider]);
+      setNewDividerLabel("");
+      setNewDividerAfter("__end__");
+    }
+    setAddingDivider(false);
+  }
+
+  async function handleDeleteDivider(dividerId: string) {
+    const { error } = await supabase.from("section_dividers").delete().eq("id", dividerId);
+    if (!error) {
+      setDividers((prev) => prev.filter((d) => d.id !== dividerId));
+    }
+  }
 
   async function handleInventoryChange(
     productId: string,
@@ -355,13 +461,13 @@ export default function InventoryPage() {
     setAddingProduct(true);
     setAddProductError(null);
 
-    // New products go to the very end of the list (highest sort_order + 1)
-    // rather than disturbing the existing brand-grouped order.
-    const nextSortOrder = products.reduce((max, p) => Math.max(max, p.sort_order ?? 0), 0) + 1;
+    // Defaults to the very end of the list, but can be placed anywhere via
+    // the "insert after" picker next to the input.
+    const sortOrder = computeInsertSortOrder(newProductAfter);
 
     const { data, error } = await supabase
       .from("products")
-      .insert({ name, active: true, sort_order: nextSortOrder })
+      .insert({ name, active: true, sort_order: sortOrder })
       .select()
       .single();
 
@@ -377,6 +483,7 @@ export default function InventoryPage() {
 
     setProducts((prev) => [...prev, data as Product]);
     setNewProductName("");
+    setNewProductAfter("__end__");
     setAddingProduct(false);
 
     await logChange(supabase, {
@@ -390,15 +497,8 @@ export default function InventoryPage() {
     });
   }
 
-  async function handleArchiveProduct(productId: string, productName: string) {
+  async function handleArchiveProduct(productId: string) {
     if (!userId) return;
-    if (
-      !window.confirm(
-        `Remove "${productName}" from the grid?\n\nThis archives it rather than permanently deleting it — its history stays in the audit log and past weeks' data, and an admin can bring it back later if needed.`
-      )
-    ) {
-      return;
-    }
 
     const key = `archive:${productId}`;
     setSavingKey(key);
@@ -586,25 +686,63 @@ export default function InventoryPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-900">
-            {products.map((p, index) => {
+            {combined.map((row, index) => {
+              const moveButtons = isAdmin && (
+                <span className="flex shrink-0 flex-col leading-none">
+                  <button
+                    onClick={() => handleMoveRow(index, "up")}
+                    disabled={index === 0}
+                    title="Move up"
+                    className="text-neutral-600 hover:text-neutral-200 disabled:opacity-30"
+                  >
+                    ▲
+                  </button>
+                  <button
+                    onClick={() => handleMoveRow(index, "down")}
+                    disabled={index === combined.length - 1}
+                    title="Move down"
+                    className="text-neutral-600 hover:text-neutral-200 disabled:opacity-30"
+                  >
+                    ▼
+                  </button>
+                </span>
+              );
+
+              if (row.kind === "divider") {
+                const d = row.item;
+                return (
+                  <tr key={rowKey(row)} className="bg-neutral-900/70">
+                    <td colSpan={7 + distributors.length} className="px-3 py-1.5">
+                      <div className="flex items-center gap-2">
+                        {moveButtons}
+                        <span className="text-xs font-semibold uppercase tracking-wide text-neutral-300">
+                          {d.label}
+                        </span>
+                        {isAdmin && (
+                          <button
+                            onClick={() => handleDeleteDivider(d.id)}
+                            title="Remove this divider"
+                            className="ml-auto shrink-0 rounded text-neutral-600 hover:text-red-400"
+                          >
+                            ✕
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              }
+
+              const p = row.item;
               const remaining = remainingFor(p.id);
-              // Tap handles sit at the very bottom, set apart with a divider —
-              // detected by name so it still works if more get added later.
-              const isTapHandle = /tap handle/i.test(p.name);
-              const previousIsTapHandle = index > 0 && /tap handle/i.test(products[index - 1].name);
-              const startsTapHandleSection = isTapHandle && !previousIsTapHandle;
               return (
-                <tr
-                  key={p.id}
-                  className={`group hover:bg-neutral-900/60 ${
-                    startsTapHandleSection ? "border-t-2 border-t-neutral-700" : ""
-                  }`}
-                >
+                <tr key={rowKey(row)} className="group hover:bg-neutral-900/60">
                   <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 font-medium text-neutral-200 group-hover:bg-neutral-900">
                     <div className="flex items-center gap-1.5">
+                      {moveButtons}
                       {isAdmin && (
                         <button
-                          onClick={() => handleArchiveProduct(p.id, p.name)}
+                          onClick={() => handleArchiveProduct(p.id)}
                           disabled={savingKey === `archive:${p.id}`}
                           title="Remove this product from the grid (archives it — doesn't erase history)"
                           className="shrink-0 rounded text-neutral-600 hover:text-red-400 disabled:opacity-50"
@@ -715,10 +853,10 @@ export default function InventoryPage() {
                 </tr>
               );
             })}
-            <tr className="border-t border-neutral-800">
-              <td className="sticky left-0 z-10 bg-neutral-950 px-3 py-2">
-                {isAdmin ? (
-                  <div className="flex items-center gap-2">
+            {isAdmin && (
+              <tr className="border-t border-neutral-800">
+                <td colSpan={7 + distributors.length} className="bg-neutral-950 px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <input
                       type="text"
                       placeholder="New product name…"
@@ -727,6 +865,20 @@ export default function InventoryPage() {
                       onChange={(e) => setNewProductName(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && handleAddProduct()}
                     />
+                    <span className="text-xs text-neutral-500">position:</span>
+                    <select
+                      className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-100"
+                      value={newProductAfter}
+                      onChange={(e) => setNewProductAfter(e.target.value)}
+                    >
+                      <option value="__start__">At the very top</option>
+                      <option value="__end__">At the end (bottom)</option>
+                      {combined.map((r) => (
+                        <option key={rowKey(r)} value={rowKey(r)}>
+                          After: {rowLabel(r)}
+                        </option>
+                      ))}
+                    </select>
                     <button
                       onClick={handleAddProduct}
                       disabled={addingProduct || !newProductName.trim()}
@@ -738,12 +890,46 @@ export default function InventoryPage() {
                       <span className="whitespace-nowrap text-xs text-red-400">{addProductError}</span>
                     )}
                   </div>
-                ) : (
-                  <span className="text-xs text-neutral-600">Only admins can add products</span>
-                )}
-              </td>
-              <td colSpan={6 + distributors.length} className="bg-neutral-950 px-2 py-2"></td>
-            </tr>
+                </td>
+              </tr>
+            )}
+            {isAdmin && (
+              <tr>
+                <td colSpan={7 + distributors.length} className="bg-neutral-950 px-3 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="New divider label (e.g. &quot;Sonoma Cider&quot;)…"
+                      className="w-56 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100"
+                      value={newDividerLabel}
+                      onChange={(e) => setNewDividerLabel(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleAddDivider()}
+                    />
+                    <span className="text-xs text-neutral-500">position:</span>
+                    <select
+                      className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-100"
+                      value={newDividerAfter}
+                      onChange={(e) => setNewDividerAfter(e.target.value)}
+                    >
+                      <option value="__start__">At the very top</option>
+                      <option value="__end__">At the end (bottom)</option>
+                      {combined.map((r) => (
+                        <option key={rowKey(r)} value={rowKey(r)}>
+                          After: {rowLabel(r)}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={handleAddDivider}
+                      disabled={addingDivider || !newDividerLabel.trim()}
+                      className="shrink-0 rounded-md border border-neutral-600 px-3 py-1 text-xs font-medium text-neutral-200 hover:bg-neutral-800 disabled:opacity-50"
+                    >
+                      {addingDivider ? "Adding…" : "+ Add Divider"}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

@@ -24,6 +24,15 @@ export interface Product {
   sort_order: number | null;
 }
 
+// A labeled break row in the Inventory & Allocation grid (e.g. "Sonoma
+// Cider") that groups products by brand, matching the original spreadsheet.
+// Shares the same sort_order numbering space as products.
+export interface SectionDivider {
+  id: string;
+  label: string;
+  sort_order: number;
+}
+
 export type WeekStatus = "draft" | "open" | "closed";
 
 export interface Week {

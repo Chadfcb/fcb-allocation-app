@@ -112,3 +112,12 @@ insert into products (name, sort_order) values
   ('FCB Can Tap Handle', 92),
   ('Speakeasy Tap Handle', 93)
 on conflict (name) do nothing;
+
+-- Brand dividers, matching the section-header rows from the original
+-- spreadsheet (plus a new "Tap Handles" divider grouping those two together
+-- at the very bottom).
+insert into section_dividers (label, sort_order) values
+  ('Full Circle Brewing', 0.5),
+  ('Sonoma Cider', 54.5),
+  ('Speakeasy Ales & Lagers', 65.5),
+  ('Tap Handles', 91.5);

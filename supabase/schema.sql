@@ -63,10 +63,27 @@ create table if not exists products (
   -- Chad's original spreadsheet grouped products by brand, e.g. FCB core
   -- products, then Sonoma Cider, then Speakeasy, with tap handles last).
   -- Lower sorts first; nulls sort last (new products default to the end).
-  sort_order integer,
+  -- Double precision (not integer) so a new/moved product can be slotted
+  -- in between two existing ones (e.g. 3.5 between 3 and 4) without having
+  -- to renumber everything else.
+  sort_order double precision,
   created_at timestamptz not null default now()
 );
 create unique index if not exists products_name_key on products (name);
+
+-- =========================================================
+-- Section dividers — labeled break rows in the Inventory & Allocation grid
+-- (e.g. "Sonoma Cider", "Speakeasy Ales & Lagers", "Tap Handles") so the
+-- product list can be grouped by brand like the original spreadsheet was.
+-- Shares the same sort_order numbering space as products so a divider can
+-- sit at any position relative to the products around it.
+-- =========================================================
+create table if not exists section_dividers (
+  id uuid primary key default gen_random_uuid(),
+  label text not null,
+  sort_order double precision not null,
+  created_at timestamptz not null default now()
+);
 
 -- =========================================================
 -- Weeks — one row per weekly cycle. previous_week_id links weeks together
@@ -217,6 +234,7 @@ alter table inventory_snapshots enable row level security;
 alter table distributor_inventory enable row level security;
 alter table allocations enable row level security;
 alter table distributor_pos enable row level security;
+alter table section_dividers enable row level security;
 alter table audit_log enable row level security;
 
 -- Everyone signed in can read their own profile + see other profiles (for
@@ -233,6 +251,10 @@ create policy "distributors_write_admin" on distributors for all using (
 );
 create policy "products_select" on products for select using (auth.uid() is not null);
 create policy "products_write_admin" on products for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+create policy "section_dividers_select" on section_dividers for select using (auth.uid() is not null);
+create policy "section_dividers_write_admin" on section_dividers for all using (
   exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
 );
 
