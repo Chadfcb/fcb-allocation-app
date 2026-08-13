@@ -40,6 +40,9 @@ export default function InventoryPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [newProductName, setNewProductName] = useState("");
+  const [addingProduct, setAddingProduct] = useState(false);
+  const [addProductError, setAddProductError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -345,6 +348,74 @@ export default function InventoryPage() {
     setSavingKey(null);
   }
 
+  async function handleAddProduct() {
+    const name = newProductName.trim();
+    if (!name || !userId) return;
+    setAddingProduct(true);
+    setAddProductError(null);
+
+    const { data, error } = await supabase
+      .from("products")
+      .insert({ name, active: true })
+      .select()
+      .single();
+
+    if (error) {
+      // Most common case: a product with this exact name already exists
+      // (products.name has a unique index).
+      setAddProductError(
+        error.code === "23505" ? "A product with that name already exists." : error.message
+      );
+      setAddingProduct(false);
+      return;
+    }
+
+    setProducts((prev) => [...prev, data as Product].sort((a, b) => a.name.localeCompare(b.name)));
+    setNewProductName("");
+    setAddingProduct(false);
+
+    await logChange(supabase, {
+      weekId: week?.id ?? null,
+      tableName: "products",
+      recordId: data.id,
+      fieldName: "name",
+      oldValue: null,
+      newValue: name,
+      changedBy: userId,
+    });
+  }
+
+  async function handleArchiveProduct(productId: string, productName: string) {
+    if (!userId) return;
+    if (
+      !window.confirm(
+        `Remove "${productName}" from the grid?\n\nThis archives it rather than permanently deleting it — its history stays in the audit log and past weeks' data, and an admin can bring it back later if needed.`
+      )
+    ) {
+      return;
+    }
+
+    const key = `archive:${productId}`;
+    setSavingKey(key);
+
+    const { error } = await supabase.from("products").update({ active: false }).eq("id", productId);
+
+    if (!error) {
+      setProducts((prev) => prev.filter((p) => p.id !== productId));
+      await logChange(supabase, {
+        weekId: week?.id ?? null,
+        tableName: "products",
+        recordId: productId,
+        fieldName: "active",
+        oldValue: true,
+        newValue: false,
+        changedBy: userId,
+      });
+    }
+
+    setSavingKey(null);
+  }
+
   async function handlePoNumberChange(distributorId: string, value: string) {
     if (!week || !userId) return;
     const key = `po:${distributorId}`;
@@ -515,7 +586,19 @@ export default function InventoryPage() {
               return (
                 <tr key={p.id} className="group hover:bg-neutral-900/60">
                   <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 font-medium text-neutral-200 group-hover:bg-neutral-900">
-                    {p.name}
+                    <div className="flex items-center gap-1.5">
+                      {isAdmin && (
+                        <button
+                          onClick={() => handleArchiveProduct(p.id, p.name)}
+                          disabled={savingKey === `archive:${p.id}`}
+                          title="Remove this product from the grid (archives it — doesn't erase history)"
+                          className="shrink-0 rounded text-neutral-600 hover:text-red-400 disabled:opacity-50"
+                        >
+                          ✕
+                        </button>
+                      )}
+                      <span>{p.name}</span>
+                    </div>
                   </td>
                   <td className="px-2 py-1.5 text-right">
                     <div className="flex items-center justify-end gap-0.5">
@@ -617,6 +700,35 @@ export default function InventoryPage() {
                 </tr>
               );
             })}
+            <tr className="border-t border-neutral-800">
+              <td className="sticky left-0 z-10 bg-neutral-950 px-3 py-2">
+                {isAdmin ? (
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="New product name…"
+                      className="w-56 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100"
+                      value={newProductName}
+                      onChange={(e) => setNewProductName(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleAddProduct()}
+                    />
+                    <button
+                      onClick={handleAddProduct}
+                      disabled={addingProduct || !newProductName.trim()}
+                      className="shrink-0 rounded-md bg-white px-3 py-1 text-xs font-medium text-black hover:bg-neutral-200 disabled:opacity-50"
+                    >
+                      {addingProduct ? "Adding…" : "+ Add Product"}
+                    </button>
+                    {addProductError && (
+                      <span className="whitespace-nowrap text-xs text-red-400">{addProductError}</span>
+                    )}
+                  </div>
+                ) : (
+                  <span className="text-xs text-neutral-600">Only admins can add products</span>
+                )}
+              </td>
+              <td colSpan={6 + distributors.length} className="bg-neutral-950 px-2 py-2"></td>
+            </tr>
           </tbody>
         </table>
       </div>
