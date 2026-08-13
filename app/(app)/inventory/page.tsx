@@ -525,22 +525,27 @@ export default function InventoryPage() {
                     const flag = cell?.status_flag ?? null;
                     const flagColor = flag ? STATUS_FLAG_COLORS[flag] : null;
                     return (
-                      <td key={d.id} className="px-2 py-1.5 text-right align-top">
-                        <div className="flex flex-col items-end gap-0.5">
+                      <td key={d.id} className="px-2 py-1.5 text-right">
+                        <div className="relative inline-block">
                           <input
                             type="number"
-                            className="w-16 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-neutral-100"
+                            className="w-16 rounded border border-neutral-700 px-1.5 py-0.5 text-right"
+                            style={{
+                              backgroundColor: flagColor ?? "#171717",
+                              color: flagColor ? "#000000" : "#f5f5f5",
+                            }}
                             value={cell?.quantity ?? 0}
                             onChange={(e) =>
                               handleAllocationChange(p.id, d.id, Number(e.target.value) || 0)
                             }
                           />
+                          {/* Tiny corner swatch — click to color-code this cell. Kept small and
+                              overlapping the input's corner instead of a separate control, since
+                              the cell itself (the input's background) is what shows the color. */}
                           <select
-                            className="w-16 rounded border-0 px-0.5 py-0 text-[9px] leading-tight"
-                            style={{
-                              backgroundColor: flagColor ?? "#262626",
-                              color: flagColor ? "#000000" : "#9ca3af",
-                            }}
+                            aria-label="Color code this cell"
+                            className="absolute -right-1 -top-1 h-3 w-3 cursor-pointer appearance-none overflow-hidden rounded-full border border-neutral-950 p-0 text-[0px] leading-none"
+                            style={{ backgroundColor: flagColor ?? "#525252" }}
                             value={flag ?? ""}
                             title={flag ? STATUS_FLAG_LABELS[flag] : "Color code this cell"}
                             onChange={(e) =>
@@ -551,7 +556,7 @@ export default function InventoryPage() {
                               )
                             }
                           >
-                            <option value="">—</option>
+                            <option value="">— (no color)</option>
                             {Object.entries(STATUS_FLAG_LABELS).map(([value, label]) => (
                               <option key={value} value={value}>
                                 {label}
@@ -596,7 +601,8 @@ export default function InventoryPage() {
       <p className="text-xs text-neutral-500">
         Remaining updates live as you type — it&apos;s Total minus everything allocated across
         distributors. A negative number means you&apos;ve allocated more than you actually have.
-        Click a distributor cell&apos;s small color bar to flag it against the legend above.
+        Click the small dot in the corner of a distributor cell to color-code it against the
+        legend above — the cell itself changes color.
       </p>
     </div>
   );
