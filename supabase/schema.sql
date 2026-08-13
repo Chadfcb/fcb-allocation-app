@@ -59,6 +59,11 @@ create table if not exists products (
   sku text,
   avg_price numeric(10,2),
   active boolean not null default true,
+  -- Controls display order in the Inventory & Allocation grid (matches how
+  -- Chad's original spreadsheet grouped products by brand, e.g. FCB core
+  -- products, then Sonoma Cider, then Speakeasy, with tap handles last).
+  -- Lower sorts first; nulls sort last (new products default to the end).
+  sort_order integer,
   created_at timestamptz not null default now()
 );
 create unique index if not exists products_name_key on products (name);

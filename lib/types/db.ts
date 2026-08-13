@@ -21,6 +21,7 @@ export interface Product {
   sku: string | null;
   avg_price: number | null;
   active: boolean;
+  sort_order: number | null;
 }
 
 export type WeekStatus = "draft" | "open" | "closed";

@@ -73,6 +73,7 @@ export default function InventoryPage() {
       .from("products")
       .select("*")
       .eq("active", true)
+      .order("sort_order", { ascending: true, nullsFirst: false })
       .order("name");
     setProducts((productData as Product[]) ?? []);
 
@@ -354,9 +355,13 @@ export default function InventoryPage() {
     setAddingProduct(true);
     setAddProductError(null);
 
+    // New products go to the very end of the list (highest sort_order + 1)
+    // rather than disturbing the existing brand-grouped order.
+    const nextSortOrder = products.reduce((max, p) => Math.max(max, p.sort_order ?? 0), 0) + 1;
+
     const { data, error } = await supabase
       .from("products")
-      .insert({ name, active: true })
+      .insert({ name, active: true, sort_order: nextSortOrder })
       .select()
       .single();
 
@@ -370,7 +375,7 @@ export default function InventoryPage() {
       return;
     }
 
-    setProducts((prev) => [...prev, data as Product].sort((a, b) => a.name.localeCompare(b.name)));
+    setProducts((prev) => [...prev, data as Product]);
     setNewProductName("");
     setAddingProduct(false);
 
@@ -581,10 +586,20 @@ export default function InventoryPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-900">
-            {products.map((p) => {
+            {products.map((p, index) => {
               const remaining = remainingFor(p.id);
+              // Tap handles sit at the very bottom, set apart with a divider —
+              // detected by name so it still works if more get added later.
+              const isTapHandle = /tap handle/i.test(p.name);
+              const previousIsTapHandle = index > 0 && /tap handle/i.test(products[index - 1].name);
+              const startsTapHandleSection = isTapHandle && !previousIsTapHandle;
               return (
-                <tr key={p.id} className="group hover:bg-neutral-900/60">
+                <tr
+                  key={p.id}
+                  className={`group hover:bg-neutral-900/60 ${
+                    startsTapHandleSection ? "border-t-2 border-t-neutral-700" : ""
+                  }`}
+                >
                   <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 font-medium text-neutral-200 group-hover:bg-neutral-900">
                     <div className="flex items-center gap-1.5">
                       {isAdmin && (
