@@ -90,7 +90,7 @@ create table if not exists inventory_snapshots (
   unlabeled numeric(12,2) not null default 0,
   to_be_packaged numeric(12,2) not null default 0,
   status_flag text check (status_flag in
-    ('dont_have','have_some','need_to_package','need_pakteks','need_labels','need_cans','old_product')),
+    ('good_confirmed','dont_have','have_some','need_to_package','need_pakteks','need_labels','need_cans','old_product')),
   updated_by uuid references profiles(id),
   updated_at timestamptz not null default now(),
   unique (week_id, product_id)
@@ -124,7 +124,7 @@ create table if not exists allocations (
   product_id uuid not null references products(id),
   quantity numeric(12,2) not null default 0,
   status_flag text check (status_flag in
-    ('dont_have','have_some','need_to_package','need_pakteks','need_labels','need_cans','old_product')),
+    ('good_confirmed','dont_have','have_some','need_to_package','need_pakteks','need_labels','need_cans','old_product')),
   updated_by uuid references profiles(id),
   updated_at timestamptz not null default now(),
   unique (week_id, distributor_id, product_id)

@@ -36,6 +36,7 @@ export interface Week {
 }
 
 export type StatusFlag =
+  | "good_confirmed"
   | "dont_have"
   | "have_some"
   | "need_to_package"
@@ -111,6 +112,7 @@ export interface AuditLogEntry {
 }
 
 export const STATUS_FLAG_LABELS: Record<NonNullable<StatusFlag>, string> = {
+  good_confirmed: "Good / Confirmed",
   dont_have: "Don't Have",
   have_some: "Have Some",
   need_to_package: "Need to Package",
@@ -121,6 +123,7 @@ export const STATUS_FLAG_LABELS: Record<NonNullable<StatusFlag>, string> = {
 };
 
 export const STATUS_FLAG_COLORS: Record<NonNullable<StatusFlag>, string> = {
+  good_confirmed: "#00ff00",
   dont_have: "#f85149",
   have_some: "#ff9900",
   need_to_package: "#ff00ff",
