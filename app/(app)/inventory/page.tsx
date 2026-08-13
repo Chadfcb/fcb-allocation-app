@@ -544,7 +544,7 @@ export default function InventoryPage() {
                               the cell itself (the input's background) is what shows the color. */}
                           <select
                             aria-label="Color code this cell"
-                            className="absolute -right-1 -top-1 h-3 w-3 cursor-pointer appearance-none overflow-hidden rounded-full border border-neutral-950 p-0 text-[0px] leading-none"
+                            className="absolute -right-1 -top-1 h-3 w-3 cursor-pointer appearance-none overflow-hidden rounded-full border border-neutral-950 p-0 text-xs leading-none"
                             style={{ backgroundColor: flagColor ?? "#525252" }}
                             value={flag ?? ""}
                             title={flag ? STATUS_FLAG_LABELS[flag] : "Color code this cell"}
@@ -556,9 +556,19 @@ export default function InventoryPage() {
                               )
                             }
                           >
-                            <option value="">— (no color)</option>
+                            <option value="" style={{ backgroundColor: "#404040", color: "#f5f5f5" }}>
+                              — (no color)
+                            </option>
                             {Object.entries(STATUS_FLAG_LABELS).map(([value, label]) => (
-                              <option key={value} value={value}>
+                              <option
+                                key={value}
+                                value={value}
+                                style={{
+                                  backgroundColor:
+                                    STATUS_FLAG_COLORS[value as keyof typeof STATUS_FLAG_COLORS],
+                                  color: "#000000",
+                                }}
+                              >
                                 {label}
                               </option>
                             ))}
