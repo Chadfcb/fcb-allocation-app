@@ -33,8 +33,10 @@ export default function UsersPage() {
       <div>
         <h1 className="text-lg font-semibold text-neutral-100">Users</h1>
         <p className="text-sm text-neutral-400">
-          Admins can access Weeks, Audit Log, and Users. Basic users can enter inventory,
-          distributor data, and allocations, but can&apos;t start a new week or undo changes.
+          Admins can access Dashboard, Distributor Data, Weeks, Audit Log, and Users. Basic users
+          can only access Inventory & Allocation — they can enter allocations, on-hand/unlabeled/
+          to-package counts, and PO numbers, but can&apos;t add or delete products, start a new
+          week, or undo changes.
         </p>
         <p className="mt-1 text-xs text-neutral-500">
           To add a new person, invite them from your Supabase project&apos;s Authentication
