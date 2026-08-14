@@ -162,9 +162,64 @@ create table if not exists distributor_pos (
   week_id uuid not null references weeks(id) on delete cascade,
   distributor_id uuid not null references distributors(id),
   po_number text,
+  -- Whether the distributor has approved this PO. Blank until an admin
+  -- picks a value; never carries forward to a new week (fresh every week,
+  -- same as po_number). Admin-only to change — enforced below by a
+  -- trigger, since po_number itself stays editable by any signed-in user.
+  po_status text check (po_status in ('approved','pending')),
   updated_by uuid references profiles(id),
   updated_at timestamptz not null default now(),
   unique (week_id, distributor_id)
+);
+
+-- Blocks non-admins from changing po_status specifically (po_number on the
+-- same row stays editable by anyone, per distributor_pos_rw below — RLS
+-- alone can't split permissions by column within one row, so this is a
+-- trigger instead).
+create or replace function enforce_po_status_admin_only()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_is_admin boolean;
+  v_old_status text;
+begin
+  v_old_status := case when tg_op = 'UPDATE' then old.po_status else null end;
+
+  if new.po_status is distinct from v_old_status then
+    select exists(
+      select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'
+    ) into v_is_admin;
+
+    if not v_is_admin then
+      new.po_status := v_old_status;
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists enforce_po_status_admin_only_trigger on distributor_pos;
+create trigger enforce_po_status_admin_only_trigger
+  before insert or update on distributor_pos
+  for each row execute procedure enforce_po_status_admin_only();
+
+-- =========================================================
+-- Distributor pricing — each distributor's own actual price per product
+-- (not an average). Standing catalog data, not tied to a week. Drives the
+-- Order Value totals on the Inventory & Allocation page.
+-- =========================================================
+create table if not exists distributor_prices (
+  id uuid primary key default gen_random_uuid(),
+  distributor_id uuid not null references distributors(id),
+  product_id uuid not null references products(id),
+  price numeric(10,2) not null default 0,
+  updated_by uuid references profiles(id),
+  updated_at timestamptz not null default now(),
+  unique (distributor_id, product_id)
 );
 
 -- =========================================================
@@ -271,6 +326,7 @@ alter table inventory_snapshots enable row level security;
 alter table distributor_inventory enable row level security;
 alter table allocations enable row level security;
 alter table distributor_pos enable row level security;
+alter table distributor_prices enable row level security;
 alter table section_dividers enable row level security;
 alter table packaging_inventory enable row level security;
 alter table label_inventory enable row level security;
@@ -315,6 +371,12 @@ create policy "distributor_inventory_rw" on distributor_inventory for all using 
 );
 create policy "allocations_rw" on allocations for all using (auth.uid() is not null);
 create policy "distributor_pos_rw" on distributor_pos for all using (auth.uid() is not null);
+-- Distributor Pricing: everyone can read (Order Value totals need it on the
+-- Inventory & Allocation page for Basic users too); only admins can edit it.
+create policy "distributor_prices_select" on distributor_prices for select using (auth.uid() is not null);
+create policy "distributor_prices_write_admin" on distributor_prices for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
 -- Packaging/label inventory live right on the Inventory & Allocation page,
 -- so both admin and basic users can read/write them (same as allocations).
 create policy "packaging_inventory_rw" on packaging_inventory for all using (auth.uid() is not null);

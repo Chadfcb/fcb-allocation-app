@@ -15,8 +15,9 @@ import type {
   PackagingInventoryRow,
   LabelInventoryRow,
   DistributorPrice,
+  PoStatus,
 } from "@/lib/types/db";
-import { STATUS_FLAG_LABELS, STATUS_FLAG_COLORS } from "@/lib/types/db";
+import { STATUS_FLAG_LABELS, STATUS_FLAG_COLORS, PO_STATUS_LABELS, PO_STATUS_COLORS } from "@/lib/types/db";
 import { PACKAGING_ITEMS, derivePackaging, computeConsumption } from "@/lib/packaging";
 
 type InventoryEditableField = "on_hand" | "unlabeled" | "to_be_packaged";
@@ -572,6 +573,7 @@ export default function InventoryPage() {
         week_id: week.id,
         distributor_id: distributorId,
         po_number: value,
+        po_status: existing?.po_status ?? null,
         updated_by: userId,
         updated_at: new Date().toISOString(),
       },
@@ -584,6 +586,7 @@ export default function InventoryPage() {
           week_id: week.id,
           distributor_id: distributorId,
           po_number: value,
+          po_status: existing?.po_status ?? null,
           updated_by: userId,
           updated_at: new Date().toISOString(),
         },
@@ -601,6 +604,58 @@ export default function InventoryPage() {
         fieldName: "po_number",
         oldValue,
         newValue: value,
+        changedBy: userId,
+      });
+    }
+
+    setSavingKey(null);
+  }
+
+  async function handlePoStatusChange(distributorId: string, value: PoStatus) {
+    if (!week || !userId || !isAdmin) return;
+    const key = `postatus:${distributorId}`;
+    setSavingKey(key);
+
+    const existing = pos[distributorId];
+    const oldValue = existing?.po_status ?? "";
+    setPos((prev) => ({
+      ...prev,
+      [distributorId]: {
+        id: existing?.id ?? "",
+        week_id: week.id,
+        distributor_id: distributorId,
+        po_number: existing?.po_number ?? null,
+        po_status: value,
+        updated_by: userId,
+        updated_at: new Date().toISOString(),
+      },
+    }));
+
+    const { data, error } = await supabase
+      .from("distributor_pos")
+      .upsert(
+        {
+          week_id: week.id,
+          distributor_id: distributorId,
+          po_number: existing?.po_number ?? null,
+          po_status: value,
+          updated_by: userId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "week_id,distributor_id" }
+      )
+      .select()
+      .single();
+
+    if (!error && data) {
+      setPos((prev) => ({ ...prev, [distributorId]: data as DistributorPO }));
+      await logChange(supabase, {
+        weekId: week.id,
+        tableName: "distributor_pos",
+        recordId: data.id,
+        fieldName: "po_status",
+        oldValue,
+        newValue: value ?? "",
         changedBy: userId,
       });
     }
@@ -736,7 +791,7 @@ export default function InventoryPage() {
           className="min-w-[380px] flex-1 shrink-0 self-start rounded-lg border border-neutral-800 bg-neutral-950 p-3"
         >
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
-            Packaging Inventory
+            Packaging Inventory <span className="font-normal normal-case text-neutral-500">— Automatically adjusted as allocations are entered</span>
           </h2>
           <table className="w-full text-xs">
             <thead>
@@ -785,7 +840,7 @@ export default function InventoryPage() {
           style={packagingCardHeight ? { height: packagingCardHeight, flexGrow: 0 } : undefined}
         >
           <h2 className="mb-2 shrink-0 text-xs font-semibold uppercase tracking-wide text-neutral-400">
-            Label Inventory
+            Label Inventory <span className="font-normal normal-case text-neutral-500">— Automatically adjusted as allocations are entered</span>
           </h2>
           <div className="min-h-0 flex-1 overflow-y-auto">
             <table className="w-full text-xs">
@@ -925,6 +980,52 @@ export default function InventoryPage() {
                 </th>
               ))}
               <th className="sticky top-[60px] right-0 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+            </tr>
+            <tr className="h-7 text-[10px] uppercase tracking-wide text-neutral-600">
+              <th className="sticky top-[88px] left-0 z-20 h-7 whitespace-nowrap bg-neutral-900 px-3 text-left font-normal">
+                PO Status
+              </th>
+              <th className="sticky top-[88px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+              <th className="sticky top-[88px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+              <th className="sticky top-[88px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+              <th className="sticky top-[88px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+              {distributors.map((d) => {
+                const status = pos[d.id]?.po_status ?? "";
+                const bgColor = status ? PO_STATUS_COLORS[status] : undefined;
+                return (
+                  <th key={d.id} className="sticky top-[88px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2">
+                    <select
+                      value={status}
+                      disabled={!isAdmin}
+                      onChange={(e) =>
+                        handlePoStatusChange(d.id, (e.target.value || null) as PoStatus)
+                      }
+                      className="w-20 rounded border border-neutral-700 px-1 py-0.5 text-right text-[11px] font-semibold normal-case disabled:opacity-70"
+                      style={{
+                        backgroundColor: bgColor ?? "#171717",
+                        color: bgColor ? "#000000" : "#737373",
+                      }}
+                    >
+                      <option value="" style={{ backgroundColor: "#171717", color: "#a3a3a3" }}>
+                        —
+                      </option>
+                      <option
+                        value="approved"
+                        style={{ backgroundColor: PO_STATUS_COLORS.approved, color: "#000000" }}
+                      >
+                        {PO_STATUS_LABELS.approved}
+                      </option>
+                      <option
+                        value="pending"
+                        style={{ backgroundColor: PO_STATUS_COLORS.pending, color: "#000000" }}
+                      >
+                        {PO_STATUS_LABELS.pending}
+                      </option>
+                    </select>
+                  </th>
+                );
+              })}
+              <th className="sticky top-[88px] right-0 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-900">

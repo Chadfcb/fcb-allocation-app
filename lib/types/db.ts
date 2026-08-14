@@ -96,15 +96,30 @@ export interface Allocation {
   updated_at: string;
 }
 
+export type PoStatus = "approved" | "pending" | null;
+
 // One PO number per distributor per week — used to find the order in Ekos.
 export interface DistributorPO {
   id: string;
   week_id: string;
   distributor_id: string;
   po_number: string | null;
+  // Whether the distributor has approved this PO. Blank until set; admin-only
+  // to change (enforced in the database, not just the UI).
+  po_status: PoStatus;
   updated_by: string | null;
   updated_at: string;
 }
+
+export const PO_STATUS_LABELS: Record<NonNullable<PoStatus>, string> = {
+  approved: "Approved",
+  pending: "Pending",
+};
+
+export const PO_STATUS_COLORS: Record<NonNullable<PoStatus>, string> = {
+  approved: "#00ff00",
+  pending: "#ff9900",
+};
 
 // Each distributor's own actual price per product (not an average — every
 // distributor can be charged differently for the same item). Not tied to a
