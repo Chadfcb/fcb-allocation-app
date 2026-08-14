@@ -777,11 +777,11 @@ export default function InventoryPage() {
           </table>
         </div>
 
-        <div className="min-w-[380px] flex-1 rounded-lg border border-neutral-800 bg-neutral-950 p-3">
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+        <div className="flex min-w-[380px] flex-1 flex-col rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+          <h2 className="mb-2 shrink-0 text-xs font-semibold uppercase tracking-wide text-neutral-400">
             Label Inventory
           </h2>
-          <div className="max-h-64 overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-y-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-neutral-500">
