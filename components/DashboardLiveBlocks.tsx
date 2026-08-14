@@ -10,7 +10,15 @@
 
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
-import type { Product, Distributor, DistributorPrice, PackagingInventoryRow, LabelInventoryRow } from "@/lib/types/db";
+import type {
+  Product,
+  Distributor,
+  DistributorPrice,
+  PackagingInventoryRow,
+  LabelInventoryRow,
+  PoStatus,
+} from "@/lib/types/db";
+import { PO_STATUS_LABELS, PO_STATUS_COLORS } from "@/lib/types/db";
 import { PACKAGING_ITEMS, derivePackaging, computeConsumption } from "@/lib/packaging";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
@@ -27,6 +35,7 @@ export default function DashboardLiveBlocks({ weekId }: { weekId: string | null 
   const [prices, setPrices] = useState<Record<string, number>>({}); // key: productId:distributorId
   const [packaging, setPackaging] = useState<Record<string, number>>({}); // key: item_key
   const [labels, setLabels] = useState<Record<string, number>>({}); // key: productId
+  const [poStatus, setPoStatus] = useState<Record<string, PoStatus>>({}); // key: distributorId
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
@@ -35,7 +44,7 @@ export default function DashboardLiveBlocks({ weekId }: { weekId: string | null 
       return;
     }
 
-    const [distributorsRes, productsRes, allocationsRes, pricesRes, packagingRes, labelsRes] =
+    const [distributorsRes, productsRes, allocationsRes, pricesRes, packagingRes, labelsRes, posRes] =
       await Promise.all([
         supabase.from("distributors").select("*").eq("active", true).order("name"),
         supabase.from("products").select("*").eq("active", true),
@@ -43,6 +52,7 @@ export default function DashboardLiveBlocks({ weekId }: { weekId: string | null 
         supabase.from("distributor_prices").select("product_id, distributor_id, price"),
         supabase.from("packaging_inventory").select("item_key, on_hand_qty").eq("week_id", weekId),
         supabase.from("label_inventory").select("product_id, on_hand_qty").eq("week_id", weekId),
+        supabase.from("distributor_pos").select("distributor_id, po_status").eq("week_id", weekId),
       ]);
 
     setDistributors((distributorsRes.data as Distributor[]) ?? []);
@@ -72,6 +82,12 @@ export default function DashboardLiveBlocks({ weekId }: { weekId: string | null 
     }
     setLabels(labelMap);
 
+    const poStatusMap: Record<string, PoStatus> = {};
+    for (const row of posRes.data ?? []) {
+      poStatusMap[row.distributor_id] = row.po_status as PoStatus;
+    }
+    setPoStatus(poStatusMap);
+
     setLoading(false);
   }, [supabase, weekId]);
 
@@ -100,6 +116,11 @@ export default function DashboardLiveBlocks({ weekId }: { weekId: string | null 
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "label_inventory", filter: `week_id=eq.${weekId}` },
+        load
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "distributor_pos", filter: `week_id=eq.${weekId}` },
         load
       )
       .subscribe();
@@ -157,16 +178,33 @@ export default function DashboardLiveBlocks({ weekId }: { weekId: string | null 
             <p className="text-sm text-neutral-500">Loading…</p>
           ) : (
             <div className="divide-y divide-neutral-900">
-              {distributors.map((d) => (
-                <div key={d.id} className="flex items-center justify-between gap-2 px-1.5 py-1.5 text-sm">
-                  <span className="truncate text-neutral-300" style={{ color: d.color ?? undefined }}>
-                    {d.name}
-                  </span>
-                  <span className="whitespace-nowrap font-semibold text-neutral-100">
-                    {currencyFormatter.format(orderValueFor(d.id))}
-                  </span>
-                </div>
-              ))}
+              {distributors.map((d) => {
+                const status = poStatus[d.id] ?? null;
+                return (
+                  <div key={d.id} className="flex items-center justify-between gap-2 px-1.5 py-1.5 text-sm">
+                    <span className="truncate text-neutral-300" style={{ color: d.color ?? undefined }}>
+                      {d.name}
+                    </span>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {status ? (
+                        <span
+                          className="whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                          style={{ backgroundColor: PO_STATUS_COLORS[status], color: "#000000" }}
+                        >
+                          {PO_STATUS_LABELS[status]}
+                        </span>
+                      ) : (
+                        <span className="whitespace-nowrap text-[10px] uppercase tracking-wide text-neutral-600">
+                          —
+                        </span>
+                      )}
+                      <span className="whitespace-nowrap font-semibold text-neutral-100">
+                        {currencyFormatter.format(orderValueFor(d.id))}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
