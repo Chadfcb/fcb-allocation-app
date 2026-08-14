@@ -738,7 +738,7 @@ export default function InventoryPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-7rem)] flex-col space-y-3">
+    <div className="flex flex-col space-y-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <h1 className="text-lg font-semibold text-neutral-100">Inventory & Allocation</h1>
@@ -870,7 +870,7 @@ export default function InventoryPage() {
         ))}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-neutral-800 bg-neutral-950">
+      <div className="rounded-lg border border-neutral-800 bg-neutral-950">
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="h-8 text-xs uppercase tracking-wide text-neutral-500">
