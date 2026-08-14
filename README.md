@@ -1,4 +1,4 @@
-# FCB Allocation
+# FCB Data
 
 A shared, browser-based web app for Full Circle Brewing's weekly distributor
 allocation workflow — replaces the "Inventory for Sale" spreadsheet.

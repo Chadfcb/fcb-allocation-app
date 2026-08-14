@@ -94,7 +94,7 @@ export default function Sidebar({ role }: { role: Role | undefined }) {
   return (
     <div className="flex w-56 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950 p-3">
       <div className="mb-4 flex items-center justify-between gap-2">
-        <span className="font-semibold text-neutral-100">FCB Allocation</span>
+        <span className="font-semibold text-neutral-100">FCB Data</span>
         <button
           type="button"
           onClick={() => setHidden(true)}

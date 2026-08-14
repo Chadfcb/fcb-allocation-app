@@ -76,7 +76,7 @@ export default function AccountSetupPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-black px-4">
       <div className="w-full max-w-sm rounded-lg border border-neutral-800 bg-neutral-950 p-8 shadow-sm">
-        <h1 className="mb-1 text-xl font-semibold text-neutral-100">Welcome to FCB Allocation</h1>
+        <h1 className="mb-1 text-xl font-semibold text-neutral-100">Welcome to FCB Data</h1>
         <p className="mb-6 text-sm text-neutral-400">
           First time signing in — set your own password and let us know your name.
         </p>

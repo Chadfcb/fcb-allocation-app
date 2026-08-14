@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "FCB Allocation",
+  title: "FCB Data",
   description: "Full Circle Brewing — distributor allocation & suggested orders",
 };
 
