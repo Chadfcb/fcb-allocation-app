@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { logChange } from "@/lib/audit";
 import type {
@@ -71,6 +71,23 @@ export default function InventoryPage() {
   const [newDividerLabel, setNewDividerLabel] = useState("");
   const [newDividerAfter, setNewDividerAfter] = useState("__end__");
   const [addingDivider, setAddingDivider] = useState(false);
+
+  // Label Inventory is pinned to Packaging Inventory's actual rendered
+  // height (measured, not guessed) so it always matches exactly with no
+  // blank space, scrolls internally for its longer list, and — critically
+  // — can never grow unbounded and squeeze the allocation table below.
+  const packagingCardRef = useRef<HTMLDivElement | null>(null);
+  const [packagingCardHeight, setPackagingCardHeight] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    const el = packagingCardRef.current;
+    if (!el) return;
+    const measure = () => setPackagingCardHeight(el.getBoundingClientRect().height);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -731,7 +748,10 @@ export default function InventoryPage() {
       </div>
 
       <div className="flex flex-wrap gap-3">
-        <div className="min-w-[380px] flex-1 rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+        <div
+          ref={packagingCardRef}
+          className="min-w-[380px] flex-1 shrink-0 self-start rounded-lg border border-neutral-800 bg-neutral-950 p-3"
+        >
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
             Packaging Inventory
           </h2>
@@ -777,7 +797,10 @@ export default function InventoryPage() {
           </table>
         </div>
 
-        <div className="flex min-h-0 min-w-[380px] flex-1 flex-col rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+        <div
+          className="flex max-h-96 min-h-0 min-w-[380px] flex-1 flex-col rounded-lg border border-neutral-800 bg-neutral-950 p-3"
+          style={packagingCardHeight ? { height: packagingCardHeight, flexGrow: 0 } : undefined}
+        >
           <h2 className="mb-2 shrink-0 text-xs font-semibold uppercase tracking-wide text-neutral-400">
             Label Inventory
           </h2>
