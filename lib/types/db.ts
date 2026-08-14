@@ -5,6 +5,13 @@ export interface Profile {
   email: string;
   full_name: string | null;
   role: Role;
+  // True until this person has been through the account-setup flow (set
+  // their own password + name) — forces a redirect to /account-setup on
+  // every page in the (app) group until they complete it. Defaults true for
+  // new profiles; existing users who'd already signed in before this
+  // feature shipped were retroactively set to false so they aren't forced
+  // through it.
+  must_change_password: boolean;
   created_at: string;
 }
 

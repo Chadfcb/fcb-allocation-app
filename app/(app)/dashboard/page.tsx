@@ -2,6 +2,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getProfile } from "@/lib/getProfile";
+import DashboardLiveBlocks from "@/components/DashboardLiveBlocks";
+import { firstNameFor } from "@/lib/displayName";
 
 export default async function DashboardPage() {
   const profile = await getProfile();
@@ -32,7 +34,9 @@ export default async function DashboardPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-lg font-semibold text-neutral-100">Dashboard</h1>
+        <h1 className="text-lg font-semibold text-neutral-100">
+          Welcome, {profile ? firstNameFor(profile) : ""}
+        </h1>
         <p className="text-sm text-neutral-400">
           Current week: <span className="font-medium text-neutral-300">{currentWeek?.label ?? "No week started yet"}</span>
         </p>
@@ -67,6 +71,8 @@ export default async function DashboardPage() {
           Go to Distributor Data
         </Link>
       </div>
+
+      <DashboardLiveBlocks weekId={currentWeek?.id ?? null} />
     </div>
   );
 }

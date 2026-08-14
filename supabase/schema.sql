@@ -15,6 +15,12 @@ create table if not exists profiles (
   email text not null,
   full_name text,
   role text not null default 'basic' check (role in ('admin','basic')),
+  -- True until this person has been through the account-setup flow (chosen
+  -- their own password + entered their name) after an admin sets them up
+  -- with a temporary password. New profiles start out true; existing users
+  -- who'd already signed in before this feature shipped are left/set false
+  -- by the migration so they aren't forced through it retroactively.
+  must_change_password boolean not null default true,
   created_at timestamptz not null default now()
 );
 
