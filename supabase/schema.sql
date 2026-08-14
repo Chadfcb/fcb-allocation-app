@@ -258,6 +258,40 @@ create table if not exists brand_price_list (
 );
 
 -- =========================================================
+-- Sales > Margin Analysis — second piece of folding FCB Pricing in. One
+-- analysis per brand (batch cost + batch yield in BBLs), with a row per
+-- package format holding what you charge the retailer (PTR) vs. what the
+-- distributor pays (PTD). pack_cost/labor/yield_amt are per-package
+-- overrides — null means "use the standard default for that format" (see
+-- PKG_META in lib/marginAnalysis.ts). Admin-only, like the rest of Sales.
+-- =========================================================
+create table if not exists margin_analyses (
+  id uuid primary key default gen_random_uuid(),
+  brand_id uuid not null references pricing_brands(id) on delete cascade,
+  batch_cost numeric(10,2) not null default 0,
+  yield_bbls numeric(6,2) not null default 30,
+  updated_by uuid references profiles(id),
+  updated_at timestamptz not null default now(),
+  created_at timestamptz not null default now(),
+  unique (brand_id)
+);
+
+create table if not exists margin_analysis_packages (
+  id uuid primary key default gen_random_uuid(),
+  analysis_id uuid not null references margin_analyses(id) on delete cascade,
+  package_key text not null check (package_key in ('6pk','4pack','single','sixth','half')),
+  enabled boolean not null default true,
+  ptr numeric(10,2),
+  ptd numeric(10,2),
+  pack_cost numeric(10,2),
+  labor numeric(10,2),
+  yield_amt numeric(10,2),
+  updated_by uuid references profiles(id),
+  updated_at timestamptz not null default now(),
+  unique (analysis_id, package_key)
+);
+
+-- =========================================================
 -- Packaging inventory — manual on-hand counts for shared packaging
 -- materials (cans, trays, pakteks, lids, kegs). Consumption against these
 -- is computed in the app from allocations below, based on each product's
@@ -368,6 +402,8 @@ alter table label_inventory enable row level security;
 alter table audit_log enable row level security;
 alter table pricing_brands enable row level security;
 alter table brand_price_list enable row level security;
+alter table margin_analyses enable row level security;
+alter table margin_analysis_packages enable row level security;
 
 -- Everyone signed in can read their own profile + see other profiles (for
 -- attribution / "who changed this" display); only admins can change roles.
@@ -425,6 +461,12 @@ create policy "pricing_brands_admin" on pricing_brands for all using (
   exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
 );
 create policy "brand_price_list_admin" on brand_price_list for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+create policy "margin_analyses_admin" on margin_analyses for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+create policy "margin_analysis_packages_admin" on margin_analysis_packages for all using (
   exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
 );
 

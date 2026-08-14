@@ -182,3 +182,96 @@ join (values
   ('Nectarine',    'half',   160.00)
 ) as v(brand_name, package_key, price) on v.brand_name = b.name
 on conflict (brand_id, package_key) do nothing;
+
+-- Sales > Margin Analysis — a few brands only existed in Margin Analysis in
+-- the old desktop app, not yet in the Price List brand list above; adding
+-- them here too so Sales has one consistent brand list throughout.
+insert into pricing_brands (name, sort_order) values
+  ('The Pitchfork', 9),
+  ('The Hatchet', 10),
+  ('Juicy', 11)
+on conflict (name) do nothing;
+
+insert into margin_analyses (brand_id, batch_cost, yield_bbls)
+select b.id, v.batch_cost, v.yield_bbls
+from pricing_brands b
+join (values
+  ('Big Daddy',     2234.31::numeric, 25::numeric),
+  ('The Pitchfork',  3762.52, 25),
+  ('The Hatchet',    3476.01, 25),
+  ('Prohibition',    2072.20, 25),
+  ('Mystic Haze',    1770.20, 25),
+  ('Capt Hazy',      2752.20, 25),
+  ('Capt WC IPA',    2474.79, 25),
+  ('Peachy Vibes',   1615.36, 25),
+  ('Juicy',          2752.20, 25),
+  ('Nectarine',      0,       25)
+) as v(brand_name, batch_cost, yield_bbls) on v.brand_name = b.name
+on conflict (brand_id) do nothing;
+
+insert into margin_analysis_packages (analysis_id, package_key, enabled, ptr, ptd)
+select ma.id, v.package_key, v.enabled, v.ptr, v.ptd
+from margin_analyses ma
+join pricing_brands b on b.id = ma.brand_id
+join (values
+  ('Big Daddy',     '6pk',    true,  39.25::numeric,  28.25::numeric),
+  ('Big Daddy',     '4pack',  true,  45.50,  35.00),
+  ('Big Daddy',     'single', true,  35.00,  24.50),
+  ('Big Daddy',     'sixth',  true,  100.00, 70.00),
+  ('Big Daddy',     'half',   true,  200.00, 140.00),
+
+  ('The Pitchfork', '6pk',    false, null,   null),
+  ('The Pitchfork', '4pack',  true,  52.50,  42.00),
+  ('The Pitchfork', 'single', true,  31.25,  25.00),
+  ('The Pitchfork', 'sixth',  true,  110.00, 72.00),
+  ('The Pitchfork', 'half',   true,  220.00, 151.00),
+
+  ('The Hatchet',   '6pk',    false, null,   null),
+  ('The Hatchet',   '4pack',  true,  52.50,  42.00),
+  ('The Hatchet',   'single', true,  31.25,  25.00),
+  ('The Hatchet',   'sixth',  true,  110.00, 72.00),
+  ('The Hatchet',   'half',   true,  220.00, 151.00),
+
+  ('Prohibition',   '6pk',    true,  39.25,  28.25),
+  ('Prohibition',   '4pack',  true,  50.50,  35.50),
+  ('Prohibition',   'single', true,  27.00,  19.00),
+  ('Prohibition',   'sixth',  true,  100.00, 70.00),
+  ('Prohibition',   'half',   true,  200.00, 140.00),
+
+  ('Mystic Haze',   '6pk',    true,  39.25,  28.25),
+  ('Mystic Haze',   '4pack',  true,  58.75,  35.50),
+  ('Mystic Haze',   'single', true,  27.00,  19.00),
+  ('Mystic Haze',   'sixth',  true,  85.00,  61.00),
+  ('Mystic Haze',   'half',   true,  178.00, 128.00),
+
+  ('Capt Hazy',     '6pk',    false, null,   null),
+  ('Capt Hazy',     '4pack',  true,  63.00,  45.34),
+  ('Capt Hazy',     'single', true,  33.50,  24.50),
+  ('Capt Hazy',     'sixth',  true,  99.00,  71.50),
+  ('Capt Hazy',     'half',   true,  199.00, 143.00),
+
+  ('Capt WC IPA',   '6pk',    false, null,   null),
+  ('Capt WC IPA',   '4pack',  true,  63.00,  45.34),
+  ('Capt WC IPA',   'single', true,  31.50,  23.00),
+  ('Capt WC IPA',   'sixth',  true,  99.00,  71.50),
+  ('Capt WC IPA',   'half',   true,  199.00, 143.00),
+
+  ('Peachy Vibes',  '6pk',    true,  38.00,  27.25),
+  ('Peachy Vibes',  '4pack',  true,  58.80,  42.50),
+  ('Peachy Vibes',  'single', true,  29.00,  21.00),
+  ('Peachy Vibes',  'sixth',  true,  85.00,  61.00),
+  ('Peachy Vibes',  'half',   true,  178.00, 128.00),
+
+  ('Juicy',         '6pk',    false, null,   null),
+  ('Juicy',         '4pack',  false, null,   null),
+  ('Juicy',         'single', true,  25.15,  18.00),
+  ('Juicy',         'sixth',  false, null,   null),
+  ('Juicy',         'half',   false, null,   null),
+
+  ('Nectarine',     '6pk',    false, null,   null),
+  ('Nectarine',     '4pack',  false, null,   null),
+  ('Nectarine',     'single', false, null,   null),
+  ('Nectarine',     'sixth',  false, null,   null),
+  ('Nectarine',     'half',   false, null,   null)
+) as v(brand_name, package_key, enabled, ptr, ptd) on v.brand_name = b.name
+on conflict (analysis_id, package_key) do nothing;

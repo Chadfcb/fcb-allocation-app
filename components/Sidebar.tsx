@@ -29,7 +29,10 @@ const OPERATIONS_LINKS = [
 // Sales sub-links get added here one at a time as each piece of the old FCB
 // Pricing desktop app is folded in — Price List first, then Margin Analysis,
 // Cost Per Case, and Contribution Margin.
-const SALES_LINKS = [{ href: "/sales/pricing", label: "Price List" }];
+const SALES_LINKS = [
+  { href: "/sales/pricing", label: "Price List" },
+  { href: "/sales/margin-analysis", label: "Margin Analysis" },
+];
 
 const OPERATIONS_STORAGE_KEY = "fcb-sidebar-operations-expanded";
 const SALES_STORAGE_KEY = "fcb-sidebar-sales-expanded";

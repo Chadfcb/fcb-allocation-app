@@ -191,6 +191,39 @@ export interface BrandPriceListRow {
   updated_at: string;
 }
 
+// =========================================================
+// Sales > Margin Analysis — per-brand batch cost + per-package-format
+// pricing (PTR/PTD), used to work out gross profit and full batch
+// economics (revenue, cost, profit, margin). Second piece of folding the
+// old FCB Pricing desktop app in, building on the same pricing_brands list
+// as Price List above.
+// =========================================================
+export interface MarginAnalysis {
+  id: string;
+  brand_id: string;
+  batch_cost: number;
+  yield_bbls: number;
+  updated_by: string | null;
+  updated_at: string;
+  created_at: string;
+}
+
+export interface MarginAnalysisPackage {
+  id: string;
+  analysis_id: string;
+  package_key: PriceListPackageKey;
+  enabled: boolean;
+  ptr: number | null;
+  ptd: number | null;
+  // null means "use the standard default for this package format" — see
+  // PKG_META in lib/marginAnalysis.ts.
+  pack_cost: number | null;
+  labor: number | null;
+  yield_amt: number | null;
+  updated_by: string | null;
+  updated_at: string;
+}
+
 export interface AuditLogEntry {
   id: string;
   week_id: string | null;
