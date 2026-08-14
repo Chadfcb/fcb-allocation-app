@@ -12,8 +12,11 @@ import type {
   DistributorPO,
   StatusFlag,
   SectionDivider,
+  PackagingInventoryRow,
+  LabelInventoryRow,
 } from "@/lib/types/db";
 import { STATUS_FLAG_LABELS, STATUS_FLAG_COLORS } from "@/lib/types/db";
+import { PACKAGING_ITEMS, derivePackaging, computeConsumption } from "@/lib/packaging";
 
 type InventoryEditableField = "on_hand" | "unlabeled" | "to_be_packaged";
 
@@ -55,6 +58,8 @@ export default function InventoryPage() {
   const [inventory, setInventory] = useState<Record<string, InventoryWithRemaining>>({});
   const [allocations, setAllocations] = useState<Record<string, AllocationCell>>({}); // key: productId:distributorId
   const [pos, setPos] = useState<Record<string, DistributorPO>>({}); // key: distributorId
+  const [packaging, setPackaging] = useState<Record<string, PackagingInventoryRow>>({}); // key: item_key
+  const [labelInventory, setLabelInventory] = useState<Record<string, LabelInventoryRow>>({}); // key: productId
   const [userId, setUserId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -147,6 +152,28 @@ export default function InventoryPage() {
         poMap[row.distributor_id] = row;
       });
       setPos(poMap);
+
+      const { data: packagingData } = await supabase
+        .from("packaging_inventory")
+        .select("*")
+        .eq("week_id", weekData.id);
+
+      const pkgMap: Record<string, PackagingInventoryRow> = {};
+      (packagingData as PackagingInventoryRow[] | null)?.forEach((row) => {
+        pkgMap[row.item_key] = row;
+      });
+      setPackaging(pkgMap);
+
+      const { data: labelData } = await supabase
+        .from("label_inventory")
+        .select("*")
+        .eq("week_id", weekData.id);
+
+      const lblMap: Record<string, LabelInventoryRow> = {};
+      (labelData as LabelInventoryRow[] | null)?.forEach((row) => {
+        lblMap[row.product_id] = row;
+      });
+      setLabelInventory(lblMap);
     }
 
     setLoading(false);
@@ -182,6 +209,16 @@ export default function InventoryPage() {
   }
 
   const grandOrderValue = distributors.reduce((sum, d) => sum + orderValueFor(d.id), 0);
+
+  // Packaging/label consumption, derived from each product's can/keg size
+  // (parsed from its name) and its total allocated quantity across all
+  // distributors this week. See lib/packaging.ts for the recipes.
+  const consumption = computeConsumption(products, allocatedFor);
+
+  // Only can-based products need a label row — kegs and tap handles don't.
+  const labelProducts = products
+    .filter((p) => derivePackaging(p.name).kind === "can")
+    .sort((a, b) => (a.sort_order ?? Number.MAX_SAFE_INTEGER) - (b.sort_order ?? Number.MAX_SAFE_INTEGER));
 
   // Products and brand dividers share one ordering, sorted together so the
   // grid can be grouped by brand like the original spreadsheet was.
@@ -571,6 +608,106 @@ export default function InventoryPage() {
     setSavingKey(null);
   }
 
+  async function handlePackagingOnHandChange(itemKey: string, value: number) {
+    if (!week || !userId) return;
+    const key = `pkg:${itemKey}`;
+    setSavingKey(key);
+
+    const existing = packaging[itemKey];
+    const oldValue = existing?.on_hand_qty ?? 0;
+    setPackaging((prev) => ({
+      ...prev,
+      [itemKey]: {
+        id: existing?.id ?? "",
+        week_id: week.id,
+        item_key: itemKey as PackagingInventoryRow["item_key"],
+        on_hand_qty: value,
+        updated_by: userId,
+        updated_at: new Date().toISOString(),
+      },
+    }));
+
+    const { data, error } = await supabase
+      .from("packaging_inventory")
+      .upsert(
+        {
+          week_id: week.id,
+          item_key: itemKey,
+          on_hand_qty: value,
+          updated_by: userId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "week_id,item_key" }
+      )
+      .select()
+      .single();
+
+    if (!error && data) {
+      setPackaging((prev) => ({ ...prev, [itemKey]: data as PackagingInventoryRow }));
+      await logChange(supabase, {
+        weekId: week.id,
+        tableName: "packaging_inventory",
+        recordId: data.id,
+        fieldName: "on_hand_qty",
+        oldValue,
+        newValue: value,
+        changedBy: userId,
+      });
+    }
+
+    setSavingKey(null);
+  }
+
+  async function handleLabelOnHandChange(productId: string, value: number) {
+    if (!week || !userId) return;
+    const key = `lbl:${productId}`;
+    setSavingKey(key);
+
+    const existing = labelInventory[productId];
+    const oldValue = existing?.on_hand_qty ?? 0;
+    setLabelInventory((prev) => ({
+      ...prev,
+      [productId]: {
+        id: existing?.id ?? "",
+        week_id: week.id,
+        product_id: productId,
+        on_hand_qty: value,
+        updated_by: userId,
+        updated_at: new Date().toISOString(),
+      },
+    }));
+
+    const { data, error } = await supabase
+      .from("label_inventory")
+      .upsert(
+        {
+          week_id: week.id,
+          product_id: productId,
+          on_hand_qty: value,
+          updated_by: userId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "week_id,product_id" }
+      )
+      .select()
+      .single();
+
+    if (!error && data) {
+      setLabelInventory((prev) => ({ ...prev, [productId]: data as LabelInventoryRow }));
+      await logChange(supabase, {
+        weekId: week.id,
+        tableName: "label_inventory",
+        recordId: data.id,
+        fieldName: "on_hand_qty",
+        oldValue,
+        newValue: value,
+        changedBy: userId,
+      });
+    }
+
+    setSavingKey(null);
+  }
+
   if (loading) {
     return <p className="text-sm text-neutral-400">Loading…</p>;
   }
@@ -592,6 +729,110 @@ export default function InventoryPage() {
         </div>
         {savingKey && <p className="text-xs text-neutral-500">Saving…</p>}
       </div>
+
+      <div className="flex flex-wrap gap-3">
+        <div className="min-w-[380px] flex-1 rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+            Packaging Inventory
+          </h2>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-neutral-500">
+                <th className="px-1.5 py-1 text-left">Item</th>
+                <th className="px-1.5 py-1 text-right">On Hand</th>
+                <th className="px-1.5 py-1 text-right">Consumed</th>
+                <th className="px-1.5 py-1 text-right">Remaining</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-900">
+              {PACKAGING_ITEMS.map((item) => {
+                const onHand = packaging[item.key]?.on_hand_qty ?? 0;
+                const consumed = consumption.packagingConsumed[item.key] ?? 0;
+                const remaining = onHand - consumed;
+                return (
+                  <tr key={item.key}>
+                    <td className="px-1.5 py-1 text-neutral-300">{item.label}</td>
+                    <td className="px-1.5 py-1 text-right">
+                      <input
+                        type="number"
+                        className="w-20 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-neutral-100"
+                        value={onHand}
+                        onChange={(e) =>
+                          handlePackagingOnHandChange(item.key, Number(e.target.value) || 0)
+                        }
+                      />
+                    </td>
+                    <td className="px-1.5 py-1 text-right text-neutral-400">{consumed}</td>
+                    <td
+                      className={`px-1.5 py-1 text-right font-semibold ${
+                        remaining < 0 ? "text-red-400" : "text-neutral-200"
+                      }`}
+                    >
+                      {remaining}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="min-w-[380px] flex-1 rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+            Label Inventory
+          </h2>
+          <div className="max-h-64 overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-neutral-500">
+                  <th className="sticky top-0 bg-neutral-950 px-1.5 py-1 text-left">Product</th>
+                  <th className="sticky top-0 bg-neutral-950 px-1.5 py-1 text-right">On Hand</th>
+                  <th className="sticky top-0 bg-neutral-950 px-1.5 py-1 text-right">Consumed</th>
+                  <th className="sticky top-0 bg-neutral-950 px-1.5 py-1 text-right">Remaining</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-900">
+                {labelProducts.map((p) => {
+                  const onHand = labelInventory[p.id]?.on_hand_qty ?? 0;
+                  const consumed = consumption.labelConsumed[p.id] ?? 0;
+                  const remaining = onHand - consumed;
+                  return (
+                    <tr key={p.id}>
+                      <td className="whitespace-nowrap px-1.5 py-1 text-neutral-300">{p.name}</td>
+                      <td className="px-1.5 py-1 text-right">
+                        <input
+                          type="number"
+                          className="w-16 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-neutral-100"
+                          value={onHand}
+                          onChange={(e) =>
+                            handleLabelOnHandChange(p.id, Number(e.target.value) || 0)
+                          }
+                        />
+                      </td>
+                      <td className="px-1.5 py-1 text-right text-neutral-400">{consumed}</td>
+                      <td
+                        className={`px-1.5 py-1 text-right font-semibold ${
+                          remaining < 0 ? "text-red-400" : "text-neutral-200"
+                        }`}
+                      >
+                        {remaining}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {consumption.unrecognizedProducts.length > 0 && (
+        <div className="rounded-lg border border-amber-700/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-300">
+          Heads up — {consumption.unrecognizedProducts.length} product name(s) don&apos;t clearly
+          state a can/keg size, so they&apos;re not included in the packaging/label totals above:{" "}
+          {consumption.unrecognizedProducts.join(", ")}.
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-xs">
         <span className="text-neutral-500">Cell colors (click a distributor cell&apos;s swatch):</span>

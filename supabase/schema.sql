@@ -112,7 +112,7 @@ create table if not exists inventory_snapshots (
   unlabeled numeric(12,2) not null default 0,
   to_be_packaged numeric(12,2) not null default 0,
   status_flag text check (status_flag in
-    ('good_confirmed','dont_have','have_some','need_to_package','need_pakteks','need_labels','need_cans','old_product')),
+    ('good_confirmed','dont_have','have_some','need_to_package','need_pakteks','need_labels','need_cans','need_kegs')),
   updated_by uuid references profiles(id),
   updated_at timestamptz not null default now(),
   unique (week_id, product_id)
@@ -146,7 +146,7 @@ create table if not exists allocations (
   product_id uuid not null references products(id),
   quantity numeric(12,2) not null default 0,
   status_flag text check (status_flag in
-    ('good_confirmed','dont_have','have_some','need_to_package','need_pakteks','need_labels','need_cans','old_product')),
+    ('good_confirmed','dont_have','have_some','need_to_package','need_pakteks','need_labels','need_cans','need_kegs')),
   updated_by uuid references profiles(id),
   updated_at timestamptz not null default now(),
   unique (week_id, distributor_id, product_id)
@@ -165,6 +165,43 @@ create table if not exists distributor_pos (
   updated_by uuid references profiles(id),
   updated_at timestamptz not null default now(),
   unique (week_id, distributor_id)
+);
+
+-- =========================================================
+-- Packaging inventory — manual on-hand counts for shared packaging
+-- materials (cans, trays, pakteks, lids, kegs). Consumption against these
+-- is computed in the app from allocations below, based on each product's
+-- can/keg size (see lib/packaging.ts) — not stored here.
+-- =========================================================
+create table if not exists packaging_inventory (
+  id uuid primary key default gen_random_uuid(),
+  week_id uuid not null references weeks(id) on delete cascade,
+  item_key text not null check (item_key in (
+    'cans_19_2oz','cans_16oz','cans_12oz',
+    'pakteks_4pack','pakteks_6pack',
+    'trays_12_16oz','trays_19oz',
+    'lids_202',
+    'kegs_1_6bbl','kegs_1_2bbl'
+  )),
+  on_hand_qty numeric(12,2) not null default 0,
+  updated_by uuid references profiles(id),
+  updated_at timestamptz not null default now(),
+  unique (week_id, item_key)
+);
+
+-- =========================================================
+-- Label inventory — manual on-hand label counts, tracked per product since
+-- each beer's label is unique artwork (unlike cans/trays/pakteks/lids,
+-- which are shared across any product of the same size).
+-- =========================================================
+create table if not exists label_inventory (
+  id uuid primary key default gen_random_uuid(),
+  week_id uuid not null references weeks(id) on delete cascade,
+  product_id uuid not null references products(id),
+  on_hand_qty numeric(12,2) not null default 0,
+  updated_by uuid references profiles(id),
+  updated_at timestamptz not null default now(),
+  unique (week_id, product_id)
 );
 
 -- =========================================================
@@ -235,6 +272,8 @@ alter table distributor_inventory enable row level security;
 alter table allocations enable row level security;
 alter table distributor_pos enable row level security;
 alter table section_dividers enable row level security;
+alter table packaging_inventory enable row level security;
+alter table label_inventory enable row level security;
 alter table audit_log enable row level security;
 
 -- Everyone signed in can read their own profile + see other profiles (for
@@ -276,6 +315,10 @@ create policy "distributor_inventory_rw" on distributor_inventory for all using 
 );
 create policy "allocations_rw" on allocations for all using (auth.uid() is not null);
 create policy "distributor_pos_rw" on distributor_pos for all using (auth.uid() is not null);
+-- Packaging/label inventory live right on the Inventory & Allocation page,
+-- so both admin and basic users can read/write them (same as allocations).
+create policy "packaging_inventory_rw" on packaging_inventory for all using (auth.uid() is not null);
+create policy "label_inventory_rw" on label_inventory for all using (auth.uid() is not null);
 
 -- Audit log: everyone can insert (so their own changes get logged); only
 -- admins can read/undo the full history.
