@@ -229,6 +229,35 @@ create table if not exists distributor_prices (
 );
 
 -- =========================================================
+-- Sales > Price List — brand-level price-to-retailer/distributor by
+-- package format (6-pack, 4-pack, single, 1/6 bbl keg, 1/2 bbl keg). This is
+-- the first piece of the old FCB Pricing desktop app being folded in under
+-- the Sales section; Margin Analysis, Cost Per Case, and Contribution
+-- Margin build on top of the same brand list in later phases.
+-- Distinct from distributor_prices above (which drives Order Value totals
+-- on Inventory & Allocation) — these two happened to share the name
+-- "Distributor Pricing" in the old desktop app, so this one's called
+-- "Price List" here to keep them apart. Admin-only, like the rest of Sales.
+-- =========================================================
+create table if not exists pricing_brands (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  sort_order double precision,
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists brand_price_list (
+  id uuid primary key default gen_random_uuid(),
+  brand_id uuid not null references pricing_brands(id) on delete cascade,
+  package_key text not null check (package_key in ('6pk','4pack','single','sixth','half')),
+  price numeric(10,2) not null default 0,
+  updated_by uuid references profiles(id),
+  updated_at timestamptz not null default now(),
+  unique (brand_id, package_key)
+);
+
+-- =========================================================
 -- Packaging inventory — manual on-hand counts for shared packaging
 -- materials (cans, trays, pakteks, lids, kegs). Consumption against these
 -- is computed in the app from allocations below, based on each product's
@@ -337,6 +366,8 @@ alter table section_dividers enable row level security;
 alter table packaging_inventory enable row level security;
 alter table label_inventory enable row level security;
 alter table audit_log enable row level security;
+alter table pricing_brands enable row level security;
+alter table brand_price_list enable row level security;
 
 -- Everyone signed in can read their own profile + see other profiles (for
 -- attribution / "who changed this" display); only admins can change roles.
@@ -387,6 +418,15 @@ create policy "distributor_prices_write_admin" on distributor_prices for all usi
 -- so both admin and basic users can read/write them (same as allocations).
 create policy "packaging_inventory_rw" on packaging_inventory for all using (auth.uid() is not null);
 create policy "label_inventory_rw" on label_inventory for all using (auth.uid() is not null);
+
+-- Sales > Price List: admin-only, full stop (read and write) — nobody else
+-- can even see it, matching Dashboard/Users.
+create policy "pricing_brands_admin" on pricing_brands for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+create policy "brand_price_list_admin" on brand_price_list for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
 
 -- Audit log: everyone can insert (so their own changes get logged); only
 -- admins can read/undo the full history.

@@ -26,6 +26,11 @@ const OPERATIONS_LINKS = [
   { href: "/admin/audit", label: "Audit Log" },
 ];
 
+// Sales sub-links get added here one at a time as each piece of the old FCB
+// Pricing desktop app is folded in — Price List first, then Margin Analysis,
+// Cost Per Case, and Contribution Margin.
+const SALES_LINKS = [{ href: "/sales/pricing", label: "Price List" }];
+
 const OPERATIONS_STORAGE_KEY = "fcb-sidebar-operations-expanded";
 const SALES_STORAGE_KEY = "fcb-sidebar-sales-expanded";
 
@@ -137,7 +142,11 @@ export default function Sidebar({ role }: { role: Role | undefined }) {
             </button>
             {salesExpanded && (
               <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
-                <span className="px-2 py-1.5 text-neutral-600">Coming soon</span>
+                {SALES_LINKS.map((link) => (
+                  <Link key={link.href} href={link.href} className={linkClass(link.href)}>
+                    {link.label}
+                  </Link>
+                ))}
               </div>
             )}
 

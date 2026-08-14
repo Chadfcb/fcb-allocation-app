@@ -144,6 +144,53 @@ export interface DistributorPrice {
   updated_at: string;
 }
 
+// =========================================================
+// Sales > Price List — brand-level price-to-retailer/distributor by
+// package format (6-pack, 4-pack, single, 1/6 bbl keg, 1/2 bbl keg). This is
+// the first piece of the old FCB Pricing desktop app being folded into the
+// Sales section here; Margin Analysis, Cost Per Case, and Contribution
+// Margin will build on top of the same brand list later.
+//
+// NOTE: distinct from DistributorPrice above (which drives Order Value
+// totals on Inventory & Allocation) — these two things happened to share
+// the name "Distributor Pricing" in the old desktop app, so this one is
+// called "Price List" here to keep them apart.
+// =========================================================
+export type PriceListPackageKey = "6pk" | "4pack" | "single" | "sixth" | "half";
+
+export const PRICE_LIST_PACKAGE_KEYS: PriceListPackageKey[] = [
+  "6pk",
+  "4pack",
+  "single",
+  "sixth",
+  "half",
+];
+
+export const PRICE_LIST_PACKAGE_LABELS: Record<PriceListPackageKey, string> = {
+  "6pk": "6pk 12oz",
+  "4pack": "4pk 16oz",
+  single: "Single 19.2oz",
+  sixth: "1/6 bbl",
+  half: "1/2 bbl",
+};
+
+export interface PricingBrand {
+  id: string;
+  name: string;
+  sort_order: number | null;
+  active: boolean;
+  created_at: string;
+}
+
+export interface BrandPriceListRow {
+  id: string;
+  brand_id: string;
+  package_key: PriceListPackageKey;
+  price: number;
+  updated_by: string | null;
+  updated_at: string;
+}
+
 export interface AuditLogEntry {
   id: string;
   week_id: string | null;

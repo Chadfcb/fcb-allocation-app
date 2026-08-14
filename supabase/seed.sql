@@ -121,3 +121,64 @@ insert into section_dividers (label, sort_order) values
   ('Sonoma Cider', 54.5),
   ('Speakeasy Ales & Lagers', 65.5),
   ('Tap Handles', 91.5);
+
+-- Sales > Price List — brands + starting prices, carried over from the old
+-- FCB Pricing desktop app's price list (same numbers, just corrected the
+-- "Mystic Hazy" typo to match the current brand name "Mystic Haze").
+insert into pricing_brands (name, sort_order) values
+  ('Big Daddy', 1),
+  ('Prohibition', 2),
+  ('Mystic Haze', 3),
+  ('Capt Hazy', 4),
+  ('Capt WC IPA', 5),
+  ('Peachy Vibes', 6),
+  ('Mango Bomb', 7),
+  ('Nectarine', 8)
+on conflict (name) do nothing;
+
+insert into brand_price_list (brand_id, package_key, price)
+select b.id, v.package_key, v.price
+from pricing_brands b
+join (values
+  ('Big Daddy',    '6pk',    28.25),
+  ('Big Daddy',    '4pack',  35.50),
+  ('Big Daddy',    'single', 19.00),
+  ('Big Daddy',    'sixth',  70.00),
+  ('Big Daddy',    'half',   143.00),
+  ('Prohibition',  '6pk',    38.25),
+  ('Prohibition',  '4pack',  35.50),
+  ('Prohibition',  'single', 0),
+  ('Prohibition',  'sixth',  70.00),
+  ('Prohibition',  'half',   143.00),
+  ('Mystic Haze',  '6pk',    28.25),
+  ('Mystic Haze',  '4pack',  35.50),
+  ('Mystic Haze',  'single', 24.50),
+  ('Mystic Haze',  'sixth',  70.00),
+  ('Mystic Haze',  'half',   143.00),
+  ('Capt Hazy',    '6pk',    0),
+  ('Capt Hazy',    '4pack',  45.34),
+  ('Capt Hazy',    'single', 24.50),
+  ('Capt Hazy',    'sixth',  71.50),
+  ('Capt Hazy',    'half',   143.00),
+  ('Capt WC IPA',  '6pk',    0),
+  ('Capt WC IPA',  '4pack',  45.34),
+  ('Capt WC IPA',  'single', 24.50),
+  ('Capt WC IPA',  'sixth',  71.50),
+  ('Capt WC IPA',  'half',   143.00),
+  ('Peachy Vibes', '6pk',    27.25),
+  ('Peachy Vibes', '4pack',  0),
+  ('Peachy Vibes', 'single', 24.50),
+  ('Peachy Vibes', 'sixth',  61.00),
+  ('Peachy Vibes', 'half',   135.00),
+  ('Mango Bomb',   '6pk',    0),
+  ('Mango Bomb',   '4pack',  54.40),
+  ('Mango Bomb',   'single', 30.50),
+  ('Mango Bomb',   'sixth',  90.00),
+  ('Mango Bomb',   'half',   194.00),
+  ('Nectarine',    '6pk',    0),
+  ('Nectarine',    '4pack',  45.34),
+  ('Nectarine',    'single', 0),
+  ('Nectarine',    'sixth',  74.50),
+  ('Nectarine',    'half',   160.00)
+) as v(brand_name, package_key, price) on v.brand_name = b.name
+on conflict (brand_id, package_key) do nothing;
