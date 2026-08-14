@@ -147,66 +147,79 @@ export default function DashboardLiveBlocks({ weekId }: { weekId: string | null 
     .filter((row) => row.remaining < 0);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h2 className="mb-2 text-sm font-semibold text-neutral-100">Distributor Order Values</h2>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          {distributors.map((d) => (
-            <div key={d.id} className="rounded-lg border border-neutral-800 bg-neutral-950 p-4">
-              <p
-                className="truncate text-xs uppercase tracking-wide text-neutral-500"
-                style={{ color: d.color ?? undefined }}
-              >
-                {d.name}
-              </p>
-              <p className="mt-1 text-xl font-semibold text-neutral-100">
-                {loading ? "…" : currencyFormatter.format(orderValueFor(d.id))}
-              </p>
+    <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+      <div className="flex flex-col rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+        <h2 className="mb-2 shrink-0 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+          Distributor Order Values
+        </h2>
+        <div className="min-h-0 max-h-80 flex-1 overflow-y-auto">
+          {loading ? (
+            <p className="text-sm text-neutral-500">Loading…</p>
+          ) : (
+            <div className="divide-y divide-neutral-900">
+              {distributors.map((d) => (
+                <div key={d.id} className="flex items-center justify-between gap-2 px-1.5 py-1.5 text-sm">
+                  <span className="truncate text-neutral-300" style={{ color: d.color ?? undefined }}>
+                    {d.name}
+                  </span>
+                  <span className="whitespace-nowrap font-semibold text-neutral-100">
+                    {currencyFormatter.format(orderValueFor(d.id))}
+                  </span>
+                </div>
+              ))}
             </div>
-          ))}
-          <div className="rounded-lg border border-neutral-700 bg-neutral-900 p-4">
-            <p className="text-xs uppercase tracking-wide text-neutral-400">Combined Total</p>
-            <p className="mt-1 text-xl font-semibold text-white">
-              {loading ? "…" : currencyFormatter.format(grandOrderValue)}
-            </p>
-          </div>
+          )}
+        </div>
+        <div className="mt-2 flex shrink-0 items-center justify-between gap-2 border-t border-neutral-800 px-1.5 pt-2 text-sm">
+          <span className="font-semibold text-neutral-200">Combined Total</span>
+          <span className="whitespace-nowrap font-semibold text-white">
+            {loading ? "…" : currencyFormatter.format(grandOrderValue)}
+          </span>
         </div>
       </div>
 
-      <div>
-        <h2 className="mb-2 text-sm font-semibold text-neutral-100">Packaging Shortages</h2>
-        {loading ? (
-          <p className="text-sm text-neutral-500">Loading…</p>
-        ) : packagingShortages.length === 0 ? (
-          <p className="text-sm text-neutral-500">Nothing needs ordering right now.</p>
-        ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            {packagingShortages.map((item) => (
-              <div key={item.key} className="rounded-lg border border-red-900/60 bg-neutral-950 p-4">
-                <p className="text-xs uppercase tracking-wide text-neutral-500">{item.label}</p>
-                <p className="mt-1 text-xl font-semibold text-red-400">{item.remaining}</p>
-              </div>
-            ))}
-          </div>
-        )}
+      <div className="flex flex-col rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+        <h2 className="mb-2 shrink-0 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+          Packaging Shortages
+        </h2>
+        <div className="min-h-0 max-h-80 flex-1 overflow-y-auto">
+          {loading ? (
+            <p className="text-sm text-neutral-500">Loading…</p>
+          ) : packagingShortages.length === 0 ? (
+            <p className="text-sm text-neutral-500">Nothing needs ordering right now.</p>
+          ) : (
+            <div className="divide-y divide-neutral-900">
+              {packagingShortages.map((item) => (
+                <div key={item.key} className="flex items-center justify-between gap-2 px-1.5 py-1.5 text-sm">
+                  <span className="truncate text-neutral-300">{item.label}</span>
+                  <span className="whitespace-nowrap font-semibold text-red-400">{item.remaining}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
-      <div>
-        <h2 className="mb-2 text-sm font-semibold text-neutral-100">Label Shortages</h2>
-        {loading ? (
-          <p className="text-sm text-neutral-500">Loading…</p>
-        ) : labelShortages.length === 0 ? (
-          <p className="text-sm text-neutral-500">Nothing needs ordering right now.</p>
-        ) : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            {labelShortages.map((row) => (
-              <div key={row.product.id} className="rounded-lg border border-red-900/60 bg-neutral-950 p-4">
-                <p className="truncate text-xs uppercase tracking-wide text-neutral-500">{row.product.name}</p>
-                <p className="mt-1 text-xl font-semibold text-red-400">{row.remaining}</p>
-              </div>
-            ))}
-          </div>
-        )}
+      <div className="flex flex-col rounded-lg border border-neutral-800 bg-neutral-950 p-3">
+        <h2 className="mb-2 shrink-0 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+          Label Shortages
+        </h2>
+        <div className="min-h-0 max-h-80 flex-1 overflow-y-auto">
+          {loading ? (
+            <p className="text-sm text-neutral-500">Loading…</p>
+          ) : labelShortages.length === 0 ? (
+            <p className="text-sm text-neutral-500">Nothing needs ordering right now.</p>
+          ) : (
+            <div className="divide-y divide-neutral-900">
+              {labelShortages.map((row) => (
+                <div key={row.product.id} className="flex items-center justify-between gap-2 px-1.5 py-1.5 text-sm">
+                  <span className="truncate text-neutral-300">{row.product.name}</span>
+                  <span className="whitespace-nowrap font-semibold text-red-400">{row.remaining}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
