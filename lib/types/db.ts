@@ -106,6 +106,20 @@ export interface DistributorPO {
   updated_at: string;
 }
 
+// Each distributor's own actual price per product (not an average — every
+// distributor can be charged differently for the same item). Not tied to a
+// week; it's standing catalog pricing, edited on the Distributor Pricing
+// page and used to compute Order Value totals on the Inventory &
+// Allocation page.
+export interface DistributorPrice {
+  id: string;
+  distributor_id: string;
+  product_id: string;
+  price: number;
+  updated_by: string | null;
+  updated_at: string;
+}
+
 export interface AuditLogEntry {
   id: string;
   week_id: string | null;

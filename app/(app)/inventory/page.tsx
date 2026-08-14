@@ -14,6 +14,7 @@ import type {
   SectionDivider,
   PackagingInventoryRow,
   LabelInventoryRow,
+  DistributorPrice,
 } from "@/lib/types/db";
 import { STATUS_FLAG_LABELS, STATUS_FLAG_COLORS } from "@/lib/types/db";
 import { PACKAGING_ITEMS, derivePackaging, computeConsumption } from "@/lib/packaging";
@@ -60,6 +61,7 @@ export default function InventoryPage() {
   const [pos, setPos] = useState<Record<string, DistributorPO>>({}); // key: distributorId
   const [packaging, setPackaging] = useState<Record<string, PackagingInventoryRow>>({}); // key: item_key
   const [labelInventory, setLabelInventory] = useState<Record<string, LabelInventoryRow>>({}); // key: productId
+  const [distributorPrices, setDistributorPrices] = useState<Record<string, DistributorPrice>>({}); // key: productId:distributorId
   const [userId, setUserId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -131,6 +133,15 @@ export default function InventoryPage() {
       .eq("active", true)
       .order("name");
     setDistributors((distributorData as Distributor[]) ?? []);
+
+    // Distributor pricing is standing catalog data, not tied to a week — set
+    // on the Distributor Pricing page, used here to drive Order Value totals.
+    const { data: priceData } = await supabase.from("distributor_prices").select("*");
+    const priceMap: Record<string, DistributorPrice> = {};
+    (priceData as DistributorPrice[] | null)?.forEach((row) => {
+      priceMap[`${row.product_id}:${row.distributor_id}`] = row;
+    });
+    setDistributorPrices(priceMap);
 
     if (weekData) {
       const { data: invData } = await supabase
@@ -221,7 +232,8 @@ export default function InventoryPage() {
   function orderValueFor(distributorId: string) {
     return products.reduce((sum, p) => {
       const qty = allocations[`${p.id}:${distributorId}`]?.quantity ?? 0;
-      return sum + (p.avg_price ?? 0) * qty;
+      const price = distributorPrices[`${p.id}:${distributorId}`]?.price ?? 0;
+      return sum + price * qty;
     }, 0);
   }
 
@@ -471,35 +483,6 @@ export default function InventoryPage() {
         tableName: "allocations",
         recordId: data.id,
         fieldName: "status_flag",
-        oldValue,
-        newValue: value,
-        changedBy: userId,
-      });
-    }
-
-    setSavingKey(null);
-  }
-
-  async function handleAvgPriceChange(productId: string, value: number) {
-    if (!userId) return;
-    const key = `price:${productId}`;
-    setSavingKey(key);
-
-    const existing = products.find((p) => p.id === productId);
-    const oldValue = existing?.avg_price ?? 0;
-    setProducts((prev) => prev.map((p) => (p.id === productId ? { ...p, avg_price: value } : p)));
-
-    const { error } = await supabase
-      .from("products")
-      .update({ avg_price: value })
-      .eq("id", productId);
-
-    if (!error) {
-      await logChange(supabase, {
-        weekId: week?.id ?? null,
-        tableName: "products",
-        recordId: productId,
-        fieldName: "avg_price",
         oldValue,
         newValue: value,
         changedBy: userId,
@@ -878,9 +861,6 @@ export default function InventoryPage() {
                 Product
               </th>
               <th className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right">
-                Avg Price ($)
-              </th>
-              <th className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right">
                 On Hand
               </th>
               <th className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right">
@@ -913,7 +893,6 @@ export default function InventoryPage() {
               <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
               <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
               <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
-              <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
               {distributors.map((d) => (
                 <th
                   key={d.id}
@@ -930,7 +909,6 @@ export default function InventoryPage() {
               <th className="sticky top-[60px] left-0 z-20 h-7 whitespace-nowrap bg-neutral-900 px-3 text-left font-normal">
                 PO # (Ekos)
               </th>
-              <th className="sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
               <th className="sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
               <th className="sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
               <th className="sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
@@ -976,7 +954,7 @@ export default function InventoryPage() {
                 const d = row.item;
                 return (
                   <tr key={rowKey(row)} className="bg-neutral-900/70">
-                    <td colSpan={7 + distributors.length} className="px-3 py-1.5">
+                    <td colSpan={6 + distributors.length} className="px-3 py-1.5">
                       <div className="flex items-center gap-2">
                         {moveButtons}
                         <span className="text-xs font-semibold uppercase tracking-wide text-neutral-300">
@@ -1015,24 +993,6 @@ export default function InventoryPage() {
                         </button>
                       )}
                       <span>{p.name}</span>
-                    </div>
-                  </td>
-                  <td className="px-2 py-1.5 text-right">
-                    <div className="flex items-center justify-end gap-0.5">
-                      <span className="text-neutral-500">$</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        disabled={!isAdmin}
-                        className="w-16 rounded border border-amber-700/60 bg-neutral-900 px-1.5 py-0.5 text-right text-neutral-100 disabled:border-neutral-700 disabled:opacity-60"
-                        value={p.avg_price ?? 0}
-                        title={
-                          isAdmin
-                            ? "Set this product's average price per item — drives the Order Value totals above"
-                            : "Only admins can edit price"
-                        }
-                        onChange={(e) => handleAvgPriceChange(p.id, Number(e.target.value) || 0)}
-                      />
                     </div>
                   </td>
                   {(["on_hand", "unlabeled", "to_be_packaged"] as const).map((field) => (
@@ -1119,7 +1079,7 @@ export default function InventoryPage() {
             })}
             {isAdmin && (
               <tr className="border-t border-neutral-800">
-                <td colSpan={7 + distributors.length} className="bg-neutral-950 px-3 py-2">
+                <td colSpan={6 + distributors.length} className="bg-neutral-950 px-3 py-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <input
                       type="text"
@@ -1159,7 +1119,7 @@ export default function InventoryPage() {
             )}
             {isAdmin && (
               <tr>
-                <td colSpan={7 + distributors.length} className="bg-neutral-950 px-3 py-2">
+                <td colSpan={6 + distributors.length} className="bg-neutral-950 px-3 py-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <input
                       type="text"
