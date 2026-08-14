@@ -172,7 +172,7 @@ create table if not exists distributor_pos (
   -- picks a value; never carries forward to a new week (fresh every week,
   -- same as po_number). Admin-only to change — enforced below by a
   -- trigger, since po_number itself stays editable by any signed-in user.
-  po_status text check (po_status in ('approved','pending')),
+  po_status text check (po_status in ('approved','pending','delivered')),
   updated_by uuid references profiles(id),
   updated_at timestamptz not null default now(),
   unique (week_id, distributor_id)

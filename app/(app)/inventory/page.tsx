@@ -1027,6 +1027,12 @@ export default function InventoryPage() {
                       >
                         {PO_STATUS_LABELS.pending}
                       </option>
+                      <option
+                        value="delivered"
+                        style={{ backgroundColor: PO_STATUS_COLORS.delivered, color: "#000000" }}
+                      >
+                        {PO_STATUS_LABELS.delivered}
+                      </option>
                     </select>
                   </th>
                 );
