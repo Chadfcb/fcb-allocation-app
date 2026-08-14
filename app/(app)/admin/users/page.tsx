@@ -8,6 +8,10 @@ export default function UsersPage() {
   const supabase = useMemo(() => createClient(), []);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [newEmail, setNewEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -26,6 +30,36 @@ export default function UsersPage() {
     await supabase.from("profiles").update({ role }).eq("id", profileId);
   }
 
+  async function handleCreateUser(e: React.FormEvent) {
+    e.preventDefault();
+    setCreateError(null);
+
+    if (newPassword.length < 8) {
+      setCreateError("Temporary password must be at least 8 characters.");
+      return;
+    }
+
+    setCreating(true);
+
+    const res = await fetch("/api/admin/create-user", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: newEmail, password: newPassword }),
+    });
+    const body = await res.json();
+
+    if (!res.ok) {
+      setCreateError(body.error ?? "Something went wrong creating that user.");
+      setCreating(false);
+      return;
+    }
+
+    setNewEmail("");
+    setNewPassword("");
+    setCreating(false);
+    await load();
+  }
+
   if (loading) return <p className="text-sm text-neutral-400">Loading…</p>;
 
   return (
@@ -39,11 +73,53 @@ export default function UsersPage() {
           week, or undo changes.
         </p>
         <p className="mt-1 text-xs text-neutral-500">
-          To add a new person, invite them from your Supabase project&apos;s Authentication
-          panel (or add a public sign-up flow later) — they&apos;ll show up here automatically
-          once they sign in for the first time, as a Basic user by default.
+          New people show up here automatically the first time they sign in, as a Basic user by
+          default.
         </p>
       </div>
+
+      <form
+        onSubmit={handleCreateUser}
+        className="flex flex-wrap items-end gap-3 rounded-lg border border-neutral-800 bg-neutral-950 p-4"
+      >
+        <div>
+          <label className="mb-1 block text-xs font-medium text-neutral-400">Email</label>
+          <input
+            type="email"
+            required
+            value={newEmail}
+            onChange={(e) => setNewEmail(e.target.value)}
+            placeholder="name@fullcirclebrewing.com"
+            className="w-64 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-neutral-400">
+            Temporary Password
+          </label>
+          <input
+            type="text"
+            required
+            minLength={8}
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            placeholder="At least 8 characters"
+            className="w-56 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+          />
+        </div>
+        <button
+          type="submit"
+          disabled={creating}
+          className="rounded-md bg-white px-4 py-1.5 text-sm font-medium text-black hover:bg-neutral-200 disabled:opacity-50"
+        >
+          {creating ? "Adding…" : "Add User"}
+        </button>
+        {createError && <p className="w-full text-sm text-red-400">{createError}</p>}
+        <p className="w-full text-xs text-neutral-500">
+          Share this email and temporary password with them directly — they&apos;ll be asked to
+          set their own password and name the first time they sign in.
+        </p>
+      </form>
 
       <div className="overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950">
         <table className="min-w-full divide-y divide-neutral-900 text-sm">
