@@ -339,6 +339,31 @@ create table if not exists batch_recipe_items (
   unique (brand_id, ingredient_key)
 );
 
+-- Which parent company a brand rolls up under — only used by Contribution
+-- Margin's company-grouped table below. Null for brands outside that
+-- feature's scope (e.g. Mango Bomb never had Contribution Margin figures
+-- in the old desktop app).
+alter table pricing_brands add column if not exists company text;
+
+-- =========================================================
+-- Sales > Contribution Margin — fourth and final piece of folding the old
+-- FCB Pricing desktop app in. One row per brand + package format holding
+-- the only user-editable figure this feature needs — revenue per case
+-- equivalent (a federal excise-tax accounting unit). Everything else
+-- (packaging/ingredient/labor cost, PTD) is computed live from Cost Per
+-- Case's and Margin Analysis's tables — see lib/contributionMargin.ts.
+-- Admin-only, like the rest of Sales.
+-- =========================================================
+create table if not exists contribution_margin_lines (
+  id uuid primary key default gen_random_uuid(),
+  brand_id uuid not null references pricing_brands(id) on delete cascade,
+  package_key text not null check (package_key in ('6pk','4pack','single','sixth','half')),
+  revenue_per_ce numeric(12,6) not null default 0,
+  updated_by uuid references profiles(id),
+  updated_at timestamptz not null default now(),
+  unique (brand_id, package_key)
+);
+
 -- =========================================================
 -- Packaging inventory — manual on-hand counts for shared packaging
 -- materials (cans, trays, pakteks, lids, kegs). Consumption against these
@@ -456,6 +481,7 @@ alter table packaging_components enable row level security;
 alter table ingredient_costs enable row level security;
 alter table package_labor_costs enable row level security;
 alter table batch_recipe_items enable row level security;
+alter table contribution_margin_lines enable row level security;
 
 -- Everyone signed in can read their own profile + see other profiles (for
 -- attribution / "who changed this" display); only admins can change roles.
@@ -531,6 +557,9 @@ create policy "package_labor_costs_admin" on package_labor_costs for all using (
   exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
 );
 create policy "batch_recipe_items_admin" on batch_recipe_items for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+create policy "contribution_margin_lines_admin" on contribution_margin_lines for all using (
   exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
 );
 

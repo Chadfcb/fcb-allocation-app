@@ -467,3 +467,64 @@ join (values
   ('Prohibition', 'ay4', 83.3333, 'g', 8)
 ) as v(brand_name, ingredient_key, qty_per_bbl, unit, sort_order) on v.brand_name = b.name
 on conflict (brand_id, ingredient_key) do nothing;
+
+-- Sales > Contribution Margin — company groupings (matching the old desktop
+-- app's "companies" dict, but using the same full company names already
+-- used elsewhere in the app rather than its internal shorthand) and the
+-- revenue-per-case-equivalent figure for each brand + package line the old
+-- app tracked. Mango Bomb is intentionally left with no company / no lines
+-- here — it was never part of this feature in the old app.
+update pricing_brands set company = 'Full Circle Brewing'
+  where name in ('Capt Hazy', 'Capt WC IPA', 'Juicy', 'Nectarine', 'Peachy Vibes');
+update pricing_brands set company = 'Speakeasy Ales & Lagers'
+  where name in ('Big Daddy', 'Prohibition', 'Mystic Haze');
+update pricing_brands set company = 'Sonoma Cider'
+  where name in ('The Pitchfork', 'The Hatchet');
+
+insert into contribution_margin_lines (brand_id, package_key, revenue_per_ce)
+select b.id, v.package_key, v.revenue_per_ce
+from pricing_brands b
+join (values
+  ('Capt Hazy',      '4pack', 33.98854862),
+  ('Capt Hazy',      'single', 30.62006128),
+  ('Capt Hazy',      'sixth', 31.13207547),
+  ('Capt Hazy',      'half', 20.75471698),
+  ('Capt WC IPA',    '4pack', 33.98854862),
+  ('Capt WC IPA',    'single', 30.62006128),
+  ('Capt WC IPA',    'sixth', 31.13207547),
+  ('Capt WC IPA',    'half', 20.75471698),
+  ('Juicy',          '4pack', 33.98854862),
+  ('Juicy',          'single', 30.62006128),
+  ('Juicy',          'sixth', 31.13207547),
+  ('Juicy',          'half', 20.75471698),
+  ('Nectarine',      '4pack', 36.24495646),
+  ('Nectarine',      'sixth', 32.4383164),
+  ('Nectarine',      'half', 23.22206096),
+  ('Peachy Vibes',   '6pk', 27.25),
+  ('Peachy Vibes',   'single', 30.62006128),
+  ('Peachy Vibes',   'sixth', 26.56023222),
+  ('Peachy Vibes',   'half', 19.59361393),
+  ('Big Daddy',      '6pk', 28.25),
+  ('Big Daddy',      '4pack', 33.98854862),
+  ('Big Daddy',      'single', 30.62006128),
+  ('Big Daddy',      'sixth', 30.47895501),
+  ('Big Daddy',      'half', 20.75471698),
+  ('Prohibition',    '6pk', 28.25),
+  ('Prohibition',    'single', 30.62006128),
+  ('Prohibition',    'sixth', 30.47895501),
+  ('Prohibition',    'half', 20.75471698),
+  ('Mystic Haze',    '6pk', 28.25),
+  ('Mystic Haze',    '4pack', 33.98854862),
+  ('Mystic Haze',    'single', 30.62006128),
+  ('Mystic Haze',    'sixth', 30.47895501),
+  ('Mystic Haze',    'half', 20.75471698),
+  ('The Pitchfork',  '4pack', 31.48476052),
+  ('The Pitchfork',  'single', 31.24496049),
+  ('The Pitchfork',  'sixth', 31.34978229),
+  ('The Pitchfork',  'half', 21.91582003),
+  ('The Hatchet',    '4pack', 31.48476052),
+  ('The Hatchet',    'single', 31.24496049),
+  ('The Hatchet',    'sixth', 31.34978229),
+  ('The Hatchet',    'half', 21.91582003)
+) as v(brand_name, package_key, revenue_per_ce) on v.brand_name = b.name
+on conflict (brand_id, package_key) do nothing;

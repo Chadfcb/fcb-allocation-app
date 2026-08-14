@@ -179,6 +179,11 @@ export interface PricingBrand {
   name: string;
   sort_order: number | null;
   active: boolean;
+  // Which parent company a brand rolls up under — only used by
+  // Contribution Margin's company-grouped table below. Null for brands
+  // outside that feature's scope (e.g. Mango Bomb, which never had
+  // Contribution Margin figures in the old desktop app).
+  company: string | null;
   created_at: string;
 }
 
@@ -254,6 +259,22 @@ export interface IngredientCostRow {
 export interface PackageLaborCostRow {
   package_key: PriceListPackageKey;
   labor: number;
+  updated_by: string | null;
+  updated_at: string;
+}
+
+// =========================================================
+// Sales > Contribution Margin — fourth and final piece of folding the old
+// FCB Pricing desktop app in. revenue_per_ce is the only figure here that's
+// user-editable; everything else that goes into the Contribution Margin
+// table is computed live from the Cost Per Case / Margin Analysis tables
+// above (see lib/contributionMargin.ts).
+// =========================================================
+export interface ContributionMarginLineRow {
+  id: string;
+  brand_id: string;
+  package_key: PriceListPackageKey;
+  revenue_per_ce: number;
   updated_by: string | null;
   updated_at: string;
 }
