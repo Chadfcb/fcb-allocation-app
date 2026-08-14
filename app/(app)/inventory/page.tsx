@@ -969,11 +969,14 @@ export default function InventoryPage() {
               <th className="sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
               <th className="sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
               {distributors.map((d) => (
-                <th key={d.id} className="sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2">
+                <th
+                  key={d.id}
+                  className="sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2 text-right"
+                >
                   <input
                     type="text"
                     placeholder="PO #"
-                    className="w-20 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-[11px] font-normal normal-case text-neutral-100"
+                    className="w-28 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-[11px] font-normal normal-case text-neutral-100"
                     value={pos[d.id]?.po_number ?? ""}
                     onChange={(e) => handlePoNumberChange(d.id, e.target.value)}
                   />
@@ -993,14 +996,17 @@ export default function InventoryPage() {
                 const status = pos[d.id]?.po_status ?? "";
                 const bgColor = status ? PO_STATUS_COLORS[status] : undefined;
                 return (
-                  <th key={d.id} className="sticky top-[88px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2">
+                  <th
+                    key={d.id}
+                    className="sticky top-[88px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2 text-right"
+                  >
                     <select
                       value={status}
                       disabled={!isAdmin}
                       onChange={(e) =>
                         handlePoStatusChange(d.id, (e.target.value || null) as PoStatus)
                       }
-                      className="w-20 rounded border border-neutral-700 px-1 py-0.5 text-right text-[11px] font-semibold normal-case disabled:opacity-70"
+                      className="w-28 rounded border border-neutral-700 px-1 py-0.5 text-right text-[11px] font-semibold normal-case disabled:opacity-70"
                       style={{
                         backgroundColor: bgColor ?? "#171717",
                         color: bgColor ? "#000000" : "#737373",
