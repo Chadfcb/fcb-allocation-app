@@ -32,6 +32,7 @@ const OPERATIONS_LINKS = [
 const SALES_LINKS = [
   { href: "/sales/pricing", label: "Price List" },
   { href: "/sales/margin-analysis", label: "Margin Analysis" },
+  { href: "/sales/cost-per-case", label: "Cost Per Case" },
 ];
 
 const OPERATIONS_STORAGE_KEY = "fcb-sidebar-operations-expanded";

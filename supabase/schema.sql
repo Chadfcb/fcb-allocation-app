@@ -292,6 +292,54 @@ create table if not exists margin_analysis_packages (
 );
 
 -- =========================================================
+-- Sales > Cost Per Case — third piece of folding FCB Pricing in. The
+-- underlying prices Margin Analysis falls back to when a brand doesn't set
+-- its own packaging-cost/labor override for a package format. Recipe/
+-- composition structure (how many cans/lids/labels per case, which
+-- ingredients go in a brand's batch) is fixed in lib/costPerCase.ts — only
+-- the unit prices here are editable. Admin-only, like the rest of Sales.
+-- =========================================================
+create table if not exists packaging_components (
+  component_key text primary key,
+  label text not null,
+  category text not null,
+  price numeric(10,2) not null default 0,
+  updated_by uuid references profiles(id),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists ingredient_costs (
+  id uuid primary key default gen_random_uuid(),
+  category_key text not null check (category_key in ('yeast','grain','hops','flavoring','other')),
+  ingredient_key text not null,
+  name text not null,
+  unit text not null,
+  price numeric(10,2) not null default 0,
+  updated_by uuid references profiles(id),
+  updated_at timestamptz not null default now(),
+  unique (category_key, ingredient_key)
+);
+
+create table if not exists package_labor_costs (
+  package_key text primary key check (package_key in ('6pk','4pack','single','sixth','half')),
+  labor numeric(10,2) not null default 0,
+  updated_by uuid references profiles(id),
+  updated_at timestamptz not null default now()
+);
+
+-- View-only in the app for now (matches the old desktop app) — one row per
+-- ingredient in a brand's recipe, quantity per BBL of batch.
+create table if not exists batch_recipe_items (
+  id uuid primary key default gen_random_uuid(),
+  brand_id uuid not null references pricing_brands(id) on delete cascade,
+  ingredient_key text not null,
+  qty_per_bbl numeric(12,4) not null default 0,
+  unit text not null,
+  sort_order int not null default 0,
+  unique (brand_id, ingredient_key)
+);
+
+-- =========================================================
 -- Packaging inventory — manual on-hand counts for shared packaging
 -- materials (cans, trays, pakteks, lids, kegs). Consumption against these
 -- is computed in the app from allocations below, based on each product's
@@ -404,6 +452,10 @@ alter table pricing_brands enable row level security;
 alter table brand_price_list enable row level security;
 alter table margin_analyses enable row level security;
 alter table margin_analysis_packages enable row level security;
+alter table packaging_components enable row level security;
+alter table ingredient_costs enable row level security;
+alter table package_labor_costs enable row level security;
+alter table batch_recipe_items enable row level security;
 
 -- Everyone signed in can read their own profile + see other profiles (for
 -- attribution / "who changed this" display); only admins can change roles.
@@ -467,6 +519,18 @@ create policy "margin_analyses_admin" on margin_analyses for all using (
   exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
 );
 create policy "margin_analysis_packages_admin" on margin_analysis_packages for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+create policy "packaging_components_admin" on packaging_components for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+create policy "ingredient_costs_admin" on ingredient_costs for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+create policy "package_labor_costs_admin" on package_labor_costs for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+create policy "batch_recipe_items_admin" on batch_recipe_items for all using (
   exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
 );
 

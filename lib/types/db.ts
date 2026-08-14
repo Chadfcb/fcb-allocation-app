@@ -224,6 +224,40 @@ export interface MarginAnalysisPackage {
   updated_at: string;
 }
 
+// =========================================================
+// Sales > Cost Per Case — third piece of folding the old FCB Pricing
+// desktop app in. These are the underlying prices Margin Analysis falls
+// back to when a brand doesn't set its own packaging-cost/labor override
+// (see lib/costPerCase.ts for the fixed recipe/composition data these
+// prices get multiplied through).
+// =========================================================
+export interface PackagingComponentRow {
+  component_key: string;
+  label: string;
+  category: string;
+  price: number;
+  updated_by: string | null;
+  updated_at: string;
+}
+
+export interface IngredientCostRow {
+  id: string;
+  category_key: string;
+  ingredient_key: string;
+  name: string;
+  unit: string;
+  price: number;
+  updated_by: string | null;
+  updated_at: string;
+}
+
+export interface PackageLaborCostRow {
+  package_key: PriceListPackageKey;
+  labor: number;
+  updated_by: string | null;
+  updated_at: string;
+}
+
 export interface AuditLogEntry {
   id: string;
   week_id: string | null;

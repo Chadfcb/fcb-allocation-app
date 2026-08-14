@@ -8,6 +8,8 @@ import type {
   MarginAnalysis,
   MarginAnalysisPackage,
   PriceListPackageKey,
+  PackagingComponentRow,
+  PackageLaborCostRow,
 } from "@/lib/types/db";
 import { PRICE_LIST_PACKAGE_KEYS } from "@/lib/types/db";
 import {
@@ -21,6 +23,28 @@ import {
   fmtRounded,
   fmtPct,
 } from "@/lib/marginAnalysis";
+import { calcPackagingCost } from "@/lib/costPerCase";
+
+// packCost/labor an admin can now edit under Sales > Cost Per Case — these
+// live values are what "no override" packages actually fall back to;
+// PKG_META's own packCost/labor are only used if those tables are somehow
+// empty (shouldn't happen once Cost Per Case's migration has run).
+type LiveDefaults = Record<PriceListPackageKey, { packCost: number; labor: number }>;
+
+function buildLiveDefaults(
+  packagingPrices: Record<string, number>,
+  laborCosts: Record<string, number>
+): LiveDefaults {
+  const result = {} as LiveDefaults;
+  PRICE_LIST_PACKAGE_KEYS.forEach((k) => {
+    const m = PKG_META[k];
+    result[k] = {
+      packCost: m.isKeg ? 0 : calcPackagingCost(k, packagingPrices),
+      labor: laborCosts[k] ?? m.labor,
+    };
+  });
+  return result;
+}
 
 // One package row's editable fields while creating/editing an analysis.
 interface PackageDraft {
@@ -88,7 +112,12 @@ function num(s: string): number {
 // Computes the batch-economics preview for one package row of a draft —
 // used both while editing (live preview) and isn't needed after save since
 // the detail view reads straight from the database.
-function previewFor(pkg: PackageDraft, key: PriceListPackageKey, batchCostStr: string) {
+function previewFor(
+  pkg: PackageDraft,
+  key: PriceListPackageKey,
+  batchCostStr: string,
+  liveDefaults: LiveDefaults
+) {
   const m = PKG_META[key];
   const ptr = num(pkg.ptr);
   const ptd = num(pkg.ptd);
@@ -96,12 +125,13 @@ function previewFor(pkg: PackageDraft, key: PriceListPackageKey, batchCostStr: s
   const calc = calcPkg(ptr, ptd, m.units);
   if (!calc) return null;
   const batchCost = num(batchCostStr);
-  const labor = pkg.labor ? num(pkg.labor) : m.labor;
+  const defaults = liveDefaults[key];
+  const labor = pkg.labor ? num(pkg.labor) : defaults.labor;
   const yieldAmt = pkg.yieldAmt ? num(pkg.yieldAmt) : m.defaultYield;
   if (m.isKeg) {
     return calcBatchKeg(calc.ptd, yieldAmt, batchCost, labor);
   }
-  const packCost = pkg.packCost ? num(pkg.packCost) : m.packCost;
+  const packCost = pkg.packCost ? num(pkg.packCost) : defaults.packCost;
   return calcBatchCan(calc.ptd, yieldAmt, batchCost, packCost, labor);
 }
 
@@ -125,6 +155,13 @@ export default function MarginAnalysisPage() {
   const [newBrandName, setNewBrandName] = useState("");
   const [addingBrand, setAddingBrand] = useState(false);
 
+  const [packagingPrices, setPackagingPrices] = useState<Record<string, number>>({});
+  const [laborCosts, setLaborCosts] = useState<Record<string, number>>({});
+  const liveDefaults = useMemo(
+    () => buildLiveDefaults(packagingPrices, laborCosts),
+    [packagingPrices, laborCosts]
+  );
+
   const load = useCallback(async () => {
     setLoading(true);
 
@@ -132,6 +169,23 @@ export default function MarginAnalysisPage() {
       data: { user },
     } = await supabase.auth.getUser();
     setUserId(user?.id ?? null);
+
+    // Live packaging-component and labor prices from Sales > Cost Per Case —
+    // these are what package rows fall back to when a brand doesn't set its
+    // own override.
+    const { data: componentData } = await supabase.from("packaging_components").select("*");
+    const componentMap: Record<string, number> = {};
+    (componentData as PackagingComponentRow[] | null)?.forEach((c) => {
+      componentMap[c.component_key] = c.price;
+    });
+    setPackagingPrices(componentMap);
+
+    const { data: laborData } = await supabase.from("package_labor_costs").select("*");
+    const laborMap: Record<string, number> = {};
+    (laborData as PackageLaborCostRow[] | null)?.forEach((l) => {
+      laborMap[l.package_key] = l.labor;
+    });
+    setLaborCosts(laborMap);
 
     const { data: brandData } = await supabase
       .from("pricing_brands")
@@ -516,9 +570,10 @@ export default function MarginAnalysisPage() {
                 );
               }
               const calc = calcPkg(ptr, ptd, m.units);
-              const labor = p?.labor ?? m.labor;
+              const defaults = liveDefaults[k];
+              const labor = p?.labor ?? defaults.labor;
               const yieldAmt = p?.yield_amt ?? m.defaultYield;
-              const packCost = p?.pack_cost ?? m.packCost;
+              const packCost = p?.pack_cost ?? defaults.packCost;
               const bc = calc
                 ? m.isKeg
                   ? calcBatchKeg(calc.ptd, yieldAmt, batchCost, labor)
@@ -730,6 +785,7 @@ export default function MarginAnalysisPage() {
                 packageKey={k}
                 pkg={draft.packages[k]}
                 batchCost={draft.batchCost}
+                liveDefaults={liveDefaults}
                 onChange={(field, value) => updatePackageDraft(k, field, value)}
               />
             ))}
@@ -743,6 +799,7 @@ export default function MarginAnalysisPage() {
                 packageKey={k}
                 pkg={draft.packages[k]}
                 batchCost={draft.batchCost}
+                liveDefaults={liveDefaults}
                 onChange={(field, value) => updatePackageDraft(k, field, value)}
               />
             ))}
@@ -775,15 +832,18 @@ function BatchFormCard({
   packageKey,
   pkg,
   batchCost,
+  liveDefaults,
   onChange,
 }: {
   packageKey: PriceListPackageKey;
   pkg: PackageDraft;
   batchCost: string;
+  liveDefaults: LiveDefaults;
   onChange: (field: keyof PackageDraft, value: string) => void;
 }) {
   const m = PKG_META[packageKey];
-  const bc = previewFor(pkg, packageKey, batchCost);
+  const defaults = liveDefaults[packageKey];
+  const bc = previewFor(pkg, packageKey, batchCost, liveDefaults);
 
   return (
     <div className="rounded-lg border border-neutral-800 bg-neutral-950 p-3">
@@ -799,7 +859,7 @@ function BatchFormCard({
             min="0"
             value={pkg.packCost}
             onChange={(e) => onChange("packCost", e.target.value)}
-            placeholder={m.packCost.toFixed(2)}
+            placeholder={defaults.packCost.toFixed(2)}
             className="w-20 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-neutral-100"
           />
         </div>
@@ -812,7 +872,7 @@ function BatchFormCard({
           min="0"
           value={pkg.labor}
           onChange={(e) => onChange("labor", e.target.value)}
-          placeholder={m.labor.toFixed(2)}
+          placeholder={defaults.labor.toFixed(2)}
           className="w-20 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-neutral-100"
         />
       </div>
