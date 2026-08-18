@@ -93,9 +93,9 @@ export default function InventoryPage() {
   const [newDividerLabel, setNewDividerLabel] = useState("");
   const [newDividerAfter, setNewDividerAfter] = useState("__end__");
   const [addingDivider, setAddingDivider] = useState(false);
+  const [showDistributorManager, setShowDistributorManager] = useState(false);
   const [newDistributorName, setNewDistributorName] = useState("");
   const [newDistributorColor, setNewDistributorColor] = useState("");
-  const [newDistributorAfter, setNewDistributorAfter] = useState("__end__");
   const [addingDistributor, setAddingDistributor] = useState(false);
   const [addDistributorError, setAddDistributorError] = useState<string | null>(null);
 
@@ -378,7 +378,9 @@ export default function InventoryPage() {
     setAddingDistributor(true);
     setAddDistributorError(null);
 
-    const sortOrder = computeDistributorInsertSortOrder(newDistributorAfter);
+    // Always added at the end — reorder afterward with the ◀ ▶ buttons in
+    // the manager panel, instead of a separate position picker up front.
+    const sortOrder = computeDistributorInsertSortOrder("__end__");
     const color = newDistributorColor.trim() || null;
 
     const { data, error } = await supabase
@@ -407,7 +409,6 @@ export default function InventoryPage() {
     );
     setNewDistributorName("");
     setNewDistributorColor("");
-    setNewDistributorAfter("__end__");
     setAddingDistributor(false);
 
     await logChange(supabase, {
@@ -446,6 +447,67 @@ export default function InventoryPage() {
     }
 
     setSavingKey(null);
+  }
+
+  // Renaming saves on every keystroke (same convention as PO # elsewhere on
+  // this page) rather than on blur — kept snappy since it's a single short
+  // text field, not a big form.
+  async function handleRenameDistributor(distributorId: string, name: string) {
+    if (!userId) return;
+    const existing = distributors.find((d) => d.id === distributorId);
+    if (!existing) return;
+
+    // Update locally right away so typing feels instant; don't re-sort the
+    // list mid-edit (that happens naturally next time the page loads).
+    setDistributors((prev) => prev.map((d) => (d.id === distributorId ? { ...d, name } : d)));
+
+    const trimmed = name.trim();
+    if (!trimmed) return; // don't persist a blank name while mid-edit
+
+    const { error } = await supabase
+      .from("distributors")
+      .update({ name: trimmed })
+      .eq("id", distributorId);
+
+    if (!error && existing.name !== trimmed) {
+      await logChange(supabase, {
+        weekId: week?.id ?? null,
+        tableName: "distributors",
+        recordId: distributorId,
+        fieldName: "name",
+        oldValue: existing.name,
+        newValue: trimmed,
+        changedBy: userId,
+      });
+    }
+  }
+
+  async function handleChangeDistributorColor(distributorId: string, color: string) {
+    if (!userId) return;
+    const existing = distributors.find((d) => d.id === distributorId);
+    if (!existing) return;
+    const newColor = color || null;
+
+    setDistributors((prev) =>
+      prev.map((d) => (d.id === distributorId ? { ...d, color: newColor } : d))
+    );
+
+    const { error } = await supabase
+      .from("distributors")
+      .update({ color: newColor })
+      .eq("id", distributorId);
+
+    if (!error) {
+      await logChange(supabase, {
+        weekId: week?.id ?? null,
+        tableName: "distributors",
+        recordId: distributorId,
+        fieldName: "color",
+        oldValue: existing.color,
+        newValue: newColor,
+        changedBy: userId,
+      });
+    }
   }
 
   async function handleMoveDistributor(index: number, direction: "left" | "right") {
@@ -1060,67 +1122,125 @@ export default function InventoryPage() {
       </div>
 
       {isAdmin && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-xs">
-          <span className="shrink-0 text-neutral-500">Add distributor column:</span>
-          <input
-            type="text"
-            placeholder="Distributor name…"
-            className="w-40 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100"
-            value={newDistributorName}
-            onChange={(e) => setNewDistributorName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleAddDistributor()}
-          />
-          <span className="text-neutral-500">color:</span>
-          <div className="flex flex-wrap items-center gap-1">
-            {DISTRIBUTOR_COLOR_SWATCHES.map((c) => (
-              <button
-                key={c.hex}
-                type="button"
-                title={c.label}
-                onClick={() =>
-                  setNewDistributorColor((prev) => (prev === c.hex ? "" : c.hex))
-                }
-                style={{ backgroundColor: c.hex }}
-                className={`h-6 w-6 shrink-0 rounded-full border-2 ${
-                  newDistributorColor === c.hex
-                    ? "border-white"
-                    : "border-transparent hover:border-neutral-500"
-                }`}
-              />
-            ))}
-            {/* Native color picker as a fallback for an exact custom shade —
-                shows its own visual swatch/wheel, no hex typing required. */}
-            <input
-              type="color"
-              title="Pick a custom color"
-              value={newDistributorColor || "#888888"}
-              onChange={(e) => setNewDistributorColor(e.target.value)}
-              className="h-6 w-6 shrink-0 cursor-pointer rounded-full border border-neutral-700 bg-transparent p-0"
-            />
-          </div>
-          <span className="text-neutral-500">position:</span>
-          <select
-            className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-100"
-            value={newDistributorAfter}
-            onChange={(e) => setNewDistributorAfter(e.target.value)}
-          >
-            <option value="__start__">At the very left</option>
-            <option value="__end__">At the end (right)</option>
-            {distributors.map((d) => (
-              <option key={d.id} value={d.id}>
-                After: {d.name}
-              </option>
-            ))}
-          </select>
+        <div className="flex flex-col gap-2">
           <button
-            onClick={handleAddDistributor}
-            disabled={addingDistributor || !newDistributorName.trim()}
-            className="shrink-0 rounded-md bg-white px-3 py-1 text-xs font-medium text-black hover:bg-neutral-200 disabled:opacity-50"
+            onClick={() => setShowDistributorManager((prev) => !prev)}
+            className="self-start rounded-md border border-neutral-700 px-3 py-1.5 text-xs font-medium text-neutral-200 hover:bg-neutral-800"
           >
-            {addingDistributor ? "Adding…" : "+ Add Distributor"}
+            {showDistributorManager ? "Done editing distributors" : "✎ Edit Distributor Columns"}
           </button>
-          {addDistributorError && (
-            <span className="whitespace-nowrap text-xs text-red-400">{addDistributorError}</span>
+
+          {showDistributorManager && (
+            <div className="flex flex-col gap-2 rounded-lg border border-neutral-800 bg-neutral-950 p-3 text-xs">
+              <div className="flex flex-col divide-y divide-neutral-900">
+                {distributors.map((d, index) => (
+                  <div key={d.id} className="flex flex-wrap items-center gap-2 py-1.5">
+                    <span className="flex items-center gap-0.5 text-neutral-600">
+                      <button
+                        onClick={() => handleMoveDistributor(index, "left")}
+                        disabled={index === 0}
+                        title="Move left"
+                        className="hover:text-neutral-200 disabled:opacity-30"
+                      >
+                        ◀
+                      </button>
+                      <button
+                        onClick={() => handleMoveDistributor(index, "right")}
+                        disabled={index === distributors.length - 1}
+                        title="Move right"
+                        className="hover:text-neutral-200 disabled:opacity-30"
+                      >
+                        ▶
+                      </button>
+                    </span>
+                    <input
+                      type="text"
+                      value={d.name}
+                      onChange={(e) => handleRenameDistributor(d.id, e.target.value)}
+                      className="w-40 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100"
+                    />
+                    <select
+                      value={d.color ?? ""}
+                      onChange={(e) => handleChangeDistributorColor(d.id, e.target.value)}
+                      className="w-32 rounded border border-neutral-700 px-2 py-1 text-xs font-semibold"
+                      style={{
+                        backgroundColor: d.color ?? "#171717",
+                        color: d.color ? "#000000" : "#a3a3a3",
+                      }}
+                    >
+                      <option value="" style={{ backgroundColor: "#171717", color: "#a3a3a3" }}>
+                        — (no color)
+                      </option>
+                      {DISTRIBUTOR_COLOR_SWATCHES.map((c) => (
+                        <option
+                          key={c.hex}
+                          value={c.hex}
+                          style={{ backgroundColor: c.hex, color: "#000000" }}
+                        >
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => handleArchiveDistributor(d.id)}
+                      disabled={savingKey === `archive-distributor:${d.id}`}
+                      title="Remove this distributor column (archives it — doesn't erase history)"
+                      className="ml-auto shrink-0 rounded text-neutral-600 hover:text-red-400 disabled:opacity-50"
+                    >
+                      ✕ Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 border-t border-neutral-800 pt-2">
+                <span className="shrink-0 text-neutral-500">Add new:</span>
+                <input
+                  type="text"
+                  placeholder="Distributor name…"
+                  className="w-40 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100"
+                  value={newDistributorName}
+                  onChange={(e) => setNewDistributorName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleAddDistributor()}
+                />
+                <select
+                  value={newDistributorColor}
+                  onChange={(e) => setNewDistributorColor(e.target.value)}
+                  className="w-32 rounded border border-neutral-700 px-2 py-1 text-xs font-semibold"
+                  style={{
+                    backgroundColor: newDistributorColor || "#171717",
+                    color: newDistributorColor ? "#000000" : "#a3a3a3",
+                  }}
+                >
+                  <option value="" style={{ backgroundColor: "#171717", color: "#a3a3a3" }}>
+                    — (no color)
+                  </option>
+                  {DISTRIBUTOR_COLOR_SWATCHES.map((c) => (
+                    <option
+                      key={c.hex}
+                      value={c.hex}
+                      style={{ backgroundColor: c.hex, color: "#000000" }}
+                    >
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={handleAddDistributor}
+                  disabled={addingDistributor || !newDistributorName.trim()}
+                  className="shrink-0 rounded-md bg-white px-3 py-1 text-xs font-medium text-black hover:bg-neutral-200 disabled:opacity-50"
+                >
+                  {addingDistributor ? "Adding…" : "+ Add Distributor"}
+                </button>
+                {addDistributorError && (
+                  <span className="whitespace-nowrap text-xs text-red-400">{addDistributorError}</span>
+                )}
+              </div>
+              <p className="text-neutral-500">
+                New distributors are added at the end — use ◀ ▶ above to reposition. Removing
+                archives a distributor rather than erasing its history.
+              </p>
+            </div>
           )}
         </div>
       )}
@@ -1144,43 +1264,13 @@ export default function InventoryPage() {
               <th className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right font-semibold">
                 Total
               </th>
-              {distributors.map((d, index) => (
+              {distributors.map((d) => (
                 <th
                   key={d.id}
                   className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right"
                   style={{ color: d.color ?? undefined }}
                 >
-                  <div className="flex items-center justify-end gap-0.5">
-                    {isAdmin && (
-                      <span className="flex items-center gap-0.5 normal-case text-neutral-600">
-                        <button
-                          onClick={() => handleMoveDistributor(index, "left")}
-                          disabled={index === 0}
-                          title="Move left"
-                          className="hover:text-neutral-200 disabled:opacity-30"
-                        >
-                          ◀
-                        </button>
-                        <button
-                          onClick={() => handleArchiveDistributor(d.id)}
-                          disabled={savingKey === `archive-distributor:${d.id}`}
-                          title="Remove this distributor column (archives it — doesn't erase history)"
-                          className="hover:text-red-400 disabled:opacity-50"
-                        >
-                          ✕
-                        </button>
-                        <button
-                          onClick={() => handleMoveDistributor(index, "right")}
-                          disabled={index === distributors.length - 1}
-                          title="Move right"
-                          className="hover:text-neutral-200 disabled:opacity-30"
-                        >
-                          ▶
-                        </button>
-                      </span>
-                    )}
-                    <span>{d.name}</span>
-                  </div>
+                  {d.name}
                 </th>
               ))}
               <th className="sticky top-0 right-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right font-semibold">
