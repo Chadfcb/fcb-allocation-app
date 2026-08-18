@@ -50,6 +50,25 @@ const currencyFormatter = new Intl.NumberFormat("en-US", {
   currency: "USD",
 });
 
+// Click-to-pick swatches for the "Add distributor column" color field —
+// nobody should have to know a hex code. The first 7 are the colors
+// already in use by the current distributors (so it's obvious what's
+// taken); the rest are additional distinguishable options for new ones.
+const DISTRIBUTOR_COLOR_SWATCHES: { hex: string; label: string }[] = [
+  { hex: "#3fb950", label: "Green (Matagrano)" },
+  { hex: "#d4a017", label: "Gold (Saccani)" },
+  { hex: "#388bfd", label: "Blue (Valleywide)" },
+  { hex: "#bc8cff", label: "Purple (Guardian)" },
+  { hex: "#00b4d8", label: "Cyan (Markstein)" },
+  { hex: "#f85149", label: "Red (Coast)" },
+  { hex: "#ff7b54", label: "Orange (Superior)" },
+  { hex: "#e56399", label: "Pink" },
+  { hex: "#9ccc3f", label: "Lime" },
+  { hex: "#8a94a6", label: "Slate" },
+  { hex: "#c98d4a", label: "Brown" },
+  { hex: "#e6e6e6", label: "Light gray" },
+];
+
 export default function InventoryPage() {
   const supabase = useMemo(() => createClient(), []);
 
@@ -1051,14 +1070,34 @@ export default function InventoryPage() {
             onChange={(e) => setNewDistributorName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && handleAddDistributor()}
           />
-          <input
-            type="text"
-            placeholder="#hex color (optional)"
-            className="w-36 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100"
-            value={newDistributorColor}
-            onChange={(e) => setNewDistributorColor(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleAddDistributor()}
-          />
+          <span className="text-neutral-500">color:</span>
+          <div className="flex flex-wrap items-center gap-1">
+            {DISTRIBUTOR_COLOR_SWATCHES.map((c) => (
+              <button
+                key={c.hex}
+                type="button"
+                title={c.label}
+                onClick={() =>
+                  setNewDistributorColor((prev) => (prev === c.hex ? "" : c.hex))
+                }
+                style={{ backgroundColor: c.hex }}
+                className={`h-6 w-6 shrink-0 rounded-full border-2 ${
+                  newDistributorColor === c.hex
+                    ? "border-white"
+                    : "border-transparent hover:border-neutral-500"
+                }`}
+              />
+            ))}
+            {/* Native color picker as a fallback for an exact custom shade —
+                shows its own visual swatch/wheel, no hex typing required. */}
+            <input
+              type="color"
+              title="Pick a custom color"
+              value={newDistributorColor || "#888888"}
+              onChange={(e) => setNewDistributorColor(e.target.value)}
+              className="h-6 w-6 shrink-0 cursor-pointer rounded-full border border-neutral-700 bg-transparent p-0"
+            />
+          </div>
           <span className="text-neutral-500">position:</span>
           <select
             className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-100"
