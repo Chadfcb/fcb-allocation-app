@@ -92,7 +92,7 @@ const EDIT_MODE_OPTIONS: { key: EditMode; label: string }[] = [
 // fields, add-new forms) gets the same yellow "you're editing this" look
 // while its mode is active.
 const EDIT_ICON_BTN =
-  "rounded border border-yellow-500/70 bg-yellow-500/10 px-1 text-yellow-400 hover:bg-yellow-500/20 disabled:opacity-30 disabled:border-neutral-700 disabled:bg-transparent disabled:text-neutral-600";
+  "px-0.5 text-yellow-400 hover:text-yellow-300 disabled:opacity-30 disabled:text-neutral-600";
 const EDIT_INPUT =
   "rounded border border-yellow-500/70 bg-neutral-900 px-2 py-1 text-sm text-neutral-100 focus:border-yellow-400 focus:outline-none";
 const EDIT_PANEL = "rounded-lg border border-yellow-500/40 bg-yellow-500/[0.03] p-3";
@@ -2137,119 +2137,6 @@ export default function InventoryPage() {
               </div>
             )}
           </div>
-
-          {activeEditMode === "distributors" && (
-            <div className="flex flex-col gap-2 text-xs">
-              <div className="flex flex-col divide-y divide-neutral-900">
-                {distributors.map((d, index) => (
-                  <div key={d.id} className="flex flex-wrap items-center gap-2 py-1.5">
-                    <span className="flex items-center gap-1">
-                      <button
-                        onClick={() => handleMoveDistributor(index, "left")}
-                        disabled={index === 0}
-                        title="Move left"
-                        className={EDIT_ICON_BTN}
-                      >
-                        ◀
-                      </button>
-                      <button
-                        onClick={() => handleMoveDistributor(index, "right")}
-                        disabled={index === distributors.length - 1}
-                        title="Move right"
-                        className={EDIT_ICON_BTN}
-                      >
-                        ▶
-                      </button>
-                    </span>
-                    <input
-                      type="text"
-                      value={d.name}
-                      onChange={(e) => handleRenameDistributor(d.id, e.target.value)}
-                      className={`${EDIT_INPUT} w-40`}
-                    />
-                    <select
-                      value={d.color ?? ""}
-                      onChange={(e) => handleChangeDistributorColor(d.id, e.target.value)}
-                      className="w-32 rounded border border-yellow-500/70 px-2 py-1 text-xs font-semibold"
-                      style={{
-                        backgroundColor: d.color ?? "#171717",
-                        color: d.color ? "#000000" : "#a3a3a3",
-                      }}
-                    >
-                      <option value="" style={{ backgroundColor: "#171717", color: "#a3a3a3" }}>
-                        — (no color)
-                      </option>
-                      {DISTRIBUTOR_COLOR_SWATCHES.map((c) => (
-                        <option
-                          key={c.hex}
-                          value={c.hex}
-                          style={{ backgroundColor: c.hex, color: "#000000" }}
-                        >
-                          {c.label}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      onClick={() => handleArchiveDistributor(d.id)}
-                      disabled={savingKey === `archive-distributor:${d.id}`}
-                      title="Remove this distributor column (archives it — doesn't erase history)"
-                      className={`ml-auto shrink-0 ${EDIT_ICON_BTN}`}
-                    >
-                      ✕ Remove
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 border-t border-neutral-800 pt-2">
-                <span className="shrink-0 text-neutral-400">Add new:</span>
-                <input
-                  type="text"
-                  placeholder="Distributor name…"
-                  className={`${EDIT_INPUT} w-40`}
-                  value={newDistributorName}
-                  onChange={(e) => setNewDistributorName(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleAddDistributor()}
-                />
-                <select
-                  value={newDistributorColor}
-                  onChange={(e) => setNewDistributorColor(e.target.value)}
-                  className="w-32 rounded border border-yellow-500/70 px-2 py-1 text-xs font-semibold"
-                  style={{
-                    backgroundColor: newDistributorColor || "#171717",
-                    color: newDistributorColor ? "#000000" : "#a3a3a3",
-                  }}
-                >
-                  <option value="" style={{ backgroundColor: "#171717", color: "#a3a3a3" }}>
-                    — (no color)
-                  </option>
-                  {DISTRIBUTOR_COLOR_SWATCHES.map((c) => (
-                    <option
-                      key={c.hex}
-                      value={c.hex}
-                      style={{ backgroundColor: c.hex, color: "#000000" }}
-                    >
-                      {c.label}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  onClick={handleAddDistributor}
-                  disabled={addingDistributor || !newDistributorName.trim()}
-                  className="shrink-0 rounded-md bg-yellow-500 px-3 py-1 text-xs font-medium text-black hover:bg-yellow-400 disabled:opacity-50"
-                >
-                  {addingDistributor ? "Adding…" : "+ Add Distributor"}
-                </button>
-                {addDistributorError && (
-                  <span className="whitespace-nowrap text-red-400">{addDistributorError}</span>
-                )}
-              </div>
-              <p className="text-neutral-500">
-                New distributors are added at the end — use ◀ ▶ above to reposition. Removing
-                archives a distributor rather than erasing its history.
-              </p>
-            </div>
-          )}
         </div>
       )}
 
@@ -2272,15 +2159,75 @@ export default function InventoryPage() {
               <th className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right font-semibold">
                 Total
               </th>
-              {distributors.map((d) => (
-                <th
-                  key={d.id}
-                  className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right"
-                  style={{ color: d.color ?? undefined }}
-                >
-                  {d.name}
-                </th>
-              ))}
+              {distributors.map((d, index) =>
+                isAdmin && activeEditMode === "distributors" ? (
+                  <th
+                    key={d.id}
+                    className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-1 text-right normal-case"
+                  >
+                    <div className="flex items-center justify-end gap-0.5">
+                      <button
+                        onClick={() => handleMoveDistributor(index, "left")}
+                        disabled={index === 0}
+                        title="Move left"
+                        className={EDIT_ICON_BTN}
+                      >
+                        ◀
+                      </button>
+                      <button
+                        onClick={() => handleMoveDistributor(index, "right")}
+                        disabled={index === distributors.length - 1}
+                        title="Move right"
+                        className={EDIT_ICON_BTN}
+                      >
+                        ▶
+                      </button>
+                      <input
+                        type="text"
+                        value={d.name}
+                        onChange={(e) => handleRenameDistributor(d.id, e.target.value)}
+                        className={`${EDIT_INPUT} w-16 px-1 py-0.5 text-[11px]`}
+                      />
+                      <select
+                        value={d.color ?? ""}
+                        onChange={(e) => handleChangeDistributorColor(d.id, e.target.value)}
+                        title="Change color"
+                        className="h-5 w-5 shrink-0 rounded border border-neutral-700 p-0 text-[8px]"
+                        style={{ backgroundColor: d.color ?? "#404040" }}
+                      >
+                        <option value="" style={{ backgroundColor: "#171717", color: "#a3a3a3" }}>
+                          — (no color)
+                        </option>
+                        {DISTRIBUTOR_COLOR_SWATCHES.map((c) => (
+                          <option
+                            key={c.hex}
+                            value={c.hex}
+                            style={{ backgroundColor: c.hex, color: "#000000" }}
+                          >
+                            {c.label}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        onClick={() => handleArchiveDistributor(d.id)}
+                        disabled={savingKey === `archive-distributor:${d.id}`}
+                        title="Remove this distributor column (archives it — doesn't erase history)"
+                        className={EDIT_ICON_BTN}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </th>
+                ) : (
+                  <th
+                    key={d.id}
+                    className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right"
+                    style={{ color: d.color ?? undefined }}
+                  >
+                    {d.name}
+                  </th>
+                )
+              )}
               <th className="sticky top-0 right-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right font-semibold">
                 Remaining
               </th>
@@ -2289,10 +2236,61 @@ export default function InventoryPage() {
               <th className="sticky top-8 left-0 z-20 h-7 whitespace-nowrap bg-neutral-900 px-3 text-left font-semibold">
                 Order Value
               </th>
-              <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
-              <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
-              <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
-              <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+              {isAdmin && activeEditMode === "distributors" ? (
+                <th
+                  colSpan={4}
+                  className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2 text-left normal-case"
+                >
+                  <div className="flex items-center gap-1">
+                    <span className="shrink-0 text-neutral-500">Add:</span>
+                    <input
+                      type="text"
+                      placeholder="Distributor name…"
+                      value={newDistributorName}
+                      onChange={(e) => setNewDistributorName(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleAddDistributor()}
+                      className={`${EDIT_INPUT} w-28 px-1 py-0.5 text-[11px]`}
+                    />
+                    <select
+                      value={newDistributorColor}
+                      onChange={(e) => setNewDistributorColor(e.target.value)}
+                      title="Color"
+                      className="h-5 w-5 shrink-0 rounded border border-neutral-700 p-0 text-[8px]"
+                      style={{ backgroundColor: newDistributorColor || "#404040" }}
+                    >
+                      <option value="" style={{ backgroundColor: "#171717", color: "#a3a3a3" }}>
+                        — (no color)
+                      </option>
+                      {DISTRIBUTOR_COLOR_SWATCHES.map((c) => (
+                        <option
+                          key={c.hex}
+                          value={c.hex}
+                          style={{ backgroundColor: c.hex, color: "#000000" }}
+                        >
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={handleAddDistributor}
+                      disabled={addingDistributor || !newDistributorName.trim()}
+                      className="shrink-0 rounded bg-yellow-500 px-1.5 py-0.5 text-[10px] font-medium text-black hover:bg-yellow-400 disabled:opacity-50"
+                    >
+                      {addingDistributor ? "…" : "+ Add"}
+                    </button>
+                    {addDistributorError && (
+                      <span className="whitespace-nowrap text-red-400">{addDistributorError}</span>
+                    )}
+                  </div>
+                </th>
+              ) : (
+                <>
+                  <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+                  <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+                  <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+                  <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+                </>
+              )}
               {distributors.map((d) => (
                 <th
                   key={d.id}
