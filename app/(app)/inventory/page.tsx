@@ -2139,7 +2139,7 @@ export default function InventoryPage() {
           </div>
 
           {activeEditMode === "distributors" && (
-            <div className={`${EDIT_PANEL} flex flex-col gap-2 text-xs`}>
+            <div className="flex flex-col gap-2 text-xs">
               <div className="flex flex-col divide-y divide-neutral-900">
                 {distributors.map((d, index) => (
                   <div key={d.id} className="flex flex-wrap items-center gap-2 py-1.5">
