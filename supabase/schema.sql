@@ -56,6 +56,11 @@ create table if not exists distributors (
   name text not null unique,
   color text, -- hex color used in the UI, matches FCB-events distributor color convention
   active boolean not null default true,
+  -- Lets admins reorder/add/remove distributor columns on Inventory &
+  -- Allocation the same way products can be reordered/added/removed —
+  -- null (the original 7 seeded distributors) sorts after any explicitly
+  -- ordered ones, then falls back to name.
+  sort_order double precision,
   created_at timestamptz not null default now()
 );
 

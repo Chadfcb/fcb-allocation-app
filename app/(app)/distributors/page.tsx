@@ -80,6 +80,7 @@ export default function DistributorsPage() {
       .from("distributors")
       .select("*")
       .eq("active", true)
+      .order("sort_order", { ascending: true, nullsFirst: false })
       .order("name");
     const dList = (distributorData as Distributor[]) ?? [];
     setDistributors(dList);

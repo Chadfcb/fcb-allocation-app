@@ -39,6 +39,7 @@ export default function SalesPricingPage() {
       .from("distributors")
       .select("*")
       .eq("active", true)
+      .order("sort_order", { ascending: true, nullsFirst: false })
       .order("name");
     setDistributors((distributorData as Distributor[]) ?? []);
 

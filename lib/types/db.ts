@@ -20,6 +20,10 @@ export interface Distributor {
   name: string;
   color: string | null;
   active: boolean;
+  // Lets admins reorder/add/remove distributor columns on Inventory &
+  // Allocation, same as products. Null (the original seeded distributors)
+  // sorts after any explicitly ordered ones, then falls back to name.
+  sort_order: number | null;
 }
 
 export interface Product {

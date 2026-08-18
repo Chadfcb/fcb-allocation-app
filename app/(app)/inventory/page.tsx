@@ -74,6 +74,11 @@ export default function InventoryPage() {
   const [newDividerLabel, setNewDividerLabel] = useState("");
   const [newDividerAfter, setNewDividerAfter] = useState("__end__");
   const [addingDivider, setAddingDivider] = useState(false);
+  const [newDistributorName, setNewDistributorName] = useState("");
+  const [newDistributorColor, setNewDistributorColor] = useState("");
+  const [newDistributorAfter, setNewDistributorAfter] = useState("__end__");
+  const [addingDistributor, setAddingDistributor] = useState(false);
+  const [addDistributorError, setAddDistributorError] = useState<string | null>(null);
 
   // Label Inventory is pinned to Packaging Inventory's actual rendered
   // height (measured, not guessed) so it always matches exactly with no
@@ -132,6 +137,7 @@ export default function InventoryPage() {
       .from("distributors")
       .select("*")
       .eq("active", true)
+      .order("sort_order", { ascending: true, nullsFirst: false })
       .order("name");
     setDistributors((distributorData as Distributor[]) ?? []);
 
@@ -328,6 +334,132 @@ export default function InventoryPage() {
     if (!error) {
       setDividers((prev) => prev.filter((d) => d.id !== dividerId));
     }
+  }
+
+  // Same "insert after" positioning as computeInsertSortOrder above, just
+  // over the flat distributors list (columns, not rows — no dividers here).
+  function computeDistributorInsertSortOrder(afterKey: string): number {
+    const order = (d: Distributor) => d.sort_order ?? Number.MAX_SAFE_INTEGER;
+    const maxOrder = distributors.reduce((max, d) => Math.max(max, order(d)), 0);
+    if (afterKey === "__end__") return maxOrder + 1;
+    if (afterKey === "__start__") {
+      const minOrder = distributors.reduce((min, d) => Math.min(min, order(d)), maxOrder);
+      return minOrder - 1;
+    }
+    const idx = distributors.findIndex((d) => d.id === afterKey);
+    if (idx === -1) return maxOrder + 1;
+    const anchor = order(distributors[idx]);
+    const next = idx + 1 < distributors.length ? order(distributors[idx + 1]) : anchor + 1;
+    return (anchor + next) / 2;
+  }
+
+  async function handleAddDistributor() {
+    const name = newDistributorName.trim();
+    if (!name || !userId) return;
+    setAddingDistributor(true);
+    setAddDistributorError(null);
+
+    const sortOrder = computeDistributorInsertSortOrder(newDistributorAfter);
+    const color = newDistributorColor.trim() || null;
+
+    const { data, error } = await supabase
+      .from("distributors")
+      .insert({ name, color, active: true, sort_order: sortOrder })
+      .select()
+      .single();
+
+    if (error) {
+      // Most common case: a distributor with this exact name already exists
+      // (distributors.name has a unique index).
+      setAddDistributorError(
+        error.code === "23505" ? "A distributor with that name already exists." : error.message
+      );
+      setAddingDistributor(false);
+      return;
+    }
+
+    setDistributors((prev) =>
+      [...prev, data as Distributor].sort((a, b) => {
+        const ao = a.sort_order ?? Number.MAX_SAFE_INTEGER;
+        const bo = b.sort_order ?? Number.MAX_SAFE_INTEGER;
+        if (ao !== bo) return ao - bo;
+        return a.name.localeCompare(b.name);
+      })
+    );
+    setNewDistributorName("");
+    setNewDistributorColor("");
+    setNewDistributorAfter("__end__");
+    setAddingDistributor(false);
+
+    await logChange(supabase, {
+      weekId: week?.id ?? null,
+      tableName: "distributors",
+      recordId: data.id,
+      fieldName: "name",
+      oldValue: null,
+      newValue: name,
+      changedBy: userId,
+    });
+  }
+
+  async function handleArchiveDistributor(distributorId: string) {
+    if (!userId) return;
+
+    const key = `archive-distributor:${distributorId}`;
+    setSavingKey(key);
+
+    const { error } = await supabase
+      .from("distributors")
+      .update({ active: false })
+      .eq("id", distributorId);
+
+    if (!error) {
+      setDistributors((prev) => prev.filter((d) => d.id !== distributorId));
+      await logChange(supabase, {
+        weekId: week?.id ?? null,
+        tableName: "distributors",
+        recordId: distributorId,
+        fieldName: "active",
+        oldValue: true,
+        newValue: false,
+        changedBy: userId,
+      });
+    }
+
+    setSavingKey(null);
+  }
+
+  async function handleMoveDistributor(index: number, direction: "left" | "right") {
+    if (!userId) return;
+    const targetIndex = direction === "left" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= distributors.length) return;
+
+    const order = (d: Distributor) => d.sort_order ?? Number.MAX_SAFE_INTEGER;
+    const d = distributors[index];
+    const newOrder =
+      direction === "left"
+        ? (() => {
+            const before = targetIndex - 1 >= 0 ? order(distributors[targetIndex - 1]) : order(distributors[targetIndex]) - 1;
+            return (before + order(distributors[targetIndex])) / 2;
+          })()
+        : (() => {
+            const after =
+              targetIndex + 1 < distributors.length
+                ? order(distributors[targetIndex + 1])
+                : order(distributors[targetIndex]) + 1;
+            return (order(distributors[targetIndex]) + after) / 2;
+          })();
+
+    setDistributors((prev) => {
+      const next = prev.map((x) => (x.id === d.id ? { ...x, sort_order: newOrder } : x));
+      return next.sort((a, b) => {
+        const ao = a.sort_order ?? Number.MAX_SAFE_INTEGER;
+        const bo = b.sort_order ?? Number.MAX_SAFE_INTEGER;
+        if (ao !== bo) return ao - bo;
+        return a.name.localeCompare(b.name);
+      });
+    });
+    await supabase.from("distributors").update({ sort_order: newOrder }).eq("id", d.id);
   }
 
   async function handleInventoryChange(
@@ -908,6 +1040,52 @@ export default function InventoryPage() {
         ))}
       </div>
 
+      {isAdmin && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-950 px-3 py-2 text-xs">
+          <span className="shrink-0 text-neutral-500">Add distributor column:</span>
+          <input
+            type="text"
+            placeholder="Distributor name…"
+            className="w-40 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100"
+            value={newDistributorName}
+            onChange={(e) => setNewDistributorName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleAddDistributor()}
+          />
+          <input
+            type="text"
+            placeholder="#hex color (optional)"
+            className="w-36 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100"
+            value={newDistributorColor}
+            onChange={(e) => setNewDistributorColor(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleAddDistributor()}
+          />
+          <span className="text-neutral-500">position:</span>
+          <select
+            className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-100"
+            value={newDistributorAfter}
+            onChange={(e) => setNewDistributorAfter(e.target.value)}
+          >
+            <option value="__start__">At the very left</option>
+            <option value="__end__">At the end (right)</option>
+            {distributors.map((d) => (
+              <option key={d.id} value={d.id}>
+                After: {d.name}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={handleAddDistributor}
+            disabled={addingDistributor || !newDistributorName.trim()}
+            className="shrink-0 rounded-md bg-white px-3 py-1 text-xs font-medium text-black hover:bg-neutral-200 disabled:opacity-50"
+          >
+            {addingDistributor ? "Adding…" : "+ Add Distributor"}
+          </button>
+          {addDistributorError && (
+            <span className="whitespace-nowrap text-xs text-red-400">{addDistributorError}</span>
+          )}
+        </div>
+      )}
+
       <div className="rounded-lg border border-neutral-800 bg-neutral-950">
         <table className="w-full border-collapse text-sm">
           <thead>
@@ -927,13 +1105,43 @@ export default function InventoryPage() {
               <th className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right font-semibold">
                 Total
               </th>
-              {distributors.map((d) => (
+              {distributors.map((d, index) => (
                 <th
                   key={d.id}
                   className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right"
                   style={{ color: d.color ?? undefined }}
                 >
-                  {d.name}
+                  <div className="flex items-center justify-end gap-0.5">
+                    {isAdmin && (
+                      <span className="flex items-center gap-0.5 normal-case text-neutral-600">
+                        <button
+                          onClick={() => handleMoveDistributor(index, "left")}
+                          disabled={index === 0}
+                          title="Move left"
+                          className="hover:text-neutral-200 disabled:opacity-30"
+                        >
+                          ◀
+                        </button>
+                        <button
+                          onClick={() => handleArchiveDistributor(d.id)}
+                          disabled={savingKey === `archive-distributor:${d.id}`}
+                          title="Remove this distributor column (archives it — doesn't erase history)"
+                          className="hover:text-red-400 disabled:opacity-50"
+                        >
+                          ✕
+                        </button>
+                        <button
+                          onClick={() => handleMoveDistributor(index, "right")}
+                          disabled={index === distributors.length - 1}
+                          title="Move right"
+                          className="hover:text-neutral-200 disabled:opacity-30"
+                        >
+                          ▶
+                        </button>
+                      </span>
+                    )}
+                    <span>{d.name}</span>
+                  </div>
                 </th>
               ))}
               <th className="sticky top-0 right-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right font-semibold">

@@ -17,6 +17,20 @@ insert into distributors (name, color) values
   ('Superior', '#ff7b54')
 on conflict (name) do nothing;
 
+-- Give the original 7 distributors an explicit sort_order matching their
+-- current alphabetical display order, so adding/reordering distributor
+-- columns on Inventory & Allocation (which sorts by sort_order, falling
+-- back to name) doesn't change anything visually for existing data. Guarded
+-- on "sort_order is null" so this only ever applies once, even if someone
+-- re-runs this file after already reordering distributors by hand.
+update distributors set sort_order = 1 where name = 'Coast' and sort_order is null;
+update distributors set sort_order = 2 where name = 'Guardian' and sort_order is null;
+update distributors set sort_order = 3 where name = 'Markstein' and sort_order is null;
+update distributors set sort_order = 4 where name = 'Matagrano' and sort_order is null;
+update distributors set sort_order = 5 where name = 'Saccani' and sort_order is null;
+update distributors set sort_order = 6 where name = 'Superior' and sort_order is null;
+update distributors set sort_order = 7 where name = 'Valleywide' and sort_order is null;
+
 insert into products (name, sort_order) values
   ('EUREKA STOUT - 1/2 bbl keg', 1),
   ('Capt. WC PALE ALE (Case - 6x4 - 16oz - Can)', 2),
