@@ -407,6 +407,50 @@ create table if not exists label_inventory (
 );
 
 -- =========================================================
+-- Custom Packaging/Label Inventory items — freeform, admin-managed items
+-- (added/renamed/reordered/removed from the "Edit Packaging Inventory
+-- Item" / "Edit Label Item" menu on Inventory & Allocation), separate from
+-- the fixed 10 packaging items and the per-product label rows above.
+-- Simple manually-tracked counts — no automatic consumption math tied to
+-- these, unlike the fixed packaging items.
+-- =========================================================
+create table if not exists custom_packaging_items (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  sort_order double precision,
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists custom_packaging_inventory (
+  id uuid primary key default gen_random_uuid(),
+  week_id uuid not null references weeks(id) on delete cascade,
+  item_id uuid not null references custom_packaging_items(id) on delete cascade,
+  on_hand_qty numeric(12,2) not null default 0,
+  updated_by uuid references profiles(id),
+  updated_at timestamptz not null default now(),
+  unique (week_id, item_id)
+);
+
+create table if not exists custom_label_items (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  sort_order double precision,
+  active boolean not null default true,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists custom_label_inventory (
+  id uuid primary key default gen_random_uuid(),
+  week_id uuid not null references weeks(id) on delete cascade,
+  item_id uuid not null references custom_label_items(id) on delete cascade,
+  on_hand_qty numeric(12,2) not null default 0,
+  updated_by uuid references profiles(id),
+  updated_at timestamptz not null default now(),
+  unique (week_id, item_id)
+);
+
+-- =========================================================
 -- Audit log — every meaningful change is recorded here so admins can
 -- review history and one-click undo a change.
 -- =========================================================
@@ -477,6 +521,10 @@ alter table distributor_prices enable row level security;
 alter table section_dividers enable row level security;
 alter table packaging_inventory enable row level security;
 alter table label_inventory enable row level security;
+alter table custom_packaging_items enable row level security;
+alter table custom_packaging_inventory enable row level security;
+alter table custom_label_items enable row level security;
+alter table custom_label_inventory enable row level security;
 alter table audit_log enable row level security;
 alter table pricing_brands enable row level security;
 alter table brand_price_list enable row level security;
@@ -538,6 +586,22 @@ create policy "distributor_prices_write_admin" on distributor_prices for all usi
 create policy "packaging_inventory_rw" on packaging_inventory for all using (auth.uid() is not null);
 create policy "label_inventory_rw" on label_inventory for all using (auth.uid() is not null);
 
+-- Custom packaging/label items: anyone signed in can see the item list
+-- (needed to enter quantities), but only admins can add/rename/remove an
+-- item — same split as distributors. The quantity rows themselves (the
+-- actual on-hand counts) are read/write for everyone, same as the fixed
+-- packaging/label inventory above.
+create policy "custom_packaging_items_select" on custom_packaging_items for select using (auth.uid() is not null);
+create policy "custom_packaging_items_write_admin" on custom_packaging_items for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+create policy "custom_packaging_inventory_rw" on custom_packaging_inventory for all using (auth.uid() is not null);
+create policy "custom_label_items_select" on custom_label_items for select using (auth.uid() is not null);
+create policy "custom_label_items_write_admin" on custom_label_items for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+create policy "custom_label_inventory_rw" on custom_label_inventory for all using (auth.uid() is not null);
+
 -- Sales > Price List: admin-only, full stop (read and write) — nobody else
 -- can even see it, matching Dashboard/Users.
 create policy "pricing_brands_admin" on pricing_brands for all using (
@@ -577,3 +641,36 @@ create policy "audit_log_select_admin" on audit_log for select using (
 create policy "audit_log_update_admin" on audit_log for update using (
   exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
 );
+
+-- =========================================================
+-- Realtime — Inventory & Allocation live sync. Lets everyone viewing the
+-- page see each other's edits (quantities, allocations, PO info,
+-- distributor/product/divider changes, packaging & label counts) within
+-- about a second, without reloading. Only takes effect on a real Supabase
+-- project, where the `supabase_realtime` publication already exists —
+-- silently does nothing on a bare local Postgres used for testing this
+-- schema, and safe to re-run any number of times.
+-- =========================================================
+do $$
+declare
+  tbl text;
+  realtime_tables text[] := array[
+    'distributors', 'products', 'section_dividers',
+    'custom_packaging_items', 'custom_label_items', 'distributor_prices',
+    'inventory_snapshots', 'allocations', 'distributor_pos',
+    'packaging_inventory', 'label_inventory',
+    'custom_packaging_inventory', 'custom_label_inventory'
+  ];
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    foreach tbl in array realtime_tables loop
+      if not exists (
+        select 1 from pg_publication_tables
+        where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = tbl
+      ) then
+        execute format('alter publication supabase_realtime add table %I', tbl);
+      end if;
+    end loop;
+  end if;
+end
+$$;

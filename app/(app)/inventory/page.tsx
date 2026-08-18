@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
+import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { logChange } from "@/lib/audit";
 import type {
   Week,
@@ -14,6 +15,10 @@ import type {
   SectionDivider,
   PackagingInventoryRow,
   LabelInventoryRow,
+  CustomPackagingItem,
+  CustomPackagingInventoryRow,
+  CustomLabelItem,
+  CustomLabelInventoryRow,
   DistributorPrice,
   PoStatus,
 } from "@/lib/types/db";
@@ -69,6 +74,143 @@ const DISTRIBUTOR_COLOR_SWATCHES: { hex: string; label: string }[] = [
   { hex: "#e6e6e6", label: "Light gray" },
 ];
 
+// The single Edit menu's five scopes — only one is ever active at a time.
+// Selecting one highlights (in yellow) and enables just that area's
+// add/rename/remove/reorder controls; everything else stays in its normal,
+// locked-down view.
+type EditMode = "distributors" | "items" | "dividers" | "packaging" | "labels";
+
+const EDIT_MODE_OPTIONS: { key: EditMode; label: string }[] = [
+  { key: "distributors", label: "Edit Distributors" },
+  { key: "items", label: "Edit Items" },
+  { key: "dividers", label: "Edit Dividers" },
+  { key: "packaging", label: "Edit Packaging Inventory Item" },
+  { key: "labels", label: "Edit Label Item" },
+];
+
+// Shared styling so every editable control (✕ remove, ◀▶/▲▼ reorder, rename
+// fields, add-new forms) gets the same yellow "you're editing this" look
+// while its mode is active.
+const EDIT_ICON_BTN =
+  "rounded border border-yellow-500/70 bg-yellow-500/10 px-1 text-yellow-400 hover:bg-yellow-500/20 disabled:opacity-30 disabled:border-neutral-700 disabled:bg-transparent disabled:text-neutral-600";
+const EDIT_INPUT =
+  "rounded border border-yellow-500/70 bg-neutral-900 px-2 py-1 text-sm text-neutral-100 focus:border-yellow-400 focus:outline-none";
+const EDIT_PANEL = "rounded-lg border border-yellow-500/40 bg-yellow-500/[0.03] p-3";
+
+// Generic "insert after" positioning shared by every flat, reorderable
+// admin list on this page (distributors, custom packaging items, custom
+// label items) — finds a sort_order value that lands a row at a specific
+// spot without renumbering anything else.
+function computeFlatInsertSortOrder<T extends { id: string; sort_order: number | null }>(
+  list: T[],
+  afterKey: string
+): number {
+  const order = (x: T) => x.sort_order ?? Number.MAX_SAFE_INTEGER;
+  const maxOrder = list.reduce((max, x) => Math.max(max, order(x)), 0);
+  if (afterKey === "__end__") return maxOrder + 1;
+  if (afterKey === "__start__") {
+    const minOrder = list.reduce((min, x) => Math.min(min, order(x)), maxOrder);
+    return minOrder - 1;
+  }
+  const idx = list.findIndex((x) => x.id === afterKey);
+  if (idx === -1) return maxOrder + 1;
+  const anchor = order(list[idx]);
+  const next = idx + 1 < list.length ? order(list[idx + 1]) : anchor + 1;
+  return (anchor + next) / 2;
+}
+
+// ---------------------------------------------------------------------
+// Live sync helpers — used by the Realtime subscriptions set up inside the
+// page component below. Kept at module scope since none of them close over
+// component state; each helper mirrors this file's existing local-update
+// conventions (archive = active:false removes the row from the on-screen
+// list; a plain rename/quantity change just patches that one row; products
+// and dividers don't need re-sorting here since `combined` in the
+// component always re-sorts them at render time) so a change from someone
+// else's browser ends up looking exactly like the same change made
+// locally.
+// ---------------------------------------------------------------------
+
+function sortFlatList<T extends { sort_order: number | null; name: string }>(list: T[]): T[] {
+  return [...list].sort((a, b) => {
+    const ao = a.sort_order ?? Number.MAX_SAFE_INTEGER;
+    const bo = b.sort_order ?? Number.MAX_SAFE_INTEGER;
+    if (ao !== bo) return ao - bo;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+// For lists that use the "active: false" archive pattern instead of a real
+// delete (distributors, custom packaging/label items) — insert, update, or
+// drop a just-archived row, keeping the list sorted the same way the local
+// add/move handlers already do.
+function applyArchivableListChange<
+  T extends { id: string; sort_order: number | null; name: string; active: boolean }
+>(setter: (updater: (prev: T[]) => T[]) => void, payload: RealtimePostgresChangesPayload<T>) {
+  if (payload.eventType === "DELETE") {
+    const oldId = payload.old.id;
+    if (!oldId) return;
+    setter((prev) => prev.filter((x) => x.id !== oldId));
+    return;
+  }
+  const row = payload.new;
+  setter((prev) => {
+    const withoutRow = prev.filter((x) => x.id !== row.id);
+    return row.active ? sortFlatList([...withoutRow, row]) : withoutRow;
+  });
+}
+
+// Products and dividers share one render-time sort (see `combined` in the
+// component), so raw array order doesn't matter here — just keep the right
+// rows in it. Products use the same "archive" pattern as above; dividers
+// are actually deleted.
+function applyUnsortedListChange<T extends { id: string; active?: boolean }>(
+  setter: (updater: (prev: T[]) => T[]) => void,
+  payload: RealtimePostgresChangesPayload<T>
+) {
+  if (payload.eventType === "DELETE") {
+    const oldId = payload.old.id;
+    if (!oldId) return;
+    setter((prev) => prev.filter((x) => x.id !== oldId));
+    return;
+  }
+  const row = payload.new;
+  setter((prev) => {
+    const withoutRow = prev.filter((x) => x.id !== row.id);
+    if (row.active === false) return withoutRow;
+    return [...withoutRow, row];
+  });
+}
+
+// The week-scoped "one row per key" tables (PO info, packaging/label
+// on-hand counts) — keyed by something other than `id` (distributor_id,
+// item_key, product_id, item_id) and never actually deleted from this
+// page. Skips a change that was this browser's own edit echoing back — the
+// optimistic local update already reflects it, and re-applying it out of
+// order mid-keystroke could make an in-progress edit visibly jump.
+function applyKeyedRecordChange<T extends { id: string; updated_by?: string | null }>(
+  setter: (updater: (prev: Record<string, T>) => Record<string, T>) => void,
+  keyOf: (row: T) => string,
+  currentUserId: string | null,
+  payload: RealtimePostgresChangesPayload<T>
+) {
+  if (payload.eventType === "DELETE") {
+    const oldId = payload.old.id;
+    if (!oldId) return;
+    setter((prev) => {
+      const entry = Object.entries(prev).find(([, v]) => v.id === oldId);
+      if (!entry) return prev;
+      const next = { ...prev };
+      delete next[entry[0]];
+      return next;
+    });
+    return;
+  }
+  const row = payload.new;
+  if (currentUserId && row.updated_by === currentUserId) return;
+  setter((prev) => ({ ...prev, [keyOf(row)]: row }));
+}
+
 export default function InventoryPage() {
   const supabase = useMemo(() => createClient(), []);
 
@@ -93,11 +235,26 @@ export default function InventoryPage() {
   const [newDividerLabel, setNewDividerLabel] = useState("");
   const [newDividerAfter, setNewDividerAfter] = useState("__end__");
   const [addingDivider, setAddingDivider] = useState(false);
-  const [showDistributorManager, setShowDistributorManager] = useState(false);
+  const [editMenuOpen, setEditMenuOpen] = useState(false);
+  const [activeEditMode, setActiveEditMode] = useState<EditMode | null>(null);
   const [newDistributorName, setNewDistributorName] = useState("");
   const [newDistributorColor, setNewDistributorColor] = useState("");
   const [addingDistributor, setAddingDistributor] = useState(false);
   const [addDistributorError, setAddDistributorError] = useState<string | null>(null);
+  const [customPackagingItems, setCustomPackagingItems] = useState<CustomPackagingItem[]>([]);
+  const [customPackagingInventory, setCustomPackagingInventory] = useState<
+    Record<string, CustomPackagingInventoryRow>
+  >({}); // key: item_id
+  const [newPackagingItemName, setNewPackagingItemName] = useState("");
+  const [addingPackagingItem, setAddingPackagingItem] = useState(false);
+  const [addPackagingItemError, setAddPackagingItemError] = useState<string | null>(null);
+  const [customLabelItems, setCustomLabelItems] = useState<CustomLabelItem[]>([]);
+  const [customLabelInventory, setCustomLabelInventory] = useState<
+    Record<string, CustomLabelInventoryRow>
+  >({}); // key: item_id
+  const [newLabelItemName, setNewLabelItemName] = useState("");
+  const [addingLabelItem, setAddingLabelItem] = useState(false);
+  const [addLabelItemError, setAddLabelItemError] = useState<string | null>(null);
 
   // Label Inventory is pinned to Packaging Inventory's actual rendered
   // height (measured, not guessed) so it always matches exactly with no
@@ -169,6 +326,22 @@ export default function InventoryPage() {
     });
     setDistributorPrices(priceMap);
 
+    const { data: customPkgItemData } = await supabase
+      .from("custom_packaging_items")
+      .select("*")
+      .eq("active", true)
+      .order("sort_order", { ascending: true, nullsFirst: false })
+      .order("name");
+    setCustomPackagingItems((customPkgItemData as CustomPackagingItem[]) ?? []);
+
+    const { data: customLabelItemData } = await supabase
+      .from("custom_label_items")
+      .select("*")
+      .eq("active", true)
+      .order("sort_order", { ascending: true, nullsFirst: false })
+      .order("name");
+    setCustomLabelItems((customLabelItemData as CustomLabelItem[]) ?? []);
+
     if (weekData) {
       const { data: invData } = await supabase
         .from("inventory_with_remaining")
@@ -228,6 +401,28 @@ export default function InventoryPage() {
         lblMap[row.product_id] = row;
       });
       setLabelInventory(lblMap);
+
+      const { data: customPkgInvData } = await supabase
+        .from("custom_packaging_inventory")
+        .select("*")
+        .eq("week_id", weekData.id);
+
+      const customPkgInvMap: Record<string, CustomPackagingInventoryRow> = {};
+      (customPkgInvData as CustomPackagingInventoryRow[] | null)?.forEach((row) => {
+        customPkgInvMap[row.item_id] = row;
+      });
+      setCustomPackagingInventory(customPkgInvMap);
+
+      const { data: customLabelInvData } = await supabase
+        .from("custom_label_inventory")
+        .select("*")
+        .eq("week_id", weekData.id);
+
+      const customLabelInvMap: Record<string, CustomLabelInventoryRow> = {};
+      (customLabelInvData as CustomLabelInventoryRow[] | null)?.forEach((row) => {
+        customLabelInvMap[row.item_id] = row;
+      });
+      setCustomLabelInventory(customLabelInvMap);
     }
 
     setLoading(false);
@@ -237,6 +432,193 @@ export default function InventoryPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional fetch-on-mount
     load();
   }, [load]);
+
+  // ---------------------------------------------------------------------
+  // Live sync — so everyone looking at this page sees each other's edits
+  // within about a second, no reload needed. Two channels: one for the
+  // reference lists below (distributors, products, dividers, custom item
+  // definitions, distributor pricing) that aren't tied to a specific week,
+  // and one for this week's actual numbers (inventory, allocations, PO
+  // info, packaging/label counts) that resubscribes if the open week ever
+  // changes. Every table listened to here needs Supabase's live-sync turned
+  // on — see the "enable realtime" migration for the one-time setup. (The
+  // merge helpers themselves live at module scope above, next to
+  // computeFlatInsertSortOrder.)
+  // ---------------------------------------------------------------------
+
+  // Reference lists — not tied to a specific week, so this channel is set
+  // up once and stays open for the life of the page.
+  useEffect(() => {
+    const channel = supabase
+      .channel("inventory-page:reference")
+      .on<Distributor>(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "distributors" },
+        (payload) => applyArchivableListChange<Distributor>(setDistributors, payload)
+      )
+      .on<Product>(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "products" },
+        (payload) => applyUnsortedListChange<Product>(setProducts, payload)
+      )
+      .on<SectionDivider>(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "section_dividers" },
+        (payload) => applyUnsortedListChange<SectionDivider>(setDividers, payload)
+      )
+      .on<CustomPackagingItem>(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "custom_packaging_items" },
+        (payload) => applyArchivableListChange<CustomPackagingItem>(setCustomPackagingItems, payload)
+      )
+      .on<CustomLabelItem>(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "custom_label_items" },
+        (payload) => applyArchivableListChange<CustomLabelItem>(setCustomLabelItems, payload)
+      )
+      .on<DistributorPrice>(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "distributor_prices" },
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            const oldRow = payload.old;
+            if (!oldRow.product_id || !oldRow.distributor_id) return;
+            setDistributorPrices((prev) => {
+              const next = { ...prev };
+              delete next[`${oldRow.product_id}:${oldRow.distributor_id}`];
+              return next;
+            });
+            return;
+          }
+          const row = payload.new;
+          setDistributorPrices((prev) => ({
+            ...prev,
+            [`${row.product_id}:${row.distributor_id}`]: row,
+          }));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [supabase]);
+
+  // This week's actual numbers. Resubscribes if the open week ever changes.
+  useEffect(() => {
+    const weekId = week?.id;
+    if (!weekId) return;
+
+    const channel = supabase
+      .channel(`inventory-page:week:${weekId}`)
+      .on<InventoryWithRemaining>(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "inventory_snapshots", filter: `week_id=eq.${weekId}` },
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            const oldId = payload.old.id;
+            if (!oldId) return;
+            setInventory((prev) => {
+              const entry = Object.entries(prev).find(([, v]) => v.id === oldId);
+              if (!entry) return prev;
+              const next = { ...prev };
+              delete next[entry[0]];
+              return next;
+            });
+            return;
+          }
+          const row = payload.new;
+          if (userId && row.updated_by === userId) return;
+          setInventory((prev) => ({
+            ...prev,
+            [row.product_id]: { ...row, total: 0, remaining: 0 },
+          }));
+        }
+      )
+      .on<Allocation>(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "allocations", filter: `week_id=eq.${weekId}` },
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            const oldId = payload.old.id;
+            if (!oldId) return;
+            setAllocations((prev) => {
+              const entry = Object.entries(prev).find(([, v]) => v.id === oldId);
+              if (!entry) return prev;
+              const next = { ...prev };
+              delete next[entry[0]];
+              return next;
+            });
+            return;
+          }
+          const row = payload.new;
+          if (userId && row.updated_by === userId) return;
+          setAllocations((prev) => ({
+            ...prev,
+            [`${row.product_id}:${row.distributor_id}`]: {
+              id: row.id,
+              quantity: row.quantity,
+              status_flag: row.status_flag,
+            },
+          }));
+        }
+      )
+      .on<DistributorPO>(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "distributor_pos", filter: `week_id=eq.${weekId}` },
+        (payload) =>
+          applyKeyedRecordChange<DistributorPO>(setPos, (row) => row.distributor_id, userId, payload)
+      )
+      .on<PackagingInventoryRow>(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "packaging_inventory", filter: `week_id=eq.${weekId}` },
+        (payload) =>
+          applyKeyedRecordChange<PackagingInventoryRow>(setPackaging, (row) => row.item_key, userId, payload)
+      )
+      .on<LabelInventoryRow>(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "label_inventory", filter: `week_id=eq.${weekId}` },
+        (payload) =>
+          applyKeyedRecordChange<LabelInventoryRow>(setLabelInventory, (row) => row.product_id, userId, payload)
+      )
+      .on<CustomPackagingInventoryRow>(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "custom_packaging_inventory",
+          filter: `week_id=eq.${weekId}`,
+        },
+        (payload) =>
+          applyKeyedRecordChange<CustomPackagingInventoryRow>(
+            setCustomPackagingInventory,
+            (row) => row.item_id,
+            userId,
+            payload
+          )
+      )
+      .on<CustomLabelInventoryRow>(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "custom_label_inventory",
+          filter: `week_id=eq.${weekId}`,
+        },
+        (payload) =>
+          applyKeyedRecordChange<CustomLabelInventoryRow>(
+            setCustomLabelInventory,
+            (row) => row.item_id,
+            userId,
+            payload
+          )
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [supabase, week?.id, userId]);
 
   function totalFor(productId: string) {
     const inv = inventory[productId];
@@ -358,18 +740,7 @@ export default function InventoryPage() {
   // Same "insert after" positioning as computeInsertSortOrder above, just
   // over the flat distributors list (columns, not rows — no dividers here).
   function computeDistributorInsertSortOrder(afterKey: string): number {
-    const order = (d: Distributor) => d.sort_order ?? Number.MAX_SAFE_INTEGER;
-    const maxOrder = distributors.reduce((max, d) => Math.max(max, order(d)), 0);
-    if (afterKey === "__end__") return maxOrder + 1;
-    if (afterKey === "__start__") {
-      const minOrder = distributors.reduce((min, d) => Math.min(min, order(d)), maxOrder);
-      return minOrder - 1;
-    }
-    const idx = distributors.findIndex((d) => d.id === afterKey);
-    if (idx === -1) return maxOrder + 1;
-    const anchor = order(distributors[idx]);
-    const next = idx + 1 < distributors.length ? order(distributors[idx + 1]) : anchor + 1;
-    return (anchor + next) / 2;
+    return computeFlatInsertSortOrder(distributors, afterKey);
   }
 
   async function handleAddDistributor() {
@@ -541,6 +912,426 @@ export default function InventoryPage() {
       });
     });
     await supabase.from("distributors").update({ sort_order: newOrder }).eq("id", d.id);
+  }
+
+  // Renaming a product/divider — same per-keystroke-save convention as
+  // handleRenameDistributor above.
+  async function handleRenameProduct(productId: string, name: string) {
+    if (!userId) return;
+    const existing = products.find((p) => p.id === productId);
+    if (!existing) return;
+
+    setProducts((prev) => prev.map((p) => (p.id === productId ? { ...p, name } : p)));
+
+    const trimmed = name.trim();
+    if (!trimmed) return;
+
+    const { error } = await supabase.from("products").update({ name: trimmed }).eq("id", productId);
+    if (!error && existing.name !== trimmed) {
+      await logChange(supabase, {
+        weekId: week?.id ?? null,
+        tableName: "products",
+        recordId: productId,
+        fieldName: "name",
+        oldValue: existing.name,
+        newValue: trimmed,
+        changedBy: userId,
+      });
+    }
+  }
+
+  async function handleRenameDivider(dividerId: string, label: string) {
+    if (!userId) return;
+    const existing = dividers.find((d) => d.id === dividerId);
+    if (!existing) return;
+
+    setDividers((prev) => prev.map((d) => (d.id === dividerId ? { ...d, label } : d)));
+
+    const trimmed = label.trim();
+    if (!trimmed) return;
+
+    const { error } = await supabase
+      .from("section_dividers")
+      .update({ label: trimmed })
+      .eq("id", dividerId);
+    if (!error && existing.label !== trimmed) {
+      await logChange(supabase, {
+        weekId: week?.id ?? null,
+        tableName: "section_dividers",
+        recordId: dividerId,
+        fieldName: "label",
+        oldValue: existing.label,
+        newValue: trimmed,
+        changedBy: userId,
+      });
+    }
+  }
+
+  // ---- Custom Packaging Inventory items (freeform, no consumption math) ----
+
+  async function handleAddPackagingItem() {
+    const name = newPackagingItemName.trim();
+    if (!name || !userId) return;
+    setAddingPackagingItem(true);
+    setAddPackagingItemError(null);
+
+    const sortOrder = computeFlatInsertSortOrder(customPackagingItems, "__end__");
+    const { data, error } = await supabase
+      .from("custom_packaging_items")
+      .insert({ name, active: true, sort_order: sortOrder })
+      .select()
+      .single();
+
+    if (error) {
+      setAddPackagingItemError(
+        error.code === "23505" ? "A packaging item with that name already exists." : error.message
+      );
+      setAddingPackagingItem(false);
+      return;
+    }
+
+    setCustomPackagingItems((prev) => [...prev, data as CustomPackagingItem]);
+    setNewPackagingItemName("");
+    setAddingPackagingItem(false);
+
+    await logChange(supabase, {
+      weekId: week?.id ?? null,
+      tableName: "custom_packaging_items",
+      recordId: data.id,
+      fieldName: "name",
+      oldValue: null,
+      newValue: name,
+      changedBy: userId,
+    });
+  }
+
+  async function handleRenamePackagingItem(itemId: string, name: string) {
+    if (!userId) return;
+    const existing = customPackagingItems.find((i) => i.id === itemId);
+    if (!existing) return;
+
+    setCustomPackagingItems((prev) => prev.map((i) => (i.id === itemId ? { ...i, name } : i)));
+
+    const trimmed = name.trim();
+    if (!trimmed) return;
+
+    const { error } = await supabase
+      .from("custom_packaging_items")
+      .update({ name: trimmed })
+      .eq("id", itemId);
+    if (!error && existing.name !== trimmed) {
+      await logChange(supabase, {
+        weekId: week?.id ?? null,
+        tableName: "custom_packaging_items",
+        recordId: itemId,
+        fieldName: "name",
+        oldValue: existing.name,
+        newValue: trimmed,
+        changedBy: userId,
+      });
+    }
+  }
+
+  async function handleArchivePackagingItem(itemId: string) {
+    if (!userId) return;
+    const key = `archive-packaging-item:${itemId}`;
+    setSavingKey(key);
+
+    const { error } = await supabase
+      .from("custom_packaging_items")
+      .update({ active: false })
+      .eq("id", itemId);
+
+    if (!error) {
+      setCustomPackagingItems((prev) => prev.filter((i) => i.id !== itemId));
+      setCustomPackagingInventory((prev) => {
+        const next = { ...prev };
+        delete next[itemId];
+        return next;
+      });
+      await logChange(supabase, {
+        weekId: week?.id ?? null,
+        tableName: "custom_packaging_items",
+        recordId: itemId,
+        fieldName: "active",
+        oldValue: true,
+        newValue: false,
+        changedBy: userId,
+      });
+    }
+
+    setSavingKey(null);
+  }
+
+  async function handleMovePackagingItem(index: number, direction: "up" | "down") {
+    if (!userId) return;
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= customPackagingItems.length) return;
+
+    const order = (i: CustomPackagingItem) => i.sort_order ?? Number.MAX_SAFE_INTEGER;
+    const item = customPackagingItems[index];
+    const newOrder =
+      direction === "up"
+        ? (() => {
+            const before =
+              targetIndex - 1 >= 0
+                ? order(customPackagingItems[targetIndex - 1])
+                : order(customPackagingItems[targetIndex]) - 1;
+            return (before + order(customPackagingItems[targetIndex])) / 2;
+          })()
+        : (() => {
+            const after =
+              targetIndex + 1 < customPackagingItems.length
+                ? order(customPackagingItems[targetIndex + 1])
+                : order(customPackagingItems[targetIndex]) + 1;
+            return (order(customPackagingItems[targetIndex]) + after) / 2;
+          })();
+
+    setCustomPackagingItems((prev) => {
+      const next = prev.map((x) => (x.id === item.id ? { ...x, sort_order: newOrder } : x));
+      return next.sort((a, b) => {
+        const ao = a.sort_order ?? Number.MAX_SAFE_INTEGER;
+        const bo = b.sort_order ?? Number.MAX_SAFE_INTEGER;
+        if (ao !== bo) return ao - bo;
+        return a.name.localeCompare(b.name);
+      });
+    });
+    await supabase.from("custom_packaging_items").update({ sort_order: newOrder }).eq("id", item.id);
+  }
+
+  async function handleCustomPackagingOnHandChange(itemId: string, value: number) {
+    if (!week || !userId) return;
+    const key = `custom-packaging:${itemId}`;
+    setSavingKey(key);
+
+    const existing = customPackagingInventory[itemId];
+    const oldValue = existing?.on_hand_qty ?? 0;
+    setCustomPackagingInventory((prev) => ({
+      ...prev,
+      [itemId]: {
+        id: existing?.id ?? "",
+        week_id: week.id,
+        item_id: itemId,
+        on_hand_qty: value,
+        updated_by: userId,
+        updated_at: new Date().toISOString(),
+      },
+    }));
+
+    const { data, error } = await supabase
+      .from("custom_packaging_inventory")
+      .upsert(
+        {
+          week_id: week.id,
+          item_id: itemId,
+          on_hand_qty: value,
+          updated_by: userId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "week_id,item_id" }
+      )
+      .select()
+      .single();
+
+    if (!error && data) {
+      setCustomPackagingInventory((prev) => ({
+        ...prev,
+        [itemId]: data as CustomPackagingInventoryRow,
+      }));
+      await logChange(supabase, {
+        weekId: week.id,
+        tableName: "custom_packaging_inventory",
+        recordId: data.id,
+        fieldName: "on_hand_qty",
+        oldValue,
+        newValue: value,
+        changedBy: userId,
+      });
+    }
+
+    setSavingKey(null);
+  }
+
+  // ---- Custom Label Inventory items (freeform, no consumption math) ----
+
+  async function handleAddLabelItem() {
+    const name = newLabelItemName.trim();
+    if (!name || !userId) return;
+    setAddingLabelItem(true);
+    setAddLabelItemError(null);
+
+    const sortOrder = computeFlatInsertSortOrder(customLabelItems, "__end__");
+    const { data, error } = await supabase
+      .from("custom_label_items")
+      .insert({ name, active: true, sort_order: sortOrder })
+      .select()
+      .single();
+
+    if (error) {
+      setAddLabelItemError(
+        error.code === "23505" ? "A label item with that name already exists." : error.message
+      );
+      setAddingLabelItem(false);
+      return;
+    }
+
+    setCustomLabelItems((prev) => [...prev, data as CustomLabelItem]);
+    setNewLabelItemName("");
+    setAddingLabelItem(false);
+
+    await logChange(supabase, {
+      weekId: week?.id ?? null,
+      tableName: "custom_label_items",
+      recordId: data.id,
+      fieldName: "name",
+      oldValue: null,
+      newValue: name,
+      changedBy: userId,
+    });
+  }
+
+  async function handleRenameLabelItem(itemId: string, name: string) {
+    if (!userId) return;
+    const existing = customLabelItems.find((i) => i.id === itemId);
+    if (!existing) return;
+
+    setCustomLabelItems((prev) => prev.map((i) => (i.id === itemId ? { ...i, name } : i)));
+
+    const trimmed = name.trim();
+    if (!trimmed) return;
+
+    const { error } = await supabase
+      .from("custom_label_items")
+      .update({ name: trimmed })
+      .eq("id", itemId);
+    if (!error && existing.name !== trimmed) {
+      await logChange(supabase, {
+        weekId: week?.id ?? null,
+        tableName: "custom_label_items",
+        recordId: itemId,
+        fieldName: "name",
+        oldValue: existing.name,
+        newValue: trimmed,
+        changedBy: userId,
+      });
+    }
+  }
+
+  async function handleArchiveLabelItem(itemId: string) {
+    if (!userId) return;
+    const key = `archive-label-item:${itemId}`;
+    setSavingKey(key);
+
+    const { error } = await supabase
+      .from("custom_label_items")
+      .update({ active: false })
+      .eq("id", itemId);
+
+    if (!error) {
+      setCustomLabelItems((prev) => prev.filter((i) => i.id !== itemId));
+      setCustomLabelInventory((prev) => {
+        const next = { ...prev };
+        delete next[itemId];
+        return next;
+      });
+      await logChange(supabase, {
+        weekId: week?.id ?? null,
+        tableName: "custom_label_items",
+        recordId: itemId,
+        fieldName: "active",
+        oldValue: true,
+        newValue: false,
+        changedBy: userId,
+      });
+    }
+
+    setSavingKey(null);
+  }
+
+  async function handleMoveLabelItem(index: number, direction: "up" | "down") {
+    if (!userId) return;
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= customLabelItems.length) return;
+
+    const order = (i: CustomLabelItem) => i.sort_order ?? Number.MAX_SAFE_INTEGER;
+    const item = customLabelItems[index];
+    const newOrder =
+      direction === "up"
+        ? (() => {
+            const before =
+              targetIndex - 1 >= 0
+                ? order(customLabelItems[targetIndex - 1])
+                : order(customLabelItems[targetIndex]) - 1;
+            return (before + order(customLabelItems[targetIndex])) / 2;
+          })()
+        : (() => {
+            const after =
+              targetIndex + 1 < customLabelItems.length
+                ? order(customLabelItems[targetIndex + 1])
+                : order(customLabelItems[targetIndex]) + 1;
+            return (order(customLabelItems[targetIndex]) + after) / 2;
+          })();
+
+    setCustomLabelItems((prev) => {
+      const next = prev.map((x) => (x.id === item.id ? { ...x, sort_order: newOrder } : x));
+      return next.sort((a, b) => {
+        const ao = a.sort_order ?? Number.MAX_SAFE_INTEGER;
+        const bo = b.sort_order ?? Number.MAX_SAFE_INTEGER;
+        if (ao !== bo) return ao - bo;
+        return a.name.localeCompare(b.name);
+      });
+    });
+    await supabase.from("custom_label_items").update({ sort_order: newOrder }).eq("id", item.id);
+  }
+
+  async function handleCustomLabelOnHandChange(itemId: string, value: number) {
+    if (!week || !userId) return;
+    const key = `custom-label:${itemId}`;
+    setSavingKey(key);
+
+    const existing = customLabelInventory[itemId];
+    const oldValue = existing?.on_hand_qty ?? 0;
+    setCustomLabelInventory((prev) => ({
+      ...prev,
+      [itemId]: {
+        id: existing?.id ?? "",
+        week_id: week.id,
+        item_id: itemId,
+        on_hand_qty: value,
+        updated_by: userId,
+        updated_at: new Date().toISOString(),
+      },
+    }));
+
+    const { data, error } = await supabase
+      .from("custom_label_inventory")
+      .upsert(
+        {
+          week_id: week.id,
+          item_id: itemId,
+          on_hand_qty: value,
+          updated_by: userId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "week_id,item_id" }
+      )
+      .select()
+      .single();
+
+    if (!error && data) {
+      setCustomLabelInventory((prev) => ({ ...prev, [itemId]: data as CustomLabelInventoryRow }));
+      await logChange(supabase, {
+        weekId: week.id,
+        tableName: "custom_label_inventory",
+        recordId: data.id,
+        fieldName: "on_hand_qty",
+        oldValue,
+        newValue: value,
+        changedBy: userId,
+      });
+    }
+
+    setSavingKey(null);
   }
 
   async function handleInventoryChange(
@@ -1044,8 +1835,96 @@ export default function InventoryPage() {
                   </tr>
                 );
               })}
+              {customPackagingItems.map((item, index) => {
+                const onHand = customPackagingInventory[item.id]?.on_hand_qty ?? 0;
+                const editing = activeEditMode === "packaging";
+                return (
+                  <tr key={item.id}>
+                    <td className="px-1.5 py-1 text-neutral-300">
+                      {editing ? (
+                        <div className="flex items-center gap-1">
+                          <span className={EDIT_ICON_BTN}>
+                            <button
+                              onClick={() => handleMovePackagingItem(index, "up")}
+                              disabled={index === 0}
+                              title="Move up"
+                              className="disabled:opacity-30"
+                            >
+                              ▲
+                            </button>
+                          </span>
+                          <span className={EDIT_ICON_BTN}>
+                            <button
+                              onClick={() => handleMovePackagingItem(index, "down")}
+                              disabled={index === customPackagingItems.length - 1}
+                              title="Move down"
+                              className="disabled:opacity-30"
+                            >
+                              ▼
+                            </button>
+                          </span>
+                          <input
+                            type="text"
+                            value={item.name}
+                            onChange={(e) => handleRenamePackagingItem(item.id, e.target.value)}
+                            className={`${EDIT_INPUT} w-28 px-1.5 py-0.5`}
+                          />
+                          <button
+                            onClick={() => handleArchivePackagingItem(item.id)}
+                            disabled={savingKey === `archive-packaging-item:${item.id}`}
+                            title="Remove this packaging item (archives it — doesn't erase history)"
+                            className={EDIT_ICON_BTN}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ) : (
+                        item.name
+                      )}
+                    </td>
+                    <td className="px-1.5 py-1 text-right">
+                      <input
+                        type="number"
+                        className="w-20 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-neutral-100"
+                        value={onHand}
+                        onChange={(e) =>
+                          handleCustomPackagingOnHandChange(item.id, Number(e.target.value) || 0)
+                        }
+                      />
+                    </td>
+                    <td className="px-1.5 py-1 text-right text-neutral-600">—</td>
+                    <td className="px-1.5 py-1 text-right text-neutral-600">—</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
+          {activeEditMode === "packaging" && (
+            <div className={`${EDIT_PANEL} mt-2 flex flex-wrap items-center gap-2`}>
+              <span className="shrink-0 text-neutral-400">Add packaging item:</span>
+              <input
+                type="text"
+                placeholder="Item name…"
+                value={newPackagingItemName}
+                onChange={(e) => setNewPackagingItemName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleAddPackagingItem()}
+                className={`${EDIT_INPUT} w-40`}
+              />
+              <button
+                onClick={handleAddPackagingItem}
+                disabled={addingPackagingItem || !newPackagingItemName.trim()}
+                className="shrink-0 rounded-md bg-yellow-500 px-3 py-1 text-xs font-medium text-black hover:bg-yellow-400 disabled:opacity-50"
+              >
+                {addingPackagingItem ? "Adding…" : "+ Add"}
+              </button>
+              {addPackagingItemError && (
+                <span className="whitespace-nowrap text-red-400">{addPackagingItemError}</span>
+              )}
+              <p className="w-full text-neutral-500">
+                Manually tracked only — no automatic consumption math, unlike the fixed items above.
+              </p>
+            </div>
+          )}
         </div>
 
         <div
@@ -1094,9 +1973,97 @@ export default function InventoryPage() {
                     </tr>
                   );
                 })}
+                {customLabelItems.map((item, index) => {
+                  const onHand = customLabelInventory[item.id]?.on_hand_qty ?? 0;
+                  const editing = activeEditMode === "labels";
+                  return (
+                    <tr key={item.id}>
+                      <td className="whitespace-nowrap px-1.5 py-1 text-neutral-300">
+                        {editing ? (
+                          <div className="flex items-center gap-1">
+                            <span className={EDIT_ICON_BTN}>
+                              <button
+                                onClick={() => handleMoveLabelItem(index, "up")}
+                                disabled={index === 0}
+                                title="Move up"
+                                className="disabled:opacity-30"
+                              >
+                                ▲
+                              </button>
+                            </span>
+                            <span className={EDIT_ICON_BTN}>
+                              <button
+                                onClick={() => handleMoveLabelItem(index, "down")}
+                                disabled={index === customLabelItems.length - 1}
+                                title="Move down"
+                                className="disabled:opacity-30"
+                              >
+                                ▼
+                              </button>
+                            </span>
+                            <input
+                              type="text"
+                              value={item.name}
+                              onChange={(e) => handleRenameLabelItem(item.id, e.target.value)}
+                              className={`${EDIT_INPUT} w-24 px-1.5 py-0.5`}
+                            />
+                            <button
+                              onClick={() => handleArchiveLabelItem(item.id)}
+                              disabled={savingKey === `archive-label-item:${item.id}`}
+                              title="Remove this label item (archives it — doesn't erase history)"
+                              className={EDIT_ICON_BTN}
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ) : (
+                          item.name
+                        )}
+                      </td>
+                      <td className="px-1.5 py-1 text-right">
+                        <input
+                          type="number"
+                          className="w-16 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-neutral-100"
+                          value={onHand}
+                          onChange={(e) =>
+                            handleCustomLabelOnHandChange(item.id, Number(e.target.value) || 0)
+                          }
+                        />
+                      </td>
+                      <td className="px-1.5 py-1 text-right text-neutral-600">—</td>
+                      <td className="px-1.5 py-1 text-right text-neutral-600">—</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
+          {activeEditMode === "labels" && (
+            <div className={`${EDIT_PANEL} mt-2 flex shrink-0 flex-wrap items-center gap-2`}>
+              <span className="shrink-0 text-neutral-400">Add label item:</span>
+              <input
+                type="text"
+                placeholder="Item name…"
+                value={newLabelItemName}
+                onChange={(e) => setNewLabelItemName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleAddLabelItem()}
+                className={`${EDIT_INPUT} w-40`}
+              />
+              <button
+                onClick={handleAddLabelItem}
+                disabled={addingLabelItem || !newLabelItemName.trim()}
+                className="shrink-0 rounded-md bg-yellow-500 px-3 py-1 text-xs font-medium text-black hover:bg-yellow-400 disabled:opacity-50"
+              >
+                {addingLabelItem ? "Adding…" : "+ Add"}
+              </button>
+              {addLabelItemError && (
+                <span className="whitespace-nowrap text-red-400">{addLabelItemError}</span>
+              )}
+              <p className="w-full text-neutral-500">
+                Manually tracked only — separate from each product&apos;s automatic label row above.
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1123,24 +2090,65 @@ export default function InventoryPage() {
 
       {isAdmin && (
         <div className="flex flex-col gap-2">
-          <button
-            onClick={() => setShowDistributorManager((prev) => !prev)}
-            className="self-start rounded-md border border-neutral-700 px-3 py-1.5 text-xs font-medium text-neutral-200 hover:bg-neutral-800"
-          >
-            {showDistributorManager ? "Done editing distributors" : "✎ Edit Distributor Columns"}
-          </button>
+          <div className="relative inline-block self-start">
+            <button
+              onClick={() => setEditMenuOpen((prev) => !prev)}
+              className={`rounded-md border px-3 py-1.5 text-xs font-medium ${
+                activeEditMode
+                  ? "border-yellow-500/70 bg-yellow-500/10 text-yellow-300"
+                  : "border-neutral-700 text-neutral-200 hover:bg-neutral-800"
+              }`}
+            >
+              ✎ Edit
+              {activeEditMode
+                ? ` — ${EDIT_MODE_OPTIONS.find((o) => o.key === activeEditMode)?.label}`
+                : ""}{" "}
+              ▾
+            </button>
 
-          {showDistributorManager && (
-            <div className="flex flex-col gap-2 rounded-lg border border-neutral-800 bg-neutral-950 p-3 text-xs">
+            {editMenuOpen && (
+              <div className="absolute left-0 z-30 mt-1 w-64 rounded-md border border-neutral-700 bg-neutral-900 py-1 shadow-lg">
+                {EDIT_MODE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.key}
+                    onClick={() => {
+                      setActiveEditMode((prev) => (prev === opt.key ? null : opt.key));
+                      setEditMenuOpen(false);
+                    }}
+                    className={`block w-full px-3 py-2 text-left text-xs hover:bg-neutral-800 ${
+                      activeEditMode === opt.key ? "bg-yellow-500/20 text-yellow-300" : "text-neutral-200"
+                    }`}
+                  >
+                    {activeEditMode === opt.key ? "✓ " : ""}
+                    {opt.label}
+                  </button>
+                ))}
+                {activeEditMode && (
+                  <button
+                    onClick={() => {
+                      setActiveEditMode(null);
+                      setEditMenuOpen(false);
+                    }}
+                    className="block w-full border-t border-neutral-800 px-3 py-2 text-left text-xs text-neutral-400 hover:bg-neutral-800"
+                  >
+                    Done editing
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {activeEditMode === "distributors" && (
+            <div className={`${EDIT_PANEL} flex flex-col gap-2 text-xs`}>
               <div className="flex flex-col divide-y divide-neutral-900">
                 {distributors.map((d, index) => (
                   <div key={d.id} className="flex flex-wrap items-center gap-2 py-1.5">
-                    <span className="flex items-center gap-0.5 text-neutral-600">
+                    <span className="flex items-center gap-1">
                       <button
                         onClick={() => handleMoveDistributor(index, "left")}
                         disabled={index === 0}
                         title="Move left"
-                        className="hover:text-neutral-200 disabled:opacity-30"
+                        className={EDIT_ICON_BTN}
                       >
                         ◀
                       </button>
@@ -1148,7 +2156,7 @@ export default function InventoryPage() {
                         onClick={() => handleMoveDistributor(index, "right")}
                         disabled={index === distributors.length - 1}
                         title="Move right"
-                        className="hover:text-neutral-200 disabled:opacity-30"
+                        className={EDIT_ICON_BTN}
                       >
                         ▶
                       </button>
@@ -1157,12 +2165,12 @@ export default function InventoryPage() {
                       type="text"
                       value={d.name}
                       onChange={(e) => handleRenameDistributor(d.id, e.target.value)}
-                      className="w-40 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100"
+                      className={`${EDIT_INPUT} w-40`}
                     />
                     <select
                       value={d.color ?? ""}
                       onChange={(e) => handleChangeDistributorColor(d.id, e.target.value)}
-                      className="w-32 rounded border border-neutral-700 px-2 py-1 text-xs font-semibold"
+                      className="w-32 rounded border border-yellow-500/70 px-2 py-1 text-xs font-semibold"
                       style={{
                         backgroundColor: d.color ?? "#171717",
                         color: d.color ? "#000000" : "#a3a3a3",
@@ -1185,7 +2193,7 @@ export default function InventoryPage() {
                       onClick={() => handleArchiveDistributor(d.id)}
                       disabled={savingKey === `archive-distributor:${d.id}`}
                       title="Remove this distributor column (archives it — doesn't erase history)"
-                      className="ml-auto shrink-0 rounded text-neutral-600 hover:text-red-400 disabled:opacity-50"
+                      className={`ml-auto shrink-0 ${EDIT_ICON_BTN}`}
                     >
                       ✕ Remove
                     </button>
@@ -1194,11 +2202,11 @@ export default function InventoryPage() {
               </div>
 
               <div className="flex flex-wrap items-center gap-2 border-t border-neutral-800 pt-2">
-                <span className="shrink-0 text-neutral-500">Add new:</span>
+                <span className="shrink-0 text-neutral-400">Add new:</span>
                 <input
                   type="text"
                   placeholder="Distributor name…"
-                  className="w-40 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100"
+                  className={`${EDIT_INPUT} w-40`}
                   value={newDistributorName}
                   onChange={(e) => setNewDistributorName(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && handleAddDistributor()}
@@ -1206,7 +2214,7 @@ export default function InventoryPage() {
                 <select
                   value={newDistributorColor}
                   onChange={(e) => setNewDistributorColor(e.target.value)}
-                  className="w-32 rounded border border-neutral-700 px-2 py-1 text-xs font-semibold"
+                  className="w-32 rounded border border-yellow-500/70 px-2 py-1 text-xs font-semibold"
                   style={{
                     backgroundColor: newDistributorColor || "#171717",
                     color: newDistributorColor ? "#000000" : "#a3a3a3",
@@ -1228,12 +2236,12 @@ export default function InventoryPage() {
                 <button
                   onClick={handleAddDistributor}
                   disabled={addingDistributor || !newDistributorName.trim()}
-                  className="shrink-0 rounded-md bg-white px-3 py-1 text-xs font-medium text-black hover:bg-neutral-200 disabled:opacity-50"
+                  className="shrink-0 rounded-md bg-yellow-500 px-3 py-1 text-xs font-medium text-black hover:bg-yellow-400 disabled:opacity-50"
                 >
                   {addingDistributor ? "Adding…" : "+ Add Distributor"}
                 </button>
                 {addDistributorError && (
-                  <span className="whitespace-nowrap text-xs text-red-400">{addDistributorError}</span>
+                  <span className="whitespace-nowrap text-red-400">{addDistributorError}</span>
                 )}
               </div>
               <p className="text-neutral-500">
@@ -1379,13 +2387,15 @@ export default function InventoryPage() {
           </thead>
           <tbody className="divide-y divide-neutral-900">
             {combined.map((row, index) => {
-              const moveButtons = isAdmin && (
+              const rowEditActive =
+                row.kind === "divider" ? activeEditMode === "dividers" : activeEditMode === "items";
+              const moveButtons = isAdmin && rowEditActive && (
                 <span className="flex shrink-0 flex-col leading-none">
                   <button
                     onClick={() => handleMoveRow(index, "up")}
                     disabled={index === 0}
                     title="Move up"
-                    className="text-neutral-600 hover:text-neutral-200 disabled:opacity-30"
+                    className={EDIT_ICON_BTN}
                   >
                     ▲
                   </button>
@@ -1393,7 +2403,7 @@ export default function InventoryPage() {
                     onClick={() => handleMoveRow(index, "down")}
                     disabled={index === combined.length - 1}
                     title="Move down"
-                    className="text-neutral-600 hover:text-neutral-200 disabled:opacity-30"
+                    className={EDIT_ICON_BTN}
                   >
                     ▼
                   </button>
@@ -1407,14 +2417,23 @@ export default function InventoryPage() {
                     <td colSpan={6 + distributors.length} className="px-3 py-1.5">
                       <div className="flex items-center gap-2">
                         {moveButtons}
-                        <span className="text-xs font-semibold uppercase tracking-wide text-neutral-300">
-                          {d.label}
-                        </span>
-                        {isAdmin && (
+                        {isAdmin && activeEditMode === "dividers" ? (
+                          <input
+                            type="text"
+                            value={d.label}
+                            onChange={(e) => handleRenameDivider(d.id, e.target.value)}
+                            className={`${EDIT_INPUT} text-xs font-semibold uppercase tracking-wide`}
+                          />
+                        ) : (
+                          <span className="text-xs font-semibold uppercase tracking-wide text-neutral-300">
+                            {d.label}
+                          </span>
+                        )}
+                        {isAdmin && activeEditMode === "dividers" && (
                           <button
                             onClick={() => handleDeleteDivider(d.id)}
                             title="Remove this divider"
-                            className="ml-auto shrink-0 rounded text-neutral-600 hover:text-red-400"
+                            className={`ml-auto shrink-0 ${EDIT_ICON_BTN}`}
                           >
                             ✕
                           </button>
@@ -1432,17 +2451,26 @@ export default function InventoryPage() {
                   <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 font-medium text-neutral-200 group-hover:bg-neutral-900">
                     <div className="flex items-center gap-1.5">
                       {moveButtons}
-                      {isAdmin && (
+                      {isAdmin && activeEditMode === "items" && (
                         <button
                           onClick={() => handleArchiveProduct(p.id)}
                           disabled={savingKey === `archive:${p.id}`}
                           title="Remove this product from the grid (archives it — doesn't erase history)"
-                          className="shrink-0 rounded text-neutral-600 hover:text-red-400 disabled:opacity-50"
+                          className={EDIT_ICON_BTN}
                         >
                           ✕
                         </button>
                       )}
-                      <span>{p.name}</span>
+                      {isAdmin && activeEditMode === "items" ? (
+                        <input
+                          type="text"
+                          value={p.name}
+                          onChange={(e) => handleRenameProduct(p.id, e.target.value)}
+                          className={EDIT_INPUT}
+                        />
+                      ) : (
+                        <span>{p.name}</span>
+                      )}
                     </div>
                   </td>
                   {(["on_hand", "unlabeled", "to_be_packaged"] as const).map((field) => (
@@ -1527,21 +2555,21 @@ export default function InventoryPage() {
                 </tr>
               );
             })}
-            {isAdmin && (
+            {isAdmin && activeEditMode === "items" && (
               <tr className="border-t border-neutral-800">
                 <td colSpan={6 + distributors.length} className="bg-neutral-950 px-3 py-2">
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className={`flex flex-wrap items-center gap-2 ${EDIT_PANEL}`}>
                     <input
                       type="text"
                       placeholder="New product name…"
-                      className="w-56 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100"
+                      className={`w-56 text-sm ${EDIT_INPUT}`}
                       value={newProductName}
                       onChange={(e) => setNewProductName(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && handleAddProduct()}
                     />
                     <span className="text-xs text-neutral-500">position:</span>
                     <select
-                      className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-100"
+                      className={`text-xs ${EDIT_INPUT}`}
                       value={newProductAfter}
                       onChange={(e) => setNewProductAfter(e.target.value)}
                     >
@@ -1556,7 +2584,7 @@ export default function InventoryPage() {
                     <button
                       onClick={handleAddProduct}
                       disabled={addingProduct || !newProductName.trim()}
-                      className="shrink-0 rounded-md bg-white px-3 py-1 text-xs font-medium text-black hover:bg-neutral-200 disabled:opacity-50"
+                      className="shrink-0 rounded-md bg-yellow-500 px-3 py-1 text-xs font-medium text-black hover:bg-yellow-400 disabled:opacity-50"
                     >
                       {addingProduct ? "Adding…" : "+ Add Product"}
                     </button>
@@ -1567,21 +2595,21 @@ export default function InventoryPage() {
                 </td>
               </tr>
             )}
-            {isAdmin && (
+            {isAdmin && activeEditMode === "dividers" && (
               <tr>
                 <td colSpan={6 + distributors.length} className="bg-neutral-950 px-3 py-2">
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className={`flex flex-wrap items-center gap-2 ${EDIT_PANEL}`}>
                     <input
                       type="text"
                       placeholder="New divider label (e.g. &quot;Sonoma Cider&quot;)…"
-                      className="w-56 rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100"
+                      className={`w-56 text-sm ${EDIT_INPUT}`}
                       value={newDividerLabel}
                       onChange={(e) => setNewDividerLabel(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && handleAddDivider()}
                     />
                     <span className="text-xs text-neutral-500">position:</span>
                     <select
-                      className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-100"
+                      className={`text-xs ${EDIT_INPUT}`}
                       value={newDividerAfter}
                       onChange={(e) => setNewDividerAfter(e.target.value)}
                     >
@@ -1596,7 +2624,7 @@ export default function InventoryPage() {
                     <button
                       onClick={handleAddDivider}
                       disabled={addingDivider || !newDividerLabel.trim()}
-                      className="shrink-0 rounded-md border border-neutral-600 px-3 py-1 text-xs font-medium text-neutral-200 hover:bg-neutral-800 disabled:opacity-50"
+                      className="shrink-0 rounded-md bg-yellow-500 px-3 py-1 text-xs font-medium text-black hover:bg-yellow-400 disabled:opacity-50"
                     >
                       {addingDivider ? "Adding…" : "+ Add Divider"}
                     </button>

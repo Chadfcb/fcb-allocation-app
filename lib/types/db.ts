@@ -357,3 +357,45 @@ export interface LabelInventoryRow {
   updated_by: string | null;
   updated_at: string;
 }
+
+// =========================================================
+// Custom Packaging/Label Inventory items — freeform items an admin can
+// add/rename/reorder/remove from the "Edit Packaging Inventory Item" /
+// "Edit Label Item" menu on Inventory & Allocation, separate from the
+// fixed, code-driven PACKAGING_ITEMS list above (which has automatic
+// consumption math tied to it via lib/packaging.ts). These are simple
+// manually-tracked counts — no automation.
+// =========================================================
+export interface CustomPackagingItem {
+  id: string;
+  name: string;
+  sort_order: number | null;
+  active: boolean;
+  created_at: string;
+}
+
+export interface CustomPackagingInventoryRow {
+  id: string;
+  week_id: string;
+  item_id: string;
+  on_hand_qty: number;
+  updated_by: string | null;
+  updated_at: string;
+}
+
+export interface CustomLabelItem {
+  id: string;
+  name: string;
+  sort_order: number | null;
+  active: boolean;
+  created_at: string;
+}
+
+export interface CustomLabelInventoryRow {
+  id: string;
+  week_id: string;
+  item_id: string;
+  on_hand_qty: number;
+  updated_by: string | null;
+  updated_at: string;
+}
