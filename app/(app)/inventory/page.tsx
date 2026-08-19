@@ -24,6 +24,7 @@ import type {
 } from "@/lib/types/db";
 import { STATUS_FLAG_LABELS, STATUS_FLAG_COLORS, PO_STATUS_LABELS, PO_STATUS_COLORS } from "@/lib/types/db";
 import { PACKAGING_ITEMS, derivePackaging, computeConsumption } from "@/lib/packaging";
+import { computePalletsForDistributor } from "@/lib/pallets";
 
 type InventoryEditableField = "on_hand" | "unlabeled" | "to_be_packaged";
 
@@ -651,6 +652,21 @@ export default function InventoryPage() {
   }
 
   const grandOrderValue = distributors.reduce((sum, d) => sum + orderValueFor(d.id), 0);
+
+  // Total pallets for a distributor's whole order — every product, every
+  // brand, not just whatever divider group this happens to be displayed
+  // under. See lib/pallets.ts for the keg/can math.
+  function palletsFor(distributorId: string): number {
+    return computePalletsForDistributor(
+      products,
+      (productId) => allocations[`${productId}:${distributorId}`]?.quantity ?? 0
+    );
+  }
+
+  // The one divider row (matched by label, case-insensitive) that also
+  // shows each distributor's total pallet count in the space that would
+  // otherwise just be blank under the distributor columns.
+  const PALLET_SUMMARY_DIVIDER_LABEL = "full circle brewing";
 
   // Packaging/label consumption, derived from each product's can/keg size
   // (parsed from its name) and its total allocated quantity across all
@@ -2434,33 +2450,66 @@ export default function InventoryPage() {
 
               if (row.kind === "divider") {
                 const d = row.item;
+                const labelRow = (
+                  <div className="flex items-center gap-2">
+                    {moveButtons}
+                    {isAdmin && activeEditMode === "dividers" ? (
+                      <input
+                        type="text"
+                        value={d.label}
+                        onChange={(e) => handleRenameDivider(d.id, e.target.value)}
+                        className={`${EDIT_INPUT} text-xs font-semibold uppercase tracking-wide`}
+                      />
+                    ) : (
+                      <span className="text-xs font-semibold uppercase tracking-wide text-neutral-300">
+                        {d.label}
+                      </span>
+                    )}
+                    {isAdmin && activeEditMode === "dividers" && (
+                      <button
+                        onClick={() => handleDeleteDivider(d.id)}
+                        title="Remove this divider"
+                        className={`ml-auto shrink-0 ${EDIT_ICON_BTN}`}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                );
+
+                // This one divider also shows each distributor's total
+                // pallet count (every product, every brand — not just what's
+                // grouped under this divider) in the space that would
+                // otherwise just be blank under the distributor columns.
+                if (d.label.trim().toLowerCase() === PALLET_SUMMARY_DIVIDER_LABEL) {
+                  return (
+                    <tr key={rowKey(row)} className="bg-neutral-900/70">
+                      <td colSpan={5} className="px-3 py-1.5">
+                        <div className="flex items-center gap-2">
+                          {labelRow}
+                          <span className="text-[10px] normal-case text-neutral-500">
+                            — Total Pallets (all products, all brands)
+                          </span>
+                        </div>
+                      </td>
+                      {distributors.map((dist) => (
+                        <td
+                          key={dist.id}
+                          title="Total pallets for this distributor's whole order (kegs + cans, all brands)"
+                          className="px-2 py-1.5 text-right text-xs font-semibold text-neutral-200"
+                        >
+                          {palletsFor(dist.id)}
+                        </td>
+                      ))}
+                      <td className="px-2 py-1.5"></td>
+                    </tr>
+                  );
+                }
+
                 return (
                   <tr key={rowKey(row)} className="bg-neutral-900/70">
                     <td colSpan={6 + distributors.length} className="px-3 py-1.5">
-                      <div className="flex items-center gap-2">
-                        {moveButtons}
-                        {isAdmin && activeEditMode === "dividers" ? (
-                          <input
-                            type="text"
-                            value={d.label}
-                            onChange={(e) => handleRenameDivider(d.id, e.target.value)}
-                            className={`${EDIT_INPUT} text-xs font-semibold uppercase tracking-wide`}
-                          />
-                        ) : (
-                          <span className="text-xs font-semibold uppercase tracking-wide text-neutral-300">
-                            {d.label}
-                          </span>
-                        )}
-                        {isAdmin && activeEditMode === "dividers" && (
-                          <button
-                            onClick={() => handleDeleteDivider(d.id)}
-                            title="Remove this divider"
-                            className={`ml-auto shrink-0 ${EDIT_ICON_BTN}`}
-                          >
-                            ✕
-                          </button>
-                        )}
-                      </div>
+                      {labelRow}
                     </td>
                   </tr>
                 );
