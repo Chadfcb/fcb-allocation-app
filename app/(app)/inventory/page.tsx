@@ -263,6 +263,11 @@ export default function InventoryPage() {
   const packagingCardRef = useRef<HTMLDivElement | null>(null);
   const [packagingCardHeight, setPackagingCardHeight] = useState<number | null>(null);
 
+  // Expand button (top right of Label Inventory) lets it grow to show every
+  // row at once instead of the usual pinned-to-Packaging-Inventory height +
+  // internal scrollbar.
+  const [labelInventoryExpanded, setLabelInventoryExpanded] = useState(false);
+
   useLayoutEffect(() => {
     const el = packagingCardRef.current;
     if (!el) return;
@@ -1928,13 +1933,32 @@ export default function InventoryPage() {
         </div>
 
         <div
-          className="flex max-h-96 min-h-0 min-w-[380px] flex-1 flex-col rounded-lg border border-neutral-800 bg-neutral-950 p-3"
-          style={packagingCardHeight ? { height: packagingCardHeight, flexGrow: 0 } : undefined}
+          className={`flex min-h-0 min-w-[380px] flex-1 flex-col rounded-lg border border-neutral-800 bg-neutral-950 p-3 ${
+            labelInventoryExpanded ? "" : "max-h-96"
+          }`}
+          style={
+            !labelInventoryExpanded && packagingCardHeight
+              ? { height: packagingCardHeight, flexGrow: 0 }
+              : undefined
+          }
         >
-          <h2 className="mb-2 shrink-0 text-xs font-semibold uppercase tracking-wide text-neutral-400">
-            Label Inventory <span className="font-normal normal-case text-neutral-500">— Automatically adjusted as allocations are entered</span>
-          </h2>
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+              Label Inventory <span className="font-normal normal-case text-neutral-500">— Automatically adjusted as allocations are entered</span>
+            </h2>
+            <button
+              onClick={() => setLabelInventoryExpanded((prev) => !prev)}
+              title={
+                labelInventoryExpanded
+                  ? "Collapse back to match Packaging Inventory's height"
+                  : "Expand to see the full list at once, no scrolling"
+              }
+              className="shrink-0 rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300 hover:bg-neutral-800"
+            >
+              {labelInventoryExpanded ? "⤡ Collapse" : "⤢ Expand"}
+            </button>
+          </div>
+          <div className={`min-h-0 flex-1 ${labelInventoryExpanded ? "" : "overflow-y-auto"}`}>
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-neutral-500">
