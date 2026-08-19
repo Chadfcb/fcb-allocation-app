@@ -2485,10 +2485,10 @@ export default function InventoryPage() {
                   return (
                     <tr key={rowKey(row)} className="bg-neutral-900/70">
                       <td colSpan={5} className="px-3 py-1.5">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center justify-between gap-2">
                           {labelRow}
-                          <span className="text-[10px] normal-case text-neutral-500">
-                            — Total Pallets (all products, all brands)
+                          <span className="whitespace-nowrap text-[10px] normal-case text-neutral-500">
+                            Total Pallets (all products, all brands) —
                           </span>
                         </div>
                       </td>
