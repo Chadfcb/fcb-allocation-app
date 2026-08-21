@@ -152,6 +152,31 @@ export default function DashboardLiveBlocks({ weekId }: { weekId: string | null 
 
   const grandOrderValue = distributors.reduce((sum, d) => sum + orderValueFor(d.id), 0);
 
+  // Distributor Order Values sort: Delivered -> Approved -> Pending -> no
+  // status, alphabetical within each group. Renders from this sorted copy;
+  // `distributors` itself stays in its original (alphabetical) order since
+  // other blocks below don't care about PO status.
+  const STATUS_SORT_RANK: Record<string, number> = { delivered: 0, approved: 1, pending: 2 };
+  function statusRankFor(status: PoStatus) {
+    return status ? (STATUS_SORT_RANK[status] ?? 3) : 3;
+  }
+  const sortedDistributors = [...distributors].sort((a, b) => {
+    const rankDiff = statusRankFor(poStatus[a.id] ?? null) - statusRankFor(poStatus[b.id] ?? null);
+    if (rankDiff !== 0) return rankDiff;
+    return a.name.localeCompare(b.name);
+  });
+
+  function totalForStatus(status: PoStatus) {
+    return distributors.reduce((sum, d) => {
+      const s = poStatus[d.id] ?? null;
+      return s === status ? sum + orderValueFor(d.id) : sum;
+    }, 0);
+  }
+  const deliveredTotal = totalForStatus("delivered");
+  const approvedTotal = totalForStatus("approved");
+  const pendingTotal = totalForStatus("pending");
+  const noStatusTotal = totalForStatus(null);
+
   function totalAllocatedFor(productId: string) {
     return distributors.reduce((sum, d) => sum + (allocationQty[`${productId}:${d.id}`] ?? 0), 0);
   }
@@ -182,7 +207,7 @@ export default function DashboardLiveBlocks({ weekId }: { weekId: string | null 
             <p className="text-sm text-neutral-500">Loading…</p>
           ) : (
             <div className="divide-y divide-neutral-900">
-              {distributors.map((d) => {
+              {sortedDistributors.map((d) => {
                 const status = poStatus[d.id] ?? null;
                 return (
                   <div key={d.id} className="flex items-center justify-between gap-2 px-1.5 py-1.5 text-sm">
@@ -190,19 +215,23 @@ export default function DashboardLiveBlocks({ weekId }: { weekId: string | null 
                       {d.name}
                     </span>
                     <div className="flex shrink-0 items-center gap-2">
-                      {status ? (
-                        <span
-                          className="whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
-                          style={{ backgroundColor: PO_STATUS_COLORS[status], color: "#000000" }}
-                        >
-                          {PO_STATUS_LABELS[status]}
-                        </span>
-                      ) : (
-                        <span className="whitespace-nowrap text-[10px] uppercase tracking-wide text-neutral-600">
-                          —
-                        </span>
-                      )}
-                      <span className="whitespace-nowrap font-semibold text-neutral-100">
+                      {/* Fixed-width slot so the badge lines up in a vertical
+                          column regardless of this row's dollar total width. */}
+                      <div className="flex w-20 shrink-0 justify-center">
+                        {status ? (
+                          <span
+                            className="whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                            style={{ backgroundColor: PO_STATUS_COLORS[status], color: "#000000" }}
+                          >
+                            {PO_STATUS_LABELS[status]}
+                          </span>
+                        ) : (
+                          <span className="whitespace-nowrap text-[10px] uppercase tracking-wide text-neutral-600">
+                            —
+                          </span>
+                        )}
+                      </div>
+                      <span className="w-24 shrink-0 whitespace-nowrap text-right font-semibold text-neutral-100">
                         {currencyFormatter.format(orderValueFor(d.id))}
                       </span>
                     </div>
@@ -212,10 +241,28 @@ export default function DashboardLiveBlocks({ weekId }: { weekId: string | null 
             </div>
           )}
         </div>
-        <div className="mt-2 flex shrink-0 items-center justify-between gap-2 border-t border-neutral-800 px-1.5 pt-2 text-sm">
+        <div className="mt-2 flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-t border-neutral-800 px-1.5 pt-2 text-sm">
           <span className="font-semibold text-neutral-200">Combined Total</span>
           <span className="whitespace-nowrap font-semibold text-white">
             {loading ? "…" : currencyFormatter.format(grandOrderValue)}
+          </span>
+          <span className="whitespace-nowrap" style={{ color: PO_STATUS_COLORS.delivered }}>
+            Delivered Total{" "}
+            <span className="font-semibold">{loading ? "…" : currencyFormatter.format(deliveredTotal)}</span>
+          </span>
+          <span className="whitespace-nowrap" style={{ color: PO_STATUS_COLORS.approved }}>
+            Approved Total{" "}
+            <span className="font-semibold">{loading ? "…" : currencyFormatter.format(approvedTotal)}</span>
+          </span>
+          <span className="whitespace-nowrap" style={{ color: PO_STATUS_COLORS.pending }}>
+            Pending Total{" "}
+            <span className="font-semibold">{loading ? "…" : currencyFormatter.format(pendingTotal)}</span>
+          </span>
+          <span className="whitespace-nowrap text-neutral-500">
+            No Status{" "}
+            <span className="font-semibold text-neutral-300">
+              {loading ? "…" : currencyFormatter.format(noStatusTotal)}
+            </span>
           </span>
         </div>
       </div>
