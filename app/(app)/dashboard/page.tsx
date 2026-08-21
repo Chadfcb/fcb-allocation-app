@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getProfile } from "@/lib/getProfile";
 import DashboardLiveBlocks from "@/components/DashboardLiveBlocks";
+import PurchaseOrdersDashboardCard from "@/components/PurchaseOrdersDashboardCard";
 import { firstNameFor } from "@/lib/displayName";
 
 export default async function DashboardPage() {
@@ -65,6 +66,12 @@ export default async function DashboardPage() {
           Go to Inventory & Allocation
         </Link>
         <Link
+          href="/purchase-orders"
+          className="rounded-md border border-neutral-700 px-4 py-2 text-sm font-medium text-neutral-300 hover:bg-neutral-900"
+        >
+          Go to Purchase Orders
+        </Link>
+        <Link
           href="/distributors"
           className="rounded-md border border-neutral-700 px-4 py-2 text-sm font-medium text-neutral-300 hover:bg-neutral-900"
         >
@@ -73,6 +80,10 @@ export default async function DashboardPage() {
       </div>
 
       <DashboardLiveBlocks weekId={currentWeek?.id ?? null} />
+
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+        <PurchaseOrdersDashboardCard />
+      </div>
     </div>
   );
 }

@@ -451,6 +451,50 @@ create table if not exists custom_label_inventory (
 );
 
 -- =========================================================
+-- Operations > Purchase Orders — FCB's own outgoing vendor purchase orders
+-- (buying ingredients/supplies from suppliers like MoreBeer, Briess Malt,
+-- etc.), synced in from Ekos. Distinct from distributor_pos above, which
+-- tracks a distributor's PO *to* FCB for finished beer. Admin-only.
+--
+-- Not tied to a week — this mirrors Ekos's own "Open - Purchase Orders"
+-- list as of the last sync, not a per-week snapshot. ekos_po_number is
+-- unique so re-syncing the same PO updates it in place (upsert) instead of
+-- duplicating; a sync also removes any row here whose PO number is no
+-- longer in the current open list (it's been closed/received in Ekos
+-- since the last sync).
+-- =========================================================
+create table if not exists purchase_orders (
+  id uuid primary key default gen_random_uuid(),
+  ekos_po_number text not null unique,
+  supplier text not null,
+  po_date date,
+  expected_delivery_date date,
+  total_cost numeric(12,2),
+  status text,
+  -- The freeform note typed onto the PO in Ekos itself — the whole reason
+  -- this feature exists, so it travels along with everything else and
+  -- surfaces on both the Purchase Orders page and the Dashboard card.
+  comments text,
+  -- Ekos's own "Last Modified By" name, as Ekos records it — distinct from
+  -- synced_by below (which of our own admins ran the sync).
+  ekos_last_modified_by text,
+  synced_by uuid references profiles(id),
+  synced_at timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists purchase_order_items (
+  id uuid primary key default gen_random_uuid(),
+  purchase_order_id uuid not null references purchase_orders(id) on delete cascade,
+  item_name text not null,
+  quantity numeric(12,2),
+  unit_cost numeric(12,2),
+  line_total numeric(12,2),
+  sort_order integer not null default 0
+);
+create index if not exists purchase_order_items_po_idx on purchase_order_items (purchase_order_id, sort_order);
+
+-- =========================================================
 -- Audit log — every meaningful change is recorded here so admins can
 -- review history and one-click undo a change.
 -- =========================================================
@@ -535,6 +579,8 @@ alter table ingredient_costs enable row level security;
 alter table package_labor_costs enable row level security;
 alter table batch_recipe_items enable row level security;
 alter table contribution_margin_lines enable row level security;
+alter table purchase_orders enable row level security;
+alter table purchase_order_items enable row level security;
 
 -- Everyone signed in can read their own profile + see other profiles (for
 -- attribution / "who changed this" display); only admins can change roles.
@@ -632,6 +678,14 @@ create policy "contribution_margin_lines_admin" on contribution_margin_lines for
   exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
 );
 
+-- Operations > Purchase Orders: admin-only, full stop, matching Sales.
+create policy "purchase_orders_admin" on purchase_orders for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+create policy "purchase_order_items_admin" on purchase_order_items for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+
 -- Audit log: everyone can insert (so their own changes get logged); only
 -- admins can read/undo the full history.
 create policy "audit_log_insert" on audit_log for insert with check (auth.uid() is not null);
@@ -659,7 +713,8 @@ declare
     'custom_packaging_items', 'custom_label_items', 'distributor_prices',
     'inventory_snapshots', 'allocations', 'distributor_pos',
     'packaging_inventory', 'label_inventory',
-    'custom_packaging_inventory', 'custom_label_inventory'
+    'custom_packaging_inventory', 'custom_label_inventory',
+    'purchase_orders', 'purchase_order_items'
   ];
 begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then

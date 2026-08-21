@@ -19,6 +19,7 @@ import { usePathname } from "next/navigation";
 import type { Role } from "@/lib/types/db";
 
 const OPERATIONS_LINKS = [
+  { href: "/purchase-orders", label: "Purchase Orders" },
   { href: "/inventory", label: "Inventory & Allocation" },
   { href: "/distributors", label: "Distributor Data" },
   { href: "/pricing", label: "Distributor Pricing" },

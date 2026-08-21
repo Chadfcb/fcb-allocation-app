@@ -399,3 +399,49 @@ export interface CustomLabelInventoryRow {
   updated_by: string | null;
   updated_at: string;
 }
+
+// =========================================================
+// Operations > Purchase Orders — vendor POs (buying ingredients/supplies
+// from suppliers, e.g. MoreBeer, Briess Malt) synced in from Ekos. Not the
+// same thing as distributor_pos above (which tracks a distributor's PO
+// *to* FCB for finished beer) — these are FCB's own outgoing orders to its
+// vendors. Admin-only, full stop, matching Sales.
+//
+// There's no live Ekos API, so this data arrives via an on-demand sync:
+// Chad drives a live Claude-in-Chrome session against his own logged-in
+// Ekos tab, and the current "Open - Purchase Orders" list (header info,
+// comments, and each PO's line items) gets posted to
+// /api/purchase-orders/sync, which replaces the table's contents with
+// whatever's currently open in Ekos.
+// =========================================================
+export interface PurchaseOrder {
+  id: string;
+  ekos_po_number: string;
+  supplier: string;
+  po_date: string | null;
+  expected_delivery_date: string | null;
+  total_cost: number | null;
+  status: string | null;
+  // The freeform note Chad (or whoever) typed onto the PO in Ekos itself —
+  // this is the whole reason this feature exists, so it needs to travel
+  // along with everything else and surface on both the Purchase Orders page
+  // and the Dashboard card.
+  comments: string | null;
+  // Ekos's own "Last Modified By" field (a person's name as Ekos records
+  // it) — distinct from synced_by below, which is which of our own admins
+  // ran the sync.
+  ekos_last_modified_by: string | null;
+  synced_by: string | null;
+  synced_at: string;
+  created_at: string;
+}
+
+export interface PurchaseOrderItem {
+  id: string;
+  purchase_order_id: string;
+  item_name: string;
+  quantity: number | null;
+  unit_cost: number | null;
+  line_total: number | null;
+  sort_order: number;
+}
