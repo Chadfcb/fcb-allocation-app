@@ -79,10 +79,16 @@ export default async function DashboardPage() {
         </Link>
       </div>
 
-      <DashboardLiveBlocks weekId={currentWeek?.id ?? null} />
-
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+      {/*
+        Shared 2-column grid for all 4 live cards. DOM order drives the
+        layout: Open Purchase Orders, then Distributor Order Values (row 1),
+        then Packaging Shortages and Label Shortages (row 2) — the latter
+        three come from DashboardLiveBlocks, which renders as a Fragment so
+        its cards land directly in this grid alongside Purchase Orders.
+      */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <PurchaseOrdersDashboardCard />
+        <DashboardLiveBlocks weekId={currentWeek?.id ?? null} />
       </div>
     </div>
   );

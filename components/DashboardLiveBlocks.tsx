@@ -7,8 +7,12 @@
 // data and stay in sync via Supabase Realtime, so they update automatically
 // as allocations, prices, or on-hand counts change elsewhere in the app —
 // no page reload needed.
+//
+// Renders as a Fragment (no wrapping grid div) so the parent page can lay
+// these 3 cards out in one shared grid alongside the Purchase Orders card —
+// see app/(app)/dashboard/page.tsx for the grid that arranges all 4.
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { Fragment, useEffect, useMemo, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type {
   Product,
@@ -168,7 +172,7 @@ export default function DashboardLiveBlocks({ weekId }: { weekId: string | null 
     .filter((row) => row.remaining < 0);
 
   return (
-    <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+    <Fragment>
       <div className="flex flex-col rounded-lg border border-neutral-800 bg-neutral-950 p-3">
         <h2 className="mb-2 shrink-0 text-xs font-semibold uppercase tracking-wide text-neutral-400">
           Distributor Order Values
@@ -259,6 +263,6 @@ export default function DashboardLiveBlocks({ weekId }: { weekId: string | null 
           )}
         </div>
       </div>
-    </div>
+    </Fragment>
   );
 }
