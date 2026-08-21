@@ -186,7 +186,7 @@ export default function DashboardLiveBlocks({ weekId }: { weekId: string | null 
   const packagingShortages = PACKAGING_ITEMS.map((item) => ({
     ...item,
     remaining: (packaging[item.key] ?? 0) - (consumption.packagingConsumed[item.key] ?? 0),
-  })).filter((item) => item.remaining < 0);
+  })).filter((item) => item.remaining <= 0);
 
   const labelShortages = products
     .filter((p) => derivePackaging(p.name).kind === "can")
@@ -194,7 +194,7 @@ export default function DashboardLiveBlocks({ weekId }: { weekId: string | null 
       product: p,
       remaining: (labels[p.id] ?? 0) - (consumption.labelConsumed[p.id] ?? 0),
     }))
-    .filter((row) => row.remaining < 0);
+    .filter((row) => row.remaining <= 0);
 
   return (
     <Fragment>
