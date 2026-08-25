@@ -55,11 +55,15 @@ export default function PurchaseOrdersDashboardCard() {
     };
   }, [supabase, load]);
 
-  // Paid POs float to the top; everything else keeps its existing order
-  // (po_date descending, from the query).
-  const sortedOrders = [...orders].sort(
-    (a, b) => Number(b.payment_status === "paid") - Number(a.payment_status === "paid")
-  );
+  // Paid POs float to the top; within the rest, Ordered POs float above
+  // Not Ordered ones; anything still tied keeps its existing order (po_date
+  // descending, from the query) — the sort is stable, so ties fall through
+  // to that original order automatically.
+  const sortedOrders = [...orders].sort((a, b) => {
+    const paidDiff = Number(b.payment_status === "paid") - Number(a.payment_status === "paid");
+    if (paidDiff !== 0) return paidDiff;
+    return Number(b.ordered_status === "ordered") - Number(a.ordered_status === "ordered");
+  });
 
   return (
     <div className="flex flex-col rounded-lg border border-neutral-800 bg-neutral-950 p-3">

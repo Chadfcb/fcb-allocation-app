@@ -187,12 +187,15 @@ export default function PurchaseOrdersPageClient() {
     return latest;
   }, null);
 
-  // Paid POs float to the top; everything else keeps its existing order
-  // (po_date descending, from the query) — a stable sort on just this one
-  // boolean preserves that relative ordering within each group.
-  const sortedOrders = [...orders].sort(
-    (a, b) => Number(b.payment_status === "paid") - Number(a.payment_status === "paid")
-  );
+  // Paid POs float to the top; within the rest, Ordered POs float above
+  // Not Ordered ones; anything still tied keeps its existing order (po_date
+  // descending, from the query) — the sort is stable, so ties fall through
+  // to that original order automatically.
+  const sortedOrders = [...orders].sort((a, b) => {
+    const paidDiff = Number(b.payment_status === "paid") - Number(a.payment_status === "paid");
+    if (paidDiff !== 0) return paidDiff;
+    return Number(b.ordered_status === "ordered") - Number(a.ordered_status === "ordered");
+  });
 
   return (
     <div className="space-y-6">
