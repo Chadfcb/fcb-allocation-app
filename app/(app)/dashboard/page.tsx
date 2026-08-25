@@ -47,10 +47,10 @@ export default async function DashboardPage() {
           Go to Purchase Orders
         </Link>
         <Link
-          href="/distributors"
+          href="/distributor-inventory"
           className="rounded-md border border-neutral-700 px-4 py-2 text-sm font-medium text-neutral-300 hover:bg-neutral-900"
         >
-          Go to Distributor Data
+          Go to Distributor Inventory
         </Link>
       </div>
 

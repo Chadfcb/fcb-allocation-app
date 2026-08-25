@@ -2,20 +2,21 @@
 
 // Operations > Distributor Inventory — one block showing every distributor's
 // on-hand inventory of FCB's own products, side by side: distributors as
-// columns left to right, products as rows underneath. Separate from
-// Distributor Data (which drills into one distributor at a time with rate
-// of sale / weeks of supply / suggested order) — this page is the
-// at-a-glance grid, and the two share the same underlying
-// `distributor_inventory` table.
+// column groups left to right, products as rows underneath. Each
+// distributor gets three sub-columns — On Hand, Daily Rate of Sale, and
+// Projected Days on Hand — mirroring Ekos's own Distributor Inventory
+// report. This replaced the old one-distributor-at-a-time Distributor Data
+// page entirely.
 //
 // Data arrives the same way Purchase Orders does: there's no live Ekos API,
 // so a live Claude-in-Chrome session (or Chad by hand) reads Ekos's own
 // "Distributor Inventory" report and posts the numbers to
 // /api/distributor-inventory/sync, matched up to FCB Data's distributor and
-// product names. Cells are also editable by hand for a quick manual
-// correction — same convention as Distributor Data's on-hand field.
+// product names. On Hand and Daily Rate of Sale are also editable by hand
+// for a quick manual correction; Projected Days on Hand is always computed
+// (on hand ÷ daily rate), never stored.
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { Fragment, useEffect, useMemo, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { logChange } from "@/lib/audit";
 import { derivePackaging } from "@/lib/packaging";
@@ -132,14 +133,19 @@ export default function DistributorInventoryPage() {
     load();
   }, [load]);
 
-  async function handleOnHandChange(productId: string, distributorId: string, value: number) {
+  async function handleFieldChange(
+    productId: string,
+    distributorId: string,
+    field: "on_hand_qty" | "rate_of_sale",
+    value: number
+  ) {
     if (!week || !userId) return;
     const mapKey = `${productId}:${distributorId}`;
-    const key = `inv:${mapKey}`;
+    const key = `inv:${mapKey}:${field}`;
     setSavingKey(key);
 
     const existing = data[mapKey];
-    const oldValue = existing?.on_hand_qty ?? 0;
+    const oldValue = existing?.[field] ?? 0;
 
     setData((prev) => ({
       ...prev,
@@ -148,12 +154,13 @@ export default function DistributorInventoryPage() {
         week_id: week.id,
         distributor_id: distributorId,
         product_id: productId,
-        on_hand_qty: value,
+        on_hand_qty: existing?.on_hand_qty ?? 0,
         rate_of_sale: existing?.rate_of_sale ?? 0,
         source: existing?.source ?? "distributor",
         imported_at: existing?.imported_at ?? null,
         updated_by: userId,
         updated_at: new Date().toISOString(),
+        [field]: value,
       },
     }));
 
@@ -164,8 +171,8 @@ export default function DistributorInventoryPage() {
           week_id: week.id,
           distributor_id: distributorId,
           product_id: productId,
-          on_hand_qty: value,
-          rate_of_sale: existing?.rate_of_sale ?? 0,
+          on_hand_qty: field === "on_hand_qty" ? value : existing?.on_hand_qty ?? 0,
+          rate_of_sale: field === "rate_of_sale" ? value : existing?.rate_of_sale ?? 0,
           source: existing?.source ?? "distributor",
           updated_by: userId,
           updated_at: new Date().toISOString(),
@@ -181,7 +188,7 @@ export default function DistributorInventoryPage() {
         weekId: week.id,
         tableName: "distributor_inventory",
         recordId: updated.id,
-        fieldName: "on_hand_qty",
+        fieldName: field,
         oldValue,
         newValue: value,
         changedBy: userId,
@@ -189,6 +196,14 @@ export default function DistributorInventoryPage() {
     }
 
     setSavingKey(null);
+  }
+
+  // Projected Days on Hand = on hand ÷ daily rate of sale, matching Ekos's
+  // own report. Null (rendered as "—") when there's no rate to divide by.
+  function projectedDaysOnHand(productId: string, distributorId: string) {
+    const cell = data[`${productId}:${distributorId}`];
+    if (!cell || !cell.rate_of_sale) return null;
+    return cell.on_hand_qty / cell.rate_of_sale;
   }
 
   async function handleSync() {
@@ -302,18 +317,43 @@ export default function DistributorInventoryPage() {
       <div className="overflow-x-auto rounded-lg border border-neutral-800 bg-neutral-950">
         <table className="w-full border-collapse text-sm">
           <thead>
-            <tr className="h-8 text-xs uppercase tracking-wide text-neutral-500">
-              <th className="sticky top-0 left-0 z-20 h-8 whitespace-nowrap bg-neutral-900 px-3 text-left">
+            <tr className="text-xs uppercase tracking-wide text-neutral-500">
+              <th
+                rowSpan={2}
+                className="sticky top-0 left-0 z-20 whitespace-nowrap bg-neutral-900 px-3 text-left align-bottom"
+              >
                 Product
               </th>
               {distributors.map((d) => (
                 <th
                   key={d.id}
-                  className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right"
+                  colSpan={3}
+                  className="sticky top-0 z-10 whitespace-nowrap border-l border-neutral-800 bg-neutral-900 px-2 py-1 text-center"
                   style={{ color: d.color ?? undefined }}
                 >
                   {d.name}
                 </th>
+              ))}
+            </tr>
+            <tr className="h-8 text-[10px] uppercase tracking-wide text-neutral-500">
+              {distributors.map((d) => (
+                <Fragment key={d.id}>
+                  <th className="sticky top-6 z-10 h-8 whitespace-nowrap border-l border-neutral-800 bg-neutral-900 px-2 text-right font-normal">
+                    On Hand
+                  </th>
+                  <th
+                    className="sticky top-6 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right font-normal"
+                    title="Daily Rate of Sale"
+                  >
+                    Rate/Day
+                  </th>
+                  <th
+                    className="sticky top-6 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right font-normal"
+                    title="Projected Days on Hand"
+                  >
+                    Days OH
+                  </th>
+                </Fragment>
               ))}
             </tr>
           </thead>
@@ -330,7 +370,7 @@ export default function DistributorInventoryPage() {
                   return (
                     <tr key={`divider:${row.item.id}`} className="bg-neutral-900/70">
                       <td
-                        colSpan={1 + distributors.length}
+                        colSpan={1 + distributors.length * 3}
                         className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-300"
                       >
                         {row.item.label}
@@ -347,26 +387,53 @@ export default function DistributorInventoryPage() {
                     </td>
                     {distributors.map((d) => {
                       const cell = data[`${p.id}:${d.id}`];
+                      const days = projectedDaysOnHand(p.id, d.id);
+                      const title = cell
+                        ? `Source: ${cell.source}${
+                            cell.imported_at
+                              ? ` — imported ${new Date(cell.imported_at).toLocaleDateString()}`
+                              : ""
+                          }`
+                        : undefined;
                       return (
-                        <td key={d.id} className="px-2 py-1.5 text-right">
-                          <input
-                            type="number"
-                            title={
-                              cell
-                                ? `Source: ${cell.source}${
-                                    cell.imported_at
-                                      ? ` — imported ${new Date(cell.imported_at).toLocaleDateString()}`
-                                      : ""
-                                  }`
-                                : undefined
-                            }
-                            className="w-16 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-neutral-100"
-                            value={cell?.on_hand_qty ?? 0}
-                            onChange={(e) =>
-                              handleOnHandChange(p.id, d.id, Number(e.target.value) || 0)
-                            }
-                          />
-                        </td>
+                        <Fragment key={d.id}>
+                          <td className="border-l border-neutral-900 px-2 py-1.5 text-right">
+                            <input
+                              type="number"
+                              title={title}
+                              className="w-16 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-neutral-100"
+                              value={cell?.on_hand_qty ?? 0}
+                              onChange={(e) =>
+                                handleFieldChange(
+                                  p.id,
+                                  d.id,
+                                  "on_hand_qty",
+                                  Number(e.target.value) || 0
+                                )
+                              }
+                            />
+                          </td>
+                          <td className="px-2 py-1.5 text-right">
+                            <input
+                              type="number"
+                              step="0.1"
+                              title={title}
+                              className="w-14 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-neutral-100"
+                              value={cell?.rate_of_sale ?? 0}
+                              onChange={(e) =>
+                                handleFieldChange(
+                                  p.id,
+                                  d.id,
+                                  "rate_of_sale",
+                                  Number(e.target.value) || 0
+                                )
+                              }
+                            />
+                          </td>
+                          <td className="px-2 py-1.5 text-right text-neutral-400">
+                            {days === null ? "—" : days.toFixed(1)}
+                          </td>
+                        </Fragment>
                       );
                     })}
                   </tr>
@@ -378,8 +445,9 @@ export default function DistributorInventoryPage() {
       </div>
 
       <p className="text-xs text-neutral-500">
-        {savingKey ? "Saving…" : " "} Hover a quantity to see where it came from (Ekos, VIP,
-        or a manual entry) and when it was last updated. Edits here save immediately.
+        {savingKey ? "Saving…" : " "} On Hand and Rate/Day come from Ekos (hover a value to see
+        source and import date) but can be edited by hand — edits save immediately. Days OH
+        (Projected Days on Hand) is calculated automatically as On Hand ÷ Rate/Day.
       </p>
     </div>
   );

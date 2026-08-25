@@ -22,7 +22,6 @@ const OPERATIONS_LINKS = [
   { href: "/purchase-orders", label: "Purchase Orders" },
   { href: "/inventory", label: "Inventory & Allocation" },
   { href: "/distributor-inventory", label: "Distributor Inventory" },
-  { href: "/distributors", label: "Distributor Data" },
   { href: "/pricing", label: "Distributor Pricing" },
   { href: "/admin/weeks", label: "Weeks" },
   { href: "/admin/audit", label: "Audit Log" },
