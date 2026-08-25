@@ -414,23 +414,38 @@ export interface CustomLabelInventoryRow {
 // /api/purchase-orders/sync, which replaces the table's contents with
 // whatever's currently open in Ekos.
 // =========================================================
-// FCB's own tracking of where a vendor PO stands with the supplier —
-// distinct from `status` above (Ekos's own field, which is always "Open"
-// since we only ever sync the open list). Always one of these 3; no blank
-// state, defaults to "pending" for every PO (including ones synced in
-// before this field existed).
-export type PoPaymentStatus = "pending" | "ordered" | "paid";
+// FCB's own tracking of whether a vendor PO has been paid — distinct from
+// `status` above (Ekos's own field, which is always "Open" since we only
+// ever sync the open list), and independent from PoOrderedStatus below (a
+// PO can be ordered but not yet paid, for instance). Always one of these
+// 2; no blank state, defaults to "pending" for every PO (including ones
+// synced in before this field existed).
+export type PoPaymentStatus = "pending" | "paid";
 
 export const PO_PAYMENT_STATUS_LABELS: Record<PoPaymentStatus, string> = {
   pending: "Pending",
-  ordered: "Ordered",
   paid: "Paid",
 };
 
 export const PO_PAYMENT_STATUS_COLORS: Record<PoPaymentStatus, string> = {
   pending: "#ff9900",
-  ordered: "#3399ff",
   paid: "#00ff00",
+};
+
+// FCB's own tracking of whether we've actually placed the order with the
+// vendor yet — tracked separately from payment above (its own dropdown,
+// its own column). Always one of these 2; no blank state, defaults to
+// "not_ordered".
+export type PoOrderedStatus = "ordered" | "not_ordered";
+
+export const PO_ORDERED_STATUS_LABELS: Record<PoOrderedStatus, string> = {
+  ordered: "Ordered",
+  not_ordered: "Not Ordered",
+};
+
+export const PO_ORDERED_STATUS_COLORS: Record<PoOrderedStatus, string> = {
+  ordered: "#3399ff",
+  not_ordered: "#525252",
 };
 
 export interface PurchaseOrder {
@@ -441,8 +456,10 @@ export interface PurchaseOrder {
   expected_delivery_date: string | null;
   total_cost: number | null;
   status: string | null;
-  // Our own "have we ordered/paid this" tracker — see PoPaymentStatus above.
+  // Our own "have we paid this" tracker — see PoPaymentStatus above.
   payment_status: PoPaymentStatus;
+  // Our own "have we ordered this" tracker — see PoOrderedStatus above.
+  ordered_status: PoOrderedStatus;
   // The freeform note Chad (or whoever) typed onto the PO in Ekos itself —
   // this is the whole reason this feature exists, so it needs to travel
   // along with everything else and surface on both the Purchase Orders page

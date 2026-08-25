@@ -8,7 +8,12 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { PurchaseOrder } from "@/lib/types/db";
-import { PO_PAYMENT_STATUS_LABELS, PO_PAYMENT_STATUS_COLORS } from "@/lib/types/db";
+import {
+  PO_PAYMENT_STATUS_LABELS,
+  PO_PAYMENT_STATUS_COLORS,
+  PO_ORDERED_STATUS_LABELS,
+  PO_ORDERED_STATUS_COLORS,
+} from "@/lib/types/db";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -50,6 +55,12 @@ export default function PurchaseOrdersDashboardCard() {
     };
   }, [supabase, load]);
 
+  // Paid POs float to the top; everything else keeps its existing order
+  // (po_date descending, from the query).
+  const sortedOrders = [...orders].sort(
+    (a, b) => Number(b.payment_status === "paid") - Number(a.payment_status === "paid")
+  );
+
   return (
     <div className="flex flex-col rounded-lg border border-neutral-800 bg-neutral-950 p-3">
       <h2 className="mb-2 shrink-0 text-xs font-semibold uppercase tracking-wide text-neutral-400">
@@ -62,7 +73,7 @@ export default function PurchaseOrdersDashboardCard() {
           <p className="text-sm text-neutral-500">No open purchase orders.</p>
         ) : (
           <div className="divide-y divide-neutral-900">
-            {orders.map((po) => (
+            {sortedOrders.map((po) => (
               <div key={po.id} className="px-1.5 py-1.5 text-sm">
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate text-neutral-300">
@@ -85,6 +96,17 @@ export default function PurchaseOrdersDashboardCard() {
                         }}
                       >
                         {PO_PAYMENT_STATUS_LABELS[po.payment_status]}
+                      </span>
+                    </div>
+                    <div className="flex w-20 shrink-0 justify-center">
+                      <span
+                        className="whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                        style={{
+                          backgroundColor: PO_ORDERED_STATUS_COLORS[po.ordered_status],
+                          color: "#000000",
+                        }}
+                      >
+                        {PO_ORDERED_STATUS_LABELS[po.ordered_status]}
                       </span>
                     </div>
                     <span className="w-20 shrink-0 whitespace-nowrap text-right font-semibold text-neutral-100">

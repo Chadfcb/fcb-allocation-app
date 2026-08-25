@@ -13,8 +13,13 @@
 import { Fragment, useEffect, useMemo, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { logChange } from "@/lib/audit";
-import type { PurchaseOrder, PurchaseOrderItem, PoPaymentStatus } from "@/lib/types/db";
-import { PO_PAYMENT_STATUS_LABELS, PO_PAYMENT_STATUS_COLORS } from "@/lib/types/db";
+import type { PurchaseOrder, PurchaseOrderItem, PoPaymentStatus, PoOrderedStatus } from "@/lib/types/db";
+import {
+  PO_PAYMENT_STATUS_LABELS,
+  PO_PAYMENT_STATUS_COLORS,
+  PO_ORDERED_STATUS_LABELS,
+  PO_ORDERED_STATUS_COLORS,
+} from "@/lib/types/db";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -115,6 +120,34 @@ export default function PurchaseOrdersPageClient() {
     }
   }
 
+  async function handleOrderedStatusChange(poId: string, value: PoOrderedStatus) {
+    if (!userId) return;
+
+    const existing = orders.find((po) => po.id === poId);
+    const oldValue = existing?.ordered_status ?? "not_ordered";
+    setOrders((prev) => prev.map((po) => (po.id === poId ? { ...po, ordered_status: value } : po)));
+
+    const { data, error } = await supabase
+      .from("purchase_orders")
+      .update({ ordered_status: value })
+      .eq("id", poId)
+      .select()
+      .single();
+
+    if (!error && data) {
+      setOrders((prev) => prev.map((po) => (po.id === poId ? (data as PurchaseOrder) : po)));
+      await logChange(supabase, {
+        weekId: null,
+        tableName: "purchase_orders",
+        recordId: poId,
+        fieldName: "ordered_status",
+        oldValue,
+        newValue: value,
+        changedBy: userId,
+      });
+    }
+  }
+
   async function handleSync() {
     setSyncing(true);
     setSyncError(null);
@@ -153,6 +186,13 @@ export default function PurchaseOrdersPageClient() {
     if (!latest || po.synced_at > latest) return po.synced_at;
     return latest;
   }, null);
+
+  // Paid POs float to the top; everything else keeps its existing order
+  // (po_date descending, from the query) — a stable sort on just this one
+  // boolean preserves that relative ordering within each group.
+  const sortedOrders = [...orders].sort(
+    (a, b) => Number(b.payment_status === "paid") - Number(a.payment_status === "paid")
+  );
 
   return (
     <div className="space-y-6">
@@ -231,26 +271,27 @@ export default function PurchaseOrdersPageClient() {
               <th className="px-3 py-2 text-left">Expected Delivery</th>
               <th className="px-3 py-2 text-right">Total Cost</th>
               <th className="px-3 py-2 text-left">Status</th>
-              <th className="px-3 py-2 text-left">Order Status</th>
+              <th className="px-3 py-2 text-left">Paid</th>
+              <th className="px-3 py-2 text-left">Ordered</th>
               <th className="px-3 py-2 text-left">Comments</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-900">
             {loading ? (
               <tr>
-                <td colSpan={9} className="px-3 py-6 text-center text-neutral-500">
+                <td colSpan={10} className="px-3 py-6 text-center text-neutral-500">
                   Loading…
                 </td>
               </tr>
             ) : orders.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-3 py-6 text-center text-neutral-500">
+                <td colSpan={10} className="px-3 py-6 text-center text-neutral-500">
                   No open purchase orders yet — use &quot;Sync from Ekos&quot; above to pull them
                   in.
                 </td>
               </tr>
             ) : (
-              orders.map((po) => {
+              sortedOrders.map((po) => {
                 const items = itemsByPo[po.id] ?? [];
                 const isExpanded = expanded[po.id] ?? false;
                 return (
@@ -297,12 +338,35 @@ export default function PurchaseOrdersPageClient() {
                           ))}
                         </select>
                       </td>
+                      <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                        <select
+                          value={po.ordered_status}
+                          onChange={(e) =>
+                            handleOrderedStatusChange(po.id, e.target.value as PoOrderedStatus)
+                          }
+                          className="w-28 rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] font-semibold"
+                          style={{
+                            backgroundColor: PO_ORDERED_STATUS_COLORS[po.ordered_status],
+                            color: "#000000",
+                          }}
+                        >
+                          {(Object.keys(PO_ORDERED_STATUS_LABELS) as PoOrderedStatus[]).map((s) => (
+                            <option
+                              key={s}
+                              value={s}
+                              style={{ backgroundColor: PO_ORDERED_STATUS_COLORS[s], color: "#000000" }}
+                            >
+                              {PO_ORDERED_STATUS_LABELS[s]}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
                       <td className="px-3 py-2 text-neutral-300">{po.comments ?? "—"}</td>
                     </tr>
                     {isExpanded && (
                       <tr className="bg-neutral-950/60">
                         <td />
-                        <td colSpan={8} className="px-3 py-3">
+                        <td colSpan={9} className="px-3 py-3">
                           {items.length === 0 ? (
                             <p className="text-sm text-neutral-500">No line items captured.</p>
                           ) : (
