@@ -414,6 +414,25 @@ export interface CustomLabelInventoryRow {
 // /api/purchase-orders/sync, which replaces the table's contents with
 // whatever's currently open in Ekos.
 // =========================================================
+// FCB's own tracking of where a vendor PO stands with the supplier —
+// distinct from `status` above (Ekos's own field, which is always "Open"
+// since we only ever sync the open list). Always one of these 3; no blank
+// state, defaults to "pending" for every PO (including ones synced in
+// before this field existed).
+export type PoPaymentStatus = "pending" | "ordered" | "paid";
+
+export const PO_PAYMENT_STATUS_LABELS: Record<PoPaymentStatus, string> = {
+  pending: "Pending",
+  ordered: "Ordered",
+  paid: "Paid",
+};
+
+export const PO_PAYMENT_STATUS_COLORS: Record<PoPaymentStatus, string> = {
+  pending: "#ff9900",
+  ordered: "#3399ff",
+  paid: "#00ff00",
+};
+
 export interface PurchaseOrder {
   id: string;
   ekos_po_number: string;
@@ -422,6 +441,8 @@ export interface PurchaseOrder {
   expected_delivery_date: string | null;
   total_cost: number | null;
   status: string | null;
+  // Our own "have we ordered/paid this" tracker — see PoPaymentStatus above.
+  payment_status: PoPaymentStatus;
   // The freeform note Chad (or whoever) typed onto the PO in Ekos itself —
   // this is the whole reason this feature exists, so it needs to travel
   // along with everything else and surface on both the Purchase Orders page

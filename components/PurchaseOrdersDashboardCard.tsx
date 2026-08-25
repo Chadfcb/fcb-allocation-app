@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { PurchaseOrder } from "@/lib/types/db";
+import { PO_PAYMENT_STATUS_LABELS, PO_PAYMENT_STATUS_COLORS } from "@/lib/types/db";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -69,10 +70,24 @@ export default function PurchaseOrdersDashboardCard() {
                     · {po.supplier}
                   </span>
                   <div className="flex shrink-0 items-center gap-2">
-                    <span className="whitespace-nowrap text-[10px] uppercase tracking-wide text-neutral-600">
+                    {/* Fixed-width slots so dates, badges, and totals each
+                        line up in their own vertical column across rows,
+                        regardless of how wide any single row's text is. */}
+                    <span className="w-10 shrink-0 whitespace-nowrap text-right text-[10px] uppercase tracking-wide text-neutral-600">
                       {formatDate(po.expected_delivery_date)}
                     </span>
-                    <span className="whitespace-nowrap font-semibold text-neutral-100">
+                    <div className="flex w-16 shrink-0 justify-center">
+                      <span
+                        className="whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                        style={{
+                          backgroundColor: PO_PAYMENT_STATUS_COLORS[po.payment_status],
+                          color: "#000000",
+                        }}
+                      >
+                        {PO_PAYMENT_STATUS_LABELS[po.payment_status]}
+                      </span>
+                    </div>
+                    <span className="w-20 shrink-0 whitespace-nowrap text-right font-semibold text-neutral-100">
                       {po.total_cost != null ? currencyFormatter.format(po.total_cost) : "—"}
                     </span>
                   </div>

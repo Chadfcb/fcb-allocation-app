@@ -471,6 +471,12 @@ create table if not exists purchase_orders (
   expected_delivery_date date,
   total_cost numeric(12,2),
   status text,
+  -- FCB's own "have we ordered/paid this" tracker — distinct from `status`
+  -- above (Ekos's own field, always "Open"). Always one of these 3, no
+  -- blank state; defaults to "pending". Set from the Purchase Orders page,
+  -- shown as a badge on the Dashboard card.
+  payment_status text not null default 'pending'
+    check (payment_status in ('pending', 'ordered', 'paid')),
   -- The freeform note typed onto the PO in Ekos itself — the whole reason
   -- this feature exists, so it travels along with everything else and
   -- surfaces on both the Purchase Orders page and the Dashboard card.
