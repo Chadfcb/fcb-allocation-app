@@ -61,6 +61,21 @@ create table if not exists distributors (
   -- null (the original 7 seeded distributors) sorts after any explicitly
   -- ordered ones, then falls back to name.
   sort_order double precision,
+  -- False for a distributor "row" that isn't a real separate physical
+  -- location — e.g. "Matagrano 2", which Chad created as a second PO/
+  -- allocation entry for the same distributor, not a second warehouse.
+  -- Such rows still fully participate in Inventory & Allocation, Purchase
+  -- Orders, etc.; they're just excluded from the Distributor Inventory
+  -- page and its Ekos sync, since there's no separate on-hand number for
+  -- them to report.
+  track_inventory boolean not null default true,
+  -- Column order used ONLY by the Distributor Inventory page — kept
+  -- separate from `sort_order` (which drives Inventory & Allocation,
+  -- Purchase Orders, Pricing, and Distributor Data) because Chad wants a
+  -- different left-to-right order on this one page. Null sorts after any
+  -- explicitly ordered distributor, then falls back to name, same
+  -- convention as `sort_order`.
+  inventory_sort_order double precision,
   created_at timestamptz not null default now()
 );
 

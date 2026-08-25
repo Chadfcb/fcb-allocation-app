@@ -67,7 +67,11 @@ export async function POST(req: NextRequest) {
   }
 
   const [{ data: distributors }, { data: products }] = await Promise.all([
-    supabase.from("distributors").select("id, name").eq("active", true),
+    supabase
+      .from("distributors")
+      .select("id, name")
+      .eq("active", true)
+      .eq("track_inventory", true),
     supabase.from("products").select("id, name").eq("active", true),
   ]);
 

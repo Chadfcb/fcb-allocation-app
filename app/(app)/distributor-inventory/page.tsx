@@ -99,11 +99,15 @@ export default function DistributorInventoryPage() {
     const { data: dividerData } = await supabase.from("section_dividers").select("*");
     setDividers((dividerData as SectionDivider[]) ?? []);
 
+    // Ordered by inventory_sort_order (this page's own column order), NOT
+    // the shared sort_order used by Inventory & Allocation / Purchase
+    // Orders / Pricing / Distributor Data.
     const { data: distributorData } = await supabase
       .from("distributors")
       .select("*")
       .eq("active", true)
-      .order("sort_order", { ascending: true, nullsFirst: false })
+      .eq("track_inventory", true)
+      .order("inventory_sort_order", { ascending: true, nullsFirst: false })
       .order("name");
     setDistributors((distributorData as Distributor[]) ?? []);
 

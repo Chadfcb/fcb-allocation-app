@@ -24,6 +24,14 @@ export interface Distributor {
   // Allocation, same as products. Null (the original seeded distributors)
   // sorts after any explicitly ordered ones, then falls back to name.
   sort_order: number | null;
+  // False for a distributor row that isn't a separate physical location
+  // (e.g. "Matagrano 2" — a second order against the same distributor).
+  // Excluded from the Distributor Inventory page and its Ekos sync only;
+  // still fully active everywhere else.
+  track_inventory: boolean;
+  // Column order on the Distributor Inventory page only — independent of
+  // `sort_order`, which drives every other page's distributor columns.
+  inventory_sort_order: number | null;
 }
 
 export interface Product {
