@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useCallback } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import type { Week } from "@/lib/types/db";
 
@@ -66,8 +67,13 @@ export default function WeeksPage() {
         <h1 className="text-lg font-semibold text-neutral-100">Weeks</h1>
         <p className="text-sm text-neutral-400">
           Starting a new week automatically carries forward remaining inventory from the most
-          recent week as the new week&apos;s opening On Hand balance. Distributor data and
-          allocations always start fresh.
+          recent week as the new week&apos;s opening On Hand balance. Any distributor whose
+          purchase order hasn&apos;t been marked Delivered carries forward too — its allocation
+          quantities, PO number, and status all move to the new week unchanged, since that order
+          is still open and nothing&apos;s shipped yet. Once a distributor&apos;s PO is marked
+          Delivered, its order is complete: its allocation resets fresh next week, and its
+          product, packaging, and label usage is subtracted out of the new week&apos;s opening
+          balances.
         </p>
       </div>
 
@@ -114,8 +120,15 @@ export default function WeeksPage() {
           </thead>
           <tbody className="divide-y divide-neutral-900">
             {weeks.map((w) => (
-              <tr key={w.id} className="hover:bg-neutral-900/60">
-                <td className="px-3 py-2 font-medium text-neutral-200">{w.label}</td>
+              <tr key={w.id} className="group hover:bg-neutral-900/60">
+                <td className="p-0">
+                  <Link
+                    href={`/admin/weeks/${w.id}`}
+                    className="block px-3 py-2 font-medium text-neutral-200 group-hover:text-neutral-50 group-hover:underline"
+                  >
+                    {w.label}
+                  </Link>
+                </td>
                 <td className="px-3 py-2 text-neutral-400">{w.week_start}</td>
                 <td className="px-3 py-2 capitalize text-neutral-400">{w.status}</td>
                 <td className="px-3 py-2 text-neutral-500">
@@ -126,6 +139,7 @@ export default function WeeksPage() {
           </tbody>
         </table>
       </div>
+      <p className="text-xs text-neutral-500">Click a week&apos;s label to view a read-only snapshot of its numbers.</p>
     </div>
   );
 }
