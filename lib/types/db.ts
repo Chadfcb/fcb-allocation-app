@@ -156,6 +156,31 @@ export interface DistributorPrice {
   updated_at: string;
 }
 
+// Operations > Build Orders. Par Level is a standing target per
+// distributor/product, same lifecycle as DistributorPrice (not tied to a
+// week).
+export interface DistributorParLevel {
+  id: string;
+  distributor_id: string;
+  product_id: string;
+  par_level: number;
+  updated_by: string | null;
+  updated_at: string;
+}
+
+// Recommended Order for a given week — defaults to (par level - on hand),
+// floored at 0, until someone edits the cell or pushes it to Inventory &
+// Allocation, at which point a row exists here with the effective value.
+export interface BuildOrderRecommendation {
+  id: string;
+  week_id: string;
+  distributor_id: string;
+  product_id: string;
+  recommended_qty: number;
+  updated_by: string | null;
+  updated_at: string;
+}
+
 // =========================================================
 // Sales > Price List — brand-level price-to-retailer/distributor by
 // package format (6-pack, 4-pack, single, 1/6 bbl keg, 1/2 bbl keg). This is

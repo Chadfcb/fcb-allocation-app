@@ -249,6 +249,38 @@ create table if not exists distributor_prices (
 );
 
 -- =========================================================
+-- Operations > Build Orders — Par Level is a standing target per
+-- distributor/product (like distributor_prices above: one number, not tied
+-- to a week, edited directly on the Build Orders page).
+-- =========================================================
+create table if not exists distributor_par_levels (
+  id uuid primary key default gen_random_uuid(),
+  distributor_id uuid not null references distributors(id),
+  product_id uuid not null references products(id),
+  par_level numeric(12,2) not null default 0,
+  updated_by uuid references profiles(id),
+  updated_at timestamptz not null default now(),
+  unique (distributor_id, product_id)
+);
+
+-- Recommended Order, per week. Defaults to (par level - on hand, floored at
+-- 0) when no row exists yet — the app computes that default on the fly, so
+-- a row only gets written here once someone actually edits the cell (or
+-- once it's pushed to Inventory & Allocation, which stores the effective
+-- value even if it was never hand-edited). That's the same
+-- computed-until-edited pattern distributor_inventory uses for on-hand.
+create table if not exists build_order_recommendations (
+  id uuid primary key default gen_random_uuid(),
+  week_id uuid not null references weeks(id) on delete cascade,
+  distributor_id uuid not null references distributors(id),
+  product_id uuid not null references products(id),
+  recommended_qty numeric(12,2) not null default 0,
+  updated_by uuid references profiles(id),
+  updated_at timestamptz not null default now(),
+  unique (week_id, distributor_id, product_id)
+);
+
+-- =========================================================
 -- Sales > Price List — brand-level price-to-retailer/distributor by
 -- package format (6-pack, 4-pack, single, 1/6 bbl keg, 1/2 bbl keg). This is
 -- the first piece of the old FCB Pricing desktop app being folded in under
@@ -584,6 +616,8 @@ alter table products enable row level security;
 alter table weeks enable row level security;
 alter table inventory_snapshots enable row level security;
 alter table distributor_inventory enable row level security;
+alter table distributor_par_levels enable row level security;
+alter table build_order_recommendations enable row level security;
 alter table allocations enable row level security;
 alter table distributor_pos enable row level security;
 alter table distributor_prices enable row level security;
@@ -642,6 +676,14 @@ create policy "inventory_rw" on inventory_snapshots for all using (auth.uid() is
 -- admin-only — Basic users' access is limited to the Inventory & Allocation
 -- grid (allocations, inventory_snapshots, distributor_pos) only.
 create policy "distributor_inventory_rw" on distributor_inventory for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+-- Build Orders (par levels + recommended order) is admin-only, same as
+-- Distributor Inventory — it's the same Operations sub-area.
+create policy "distributor_par_levels_rw" on distributor_par_levels for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+create policy "build_order_recommendations_rw" on build_order_recommendations for all using (
   exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
 );
 create policy "allocations_rw" on allocations for all using (auth.uid() is not null);
@@ -739,7 +781,8 @@ declare
     'inventory_snapshots', 'allocations', 'distributor_pos',
     'packaging_inventory', 'label_inventory',
     'custom_packaging_inventory', 'custom_label_inventory',
-    'purchase_orders', 'purchase_order_items'
+    'purchase_orders', 'purchase_order_items',
+    'distributor_par_levels', 'build_order_recommendations'
   ];
 begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
