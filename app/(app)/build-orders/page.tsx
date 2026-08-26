@@ -398,6 +398,73 @@ export default function BuildOrdersPage() {
     setSavingKey(null);
   }
 
+  async function handleAddTankBrand(brandId: string) {
+    if (!userId || !brandId) return;
+    setSavingKey(`tank:${brandId}:add`);
+
+    const { data: created, error } = await supabase
+      .from("tank_allocations")
+      .upsert(
+        {
+          brand_id: brandId,
+          updated_by: userId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "brand_id" },
+      )
+      .select()
+      .single();
+
+    if (!error && created) {
+      setTankAllocations((prev) => ({
+        ...prev,
+        [brandId]: created as TankAllocation,
+      }));
+    }
+
+    setSavingKey(null);
+  }
+
+  async function handleRemoveTankBrand(brand: PricingBrand) {
+    const row = tankAllocations[brand.id];
+    if (!row) return;
+    if (
+      !window.confirm(
+        `Remove ${brand.name} from Tank Allocations? This clears its FV #, BBLs Available, and quantities.`,
+      )
+    ) {
+      return;
+    }
+
+    setSavingKey(`tank:${brand.id}:remove`);
+
+    const { error } = await supabase
+      .from("tank_allocations")
+      .delete()
+      .eq("id", row.id);
+
+    if (!error) {
+      setTankAllocations((prev) => {
+        const next = { ...prev };
+        delete next[brand.id];
+        return next;
+      });
+      if (userId) {
+        await logChange(supabase, {
+          weekId: null,
+          tableName: "tank_allocations",
+          recordId: row.id,
+          fieldName: "brand_id",
+          oldValue: brand.name,
+          newValue: null,
+          changedBy: userId,
+        });
+      }
+    }
+
+    setSavingKey(null);
+  }
+
   async function handlePushClick(distributor: Distributor) {
     if (!week) return;
     setPushResult(null);
@@ -560,6 +627,11 @@ export default function BuildOrdersPage() {
     ...dividers.map((d): CombinedRow => ({ kind: "divider", item: d })),
   ].sort((a, b) => rowSortOrder(a) - rowSortOrder(b));
 
+  // Tank Allocations only shows brands that have been explicitly added
+  // (i.e. have a tank_allocations row) — not every Price List brand.
+  const tankBrands = brands.filter((b) => tankAllocations[b.id]);
+  const addableBrands = brands.filter((b) => !tankAllocations[b.id]);
+
   if (loading) return <p className="text-sm text-neutral-400">Loading…</p>;
 
   if (!isAdmin) {
@@ -582,13 +654,32 @@ export default function BuildOrdersPage() {
       </div>
 
       <div>
-        <h2 className="text-base font-semibold text-neutral-100">
-          Tank Allocations
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-base font-semibold text-neutral-100">
+            Tank Allocations
+          </h2>
+          {addableBrands.length > 0 && (
+            <select
+              className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-300"
+              value=""
+              onChange={(e) => {
+                if (e.target.value) handleAddTankBrand(e.target.value);
+              }}
+            >
+              <option value="">+ Add brand…</option>
+              {addableBrands.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
         <p className="text-sm text-neutral-400">
           Standing, per brand — carries forward week to week until you change
           it. BBLs Remaining is BBLs Available minus each package quantity
-          converted to BBLs (1 bbl = 31 gal).
+          converted to BBLs (1 bbl = 31 gal). Only brands added here appear
+          below.
         </p>
       </div>
 
@@ -599,24 +690,34 @@ export default function BuildOrdersPage() {
               <th className="sticky left-0 z-10 whitespace-nowrap bg-neutral-900 px-3 py-2 text-left">
                 Brand
               </th>
-              {brands.map((b) => (
+              {tankBrands.map((b) => (
                 <th
                   key={b.id}
                   className="whitespace-nowrap border-l border-neutral-800 bg-neutral-900 px-3 py-2 text-center"
                 >
-                  {b.name}
+                  <div className="flex items-center justify-center gap-1.5">
+                    <span>{b.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveTankBrand(b)}
+                      title={`Remove ${b.name} from Tank Allocations`}
+                      className="rounded border border-neutral-700 px-1 text-[10px] font-normal normal-case text-neutral-500 hover:border-red-800 hover:text-red-400"
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-900">
-            {brands.length === 0 ? (
+            {tankBrands.length === 0 ? (
               <tr>
                 <td
                   colSpan={1}
                   className="px-3 py-6 text-center text-neutral-500"
                 >
-                  No active brands. Add brands on Sales &gt; Price List.
+                  No brands added yet — use “+ Add brand” above.
                 </td>
               </tr>
             ) : (
@@ -625,7 +726,7 @@ export default function BuildOrdersPage() {
                   <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 font-medium text-neutral-300">
                     FV #
                   </td>
-                  {brands.map((b) => (
+                  {tankBrands.map((b) => (
                     <td
                       key={b.id}
                       className="border-l border-neutral-900 px-2 py-1.5 text-center"
@@ -645,7 +746,7 @@ export default function BuildOrdersPage() {
                   <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 font-medium text-neutral-300">
                     BBLs Available
                   </td>
-                  {brands.map((b) => (
+                  {tankBrands.map((b) => (
                     <td
                       key={b.id}
                       className="border-l border-neutral-900 px-2 py-1.5 text-center"
@@ -670,7 +771,7 @@ export default function BuildOrdersPage() {
                     <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 font-medium text-neutral-300">
                       {label}
                     </td>
-                    {brands.map((b) => (
+                    {tankBrands.map((b) => (
                       <td
                         key={b.id}
                         className="border-l border-neutral-900 px-2 py-1.5 text-center"
@@ -695,7 +796,7 @@ export default function BuildOrdersPage() {
                   <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-900/50 px-3 py-1.5 font-semibold text-neutral-200">
                     BBLs Remaining
                   </td>
-                  {brands.map((b) => {
+                  {tankBrands.map((b) => {
                     const remaining = tankBblsRemaining(tankAllocations[b.id]);
                     return (
                       <td
