@@ -234,6 +234,26 @@ export interface BrandPriceListRow {
 }
 
 // =========================================================
+// Operations > Build Orders > Tank Allocations — standing (not week-scoped)
+// per-brand block: which fermentation vessel it's in, BBLs available, and
+// how those BBLs are committed across package formats. BBLs Remaining is
+// computed client-side, not stored — see lib/tankAllocations.ts.
+// =========================================================
+export interface TankAllocation {
+  id: string;
+  brand_id: string;
+  fv_number: string | null;
+  bbls_available: number;
+  qty_single: number;
+  qty_4pack: number;
+  qty_6pk: number;
+  qty_sixth: number;
+  qty_half: number;
+  updated_by: string | null;
+  updated_at: string;
+}
+
+// =========================================================
 // Sales > Margin Analysis — per-brand batch cost + per-package-format
 // pricing (PTR/PTD), used to work out gross profit and full batch
 // economics (revenue, cost, profit, margin). Second piece of folding the

@@ -310,6 +310,31 @@ create table if not exists brand_price_list (
 );
 
 -- =========================================================
+-- Operations > Build Orders > Tank Allocations — a standing (not week-
+-- scoped) block, one row per Price List brand: which fermentation vessel
+-- it's in, how many BBLs are available in that tank, and how those BBLs are
+-- being committed across package formats (same 5 formats as Price List:
+-- single/4pack/6pk/sixth/half). BBLs Remaining isn't stored — the app
+-- computes it as bbls_available minus each qty converted to BBLs via
+-- standard volumetric math (1 bbl = 31 gal), independent of any brand's
+-- Margin Analysis batch-yield figures.
+-- =========================================================
+create table if not exists tank_allocations (
+  id uuid primary key default gen_random_uuid(),
+  brand_id uuid not null references pricing_brands(id) on delete cascade,
+  fv_number text,
+  bbls_available numeric(10,2) not null default 0,
+  qty_single numeric(10,2) not null default 0,
+  qty_4pack numeric(10,2) not null default 0,
+  qty_6pk numeric(10,2) not null default 0,
+  qty_sixth numeric(10,2) not null default 0,
+  qty_half numeric(10,2) not null default 0,
+  updated_by uuid references profiles(id),
+  updated_at timestamptz not null default now(),
+  unique (brand_id)
+);
+
+-- =========================================================
 -- Sales > Margin Analysis — second piece of folding FCB Pricing in. One
 -- analysis per brand (batch cost + batch yield in BBLs), with a row per
 -- package format holding what you charge the retailer (PTR) vs. what the
@@ -631,6 +656,7 @@ alter table custom_label_inventory enable row level security;
 alter table audit_log enable row level security;
 alter table pricing_brands enable row level security;
 alter table brand_price_list enable row level security;
+alter table tank_allocations enable row level security;
 alter table margin_analyses enable row level security;
 alter table margin_analysis_packages enable row level security;
 alter table packaging_components enable row level security;
@@ -723,6 +749,9 @@ create policy "pricing_brands_admin" on pricing_brands for all using (
 create policy "brand_price_list_admin" on brand_price_list for all using (
   exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
 );
+create policy "tank_allocations_admin" on tank_allocations for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
 create policy "margin_analyses_admin" on margin_analyses for all using (
   exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
 );
@@ -782,7 +811,7 @@ declare
     'packaging_inventory', 'label_inventory',
     'custom_packaging_inventory', 'custom_label_inventory',
     'purchase_orders', 'purchase_order_items',
-    'distributor_par_levels', 'build_order_recommendations'
+    'distributor_par_levels', 'build_order_recommendations', 'tank_allocations'
   ];
 begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then

@@ -30,6 +30,11 @@ import { useEffect, useMemo, useState, useCallback, Fragment } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { logChange } from "@/lib/audit";
 import { derivePackaging } from "@/lib/packaging";
+import {
+  TANK_PACKAGE_ROWS,
+  tankBblsRemaining,
+  type TankQtyField,
+} from "@/lib/tankAllocations";
 import type {
   Week,
   Product,
@@ -39,7 +44,11 @@ import type {
   BuildOrderRecommendation,
   Allocation,
   SectionDivider,
+  PricingBrand,
+  TankAllocation,
 } from "@/lib/types/db";
+
+type TankNumericField = "bbls_available" | TankQtyField;
 
 type CombinedRow =
   | { kind: "product"; item: Product }
@@ -65,8 +74,16 @@ export default function BuildOrdersPage() {
   const [dividers, setDividers] = useState<SectionDivider[]>([]);
   const [distributors, setDistributors] = useState<Distributor[]>([]);
   const [onHand, setOnHand] = useState<Record<string, number>>({}); // key: productId:distributorId
-  const [parLevels, setParLevels] = useState<Record<string, DistributorParLevel>>({});
-  const [recommended, setRecommended] = useState<Record<string, BuildOrderRecommendation>>({});
+  const [parLevels, setParLevels] = useState<
+    Record<string, DistributorParLevel>
+  >({});
+  const [recommended, setRecommended] = useState<
+    Record<string, BuildOrderRecommendation>
+  >({});
+  const [brands, setBrands] = useState<PricingBrand[]>([]);
+  const [tankAllocations, setTankAllocations] = useState<
+    Record<string, TankAllocation>
+  >({}); // key: brandId
   const [userId, setUserId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -108,11 +125,13 @@ export default function BuildOrdersPage() {
       .order("sort_order", { ascending: true, nullsFirst: false })
       .order("name");
     const activeProducts = ((productData as Product[]) ?? []).filter(
-      (p) => derivePackaging(p.name).kind !== "tap_handle"
+      (p) => derivePackaging(p.name).kind !== "tap_handle",
     );
     setProducts(activeProducts);
 
-    const { data: dividerData } = await supabase.from("section_dividers").select("*");
+    const { data: dividerData } = await supabase
+      .from("section_dividers")
+      .select("*");
     setDividers((dividerData as SectionDivider[]) ?? []);
 
     // Same distributor set/order as Distributor Inventory.
@@ -125,12 +144,33 @@ export default function BuildOrdersPage() {
       .order("name");
     setDistributors((distributorData as Distributor[]) ?? []);
 
-    const { data: parData } = await supabase.from("distributor_par_levels").select("*");
+    const { data: parData } = await supabase
+      .from("distributor_par_levels")
+      .select("*");
     const parMap: Record<string, DistributorParLevel> = {};
     (parData as DistributorParLevel[] | null)?.forEach((row) => {
       parMap[`${row.product_id}:${row.distributor_id}`] = row;
     });
     setParLevels(parMap);
+
+    // Tank Allocations — standing, same brand list as Sales > Price List,
+    // independent of the current week.
+    const { data: brandData } = await supabase
+      .from("pricing_brands")
+      .select("*")
+      .eq("active", true)
+      .order("sort_order", { ascending: true, nullsFirst: false })
+      .order("name");
+    setBrands((brandData as PricingBrand[]) ?? []);
+
+    const { data: tankData } = await supabase
+      .from("tank_allocations")
+      .select("*");
+    const tankMap: Record<string, TankAllocation> = {};
+    (tankData as TankAllocation[] | null)?.forEach((row) => {
+      tankMap[row.brand_id] = row;
+    });
+    setTankAllocations(tankMap);
 
     if (weekData) {
       const week_ = weekData as Week;
@@ -140,11 +180,16 @@ export default function BuildOrdersPage() {
         .select("product_id, distributor_id, on_hand_qty")
         .eq("week_id", week_.id);
       const onHandMap: Record<string, number> = {};
-      (invData as Pick<DistributorInventory, "product_id" | "distributor_id" | "on_hand_qty">[] | null)?.forEach(
-        (row) => {
-          onHandMap[`${row.product_id}:${row.distributor_id}`] = row.on_hand_qty;
-        }
-      );
+      (
+        invData as
+          | Pick<
+              DistributorInventory,
+              "product_id" | "distributor_id" | "on_hand_qty"
+            >[]
+          | null
+      )?.forEach((row) => {
+        onHandMap[`${row.product_id}:${row.distributor_id}`] = row.on_hand_qty;
+      });
       setOnHand(onHandMap);
 
       const { data: recData } = await supabase
@@ -175,7 +220,11 @@ export default function BuildOrdersPage() {
     return Math.max(par - oh, 0);
   }
 
-  async function handleParChange(productId: string, distributorId: string, value: number) {
+  async function handleParChange(
+    productId: string,
+    distributorId: string,
+    value: number,
+  ) {
     if (!userId) return;
     const key = `${productId}:${distributorId}`;
     setSavingKey(`par:${key}`);
@@ -192,13 +241,16 @@ export default function BuildOrdersPage() {
           updated_by: userId,
           updated_at: new Date().toISOString(),
         },
-        { onConflict: "distributor_id,product_id" }
+        { onConflict: "distributor_id,product_id" },
       )
       .select()
       .single();
 
     if (!error && updated) {
-      setParLevels((prev) => ({ ...prev, [key]: updated as DistributorParLevel }));
+      setParLevels((prev) => ({
+        ...prev,
+        [key]: updated as DistributorParLevel,
+      }));
       await logChange(supabase, {
         weekId: null,
         tableName: "distributor_par_levels",
@@ -213,7 +265,11 @@ export default function BuildOrdersPage() {
     setSavingKey(null);
   }
 
-  async function handleRecChange(productId: string, distributorId: string, value: number) {
+  async function handleRecChange(
+    productId: string,
+    distributorId: string,
+    value: number,
+  ) {
     if (!week || !userId) return;
     const key = `${productId}:${distributorId}`;
     setSavingKey(`rec:${key}`);
@@ -231,13 +287,16 @@ export default function BuildOrdersPage() {
           updated_by: userId,
           updated_at: new Date().toISOString(),
         },
-        { onConflict: "week_id,distributor_id,product_id" }
+        { onConflict: "week_id,distributor_id,product_id" },
       )
       .select()
       .single();
 
     if (!error && updated) {
-      setRecommended((prev) => ({ ...prev, [key]: updated as BuildOrderRecommendation }));
+      setRecommended((prev) => ({
+        ...prev,
+        [key]: updated as BuildOrderRecommendation,
+      }));
       await logChange(supabase, {
         weekId: week.id,
         tableName: "build_order_recommendations",
@@ -245,6 +304,93 @@ export default function BuildOrdersPage() {
         fieldName: "recommended_qty",
         oldValue,
         newValue: value,
+        changedBy: userId,
+      });
+    }
+
+    setSavingKey(null);
+  }
+
+  async function handleTankNumericChange(
+    brandId: string,
+    field: TankNumericField,
+    value: number,
+  ) {
+    if (!userId) return;
+    const key = `tank:${brandId}:${field}`;
+    setSavingKey(key);
+
+    const existing = tankAllocations[brandId];
+    const oldValue = existing ? existing[field] : 0;
+
+    const { data: updated, error } = await supabase
+      .from("tank_allocations")
+      .upsert(
+        {
+          brand_id: brandId,
+          [field]: value,
+          updated_by: userId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "brand_id" },
+      )
+      .select()
+      .single();
+
+    if (!error && updated) {
+      setTankAllocations((prev) => ({
+        ...prev,
+        [brandId]: updated as TankAllocation,
+      }));
+      await logChange(supabase, {
+        weekId: null,
+        tableName: "tank_allocations",
+        recordId: updated.id,
+        fieldName: field,
+        oldValue,
+        newValue: value,
+        changedBy: userId,
+      });
+    }
+
+    setSavingKey(null);
+  }
+
+  async function handleTankFvChange(brandId: string, value: string) {
+    if (!userId) return;
+    const key = `tank:${brandId}:fv_number`;
+    setSavingKey(key);
+
+    const existing = tankAllocations[brandId];
+    const oldValue = existing?.fv_number ?? null;
+    const newValue = value.trim() === "" ? null : value;
+
+    const { data: updated, error } = await supabase
+      .from("tank_allocations")
+      .upsert(
+        {
+          brand_id: brandId,
+          fv_number: newValue,
+          updated_by: userId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "brand_id" },
+      )
+      .select()
+      .single();
+
+    if (!error && updated) {
+      setTankAllocations((prev) => ({
+        ...prev,
+        [brandId]: updated as TankAllocation,
+      }));
+      await logChange(supabase, {
+        weekId: null,
+        tableName: "tank_allocations",
+        recordId: updated.id,
+        fieldName: "fv_number",
+        oldValue,
+        newValue,
         changedBy: userId,
       });
     }
@@ -268,7 +414,9 @@ export default function BuildOrdersPage() {
       existingByProduct[row.product_id] = row;
     });
 
-    const hasExisting = Object.values(existingByProduct).some((row) => Number(row.quantity) !== 0);
+    const hasExisting = Object.values(existingByProduct).some(
+      (row) => Number(row.quantity) !== 0,
+    );
 
     if (hasExisting) {
       setPushingId(null);
@@ -286,7 +434,9 @@ export default function BuildOrdersPage() {
       .select("name")
       .ilike("name", `${baseName} %`);
 
-    const pattern = new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} (\\d+)$`);
+    const pattern = new RegExp(
+      `^${baseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} (\\d+)$`,
+    );
     let max = 1;
     (data ?? []).forEach((row: { name: string }) => {
       const match = row.name.match(pattern);
@@ -299,7 +449,7 @@ export default function BuildOrdersPage() {
     sourceDistributor: Distributor,
     targetDistributorIdIn: string | null,
     isNew: boolean,
-    existingByProduct: Record<string, Allocation>
+    existingByProduct: Record<string, Allocation>,
   ) {
     if (!week || !userId) return;
 
@@ -413,11 +563,11 @@ export default function BuildOrdersPage() {
   if (loading) return <p className="text-sm text-neutral-400">Loading…</p>;
 
   if (!isAdmin) {
-    return <p className="text-sm text-neutral-400">Build Orders is only available to admins.</p>;
-  }
-
-  if (!week) {
-    return <p className="text-sm text-neutral-400">No week has been started yet.</p>;
+    return (
+      <p className="text-sm text-neutral-400">
+        Build Orders is only available to admins.
+      </p>
+    );
   }
 
   return (
@@ -425,9 +575,20 @@ export default function BuildOrdersPage() {
       <div>
         <h1 className="text-lg font-semibold text-neutral-100">Build Orders</h1>
         <p className="text-sm text-neutral-400">
-          {week.label} — Recommended Order is Par Level minus On Hand (never below zero). Push a
-          distributor&apos;s column straight into their allocation quantities on Inventory &amp;
-          Allocation.
+          {week
+            ? `${week.label} — Recommended Order is Par Level minus On Hand (never below zero). Push a distributor's column straight into their allocation quantities on Inventory & Allocation.`
+            : "No week has been started yet — Recommended Order needs an active week."}
+        </p>
+      </div>
+
+      <div>
+        <h2 className="text-base font-semibold text-neutral-100">
+          Tank Allocations
+        </h2>
+        <p className="text-sm text-neutral-400">
+          Standing, per brand — carries forward week to week until you change
+          it. BBLs Remaining is BBLs Available minus each package quantity
+          converted to BBLs (1 bbl = 31 gal).
         </p>
       </div>
 
@@ -435,133 +596,285 @@ export default function BuildOrdersPage() {
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="text-xs uppercase tracking-wide text-neutral-500">
-              <th
-                rowSpan={2}
-                className="sticky top-0 left-0 z-20 whitespace-nowrap bg-neutral-900 px-3 text-left align-bottom"
-              >
-                Product
+              <th className="sticky left-0 z-10 whitespace-nowrap bg-neutral-900 px-3 py-2 text-left">
+                Brand
               </th>
-              {distributors.map((d) => (
+              {brands.map((b) => (
                 <th
-                  key={d.id}
-                  colSpan={3}
-                  className="sticky top-0 z-10 whitespace-nowrap border-l border-neutral-800 bg-neutral-900 px-2 py-1 text-center"
+                  key={b.id}
+                  className="whitespace-nowrap border-l border-neutral-800 bg-neutral-900 px-3 py-2 text-center"
                 >
-                  <div style={{ color: d.color ?? undefined }}>{d.name}</div>
-                  <button
-                    type="button"
-                    onClick={() => handlePushClick(d)}
-                    disabled={pushingId === d.id}
-                    className="mt-1 rounded border border-neutral-700 px-2 py-0.5 text-[10px] font-normal normal-case text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
-                  >
-                    {pushingId === d.id ? "Pushing…" : "Push to Allocations"}
-                  </button>
-                  {pushResult && pushResult.distributorId === d.id && (
-                    <div
-                      className={`mt-1 max-w-[220px] whitespace-normal text-[10px] font-normal normal-case ${
-                        pushResult.isError ? "text-red-400" : "text-emerald-400"
-                      }`}
-                    >
-                      {pushResult.text}
-                    </div>
-                  )}
+                  {b.name}
                 </th>
-              ))}
-            </tr>
-            <tr className="h-8 text-[10px] uppercase tracking-wide text-neutral-500">
-              {distributors.map((d) => (
-                <Fragment key={d.id}>
-                  <th className="sticky top-6 z-10 h-8 whitespace-nowrap border-l border-neutral-800 bg-neutral-900 px-2 text-right font-normal">
-                    On Hand
-                  </th>
-                  <th className="sticky top-6 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right font-normal">
-                    Par Level
-                  </th>
-                  <th
-                    className="sticky top-6 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right font-normal"
-                    title="Recommended Order"
-                  >
-                    Rec. Order
-                  </th>
-                </Fragment>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-900">
-            {distributors.length === 0 ? (
+            {brands.length === 0 ? (
               <tr>
-                <td colSpan={1} className="px-3 py-6 text-center text-neutral-500">
-                  No active distributors.
+                <td
+                  colSpan={1}
+                  className="px-3 py-6 text-center text-neutral-500"
+                >
+                  No active brands. Add brands on Sales &gt; Price List.
                 </td>
               </tr>
             ) : (
-              combined.map((row) => {
-                if (row.kind === "divider") {
-                  return (
-                    <tr key={`divider:${row.item.id}`} className="bg-neutral-900/70">
-                      <td
-                        colSpan={1 + distributors.length * 3}
-                        className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-300"
-                      >
-                        {row.item.label}
-                      </td>
-                    </tr>
-                  );
-                }
-
-                const p = row.item;
-                return (
-                  <tr key={p.id} className="group hover:bg-neutral-900/60">
-                    <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 font-medium text-neutral-200 group-hover:bg-neutral-900">
-                      {p.name}
+              <>
+                <tr>
+                  <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 font-medium text-neutral-300">
+                    FV #
+                  </td>
+                  {brands.map((b) => (
+                    <td
+                      key={b.id}
+                      className="border-l border-neutral-900 px-2 py-1.5 text-center"
+                    >
+                      <input
+                        type="text"
+                        className="w-20 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-center text-neutral-100"
+                        value={tankAllocations[b.id]?.fv_number ?? ""}
+                        onChange={(e) =>
+                          handleTankFvChange(b.id, e.target.value)
+                        }
+                      />
                     </td>
-                    {distributors.map((d) => {
-                      const key = `${p.id}:${d.id}`;
-                      const oh = onHand[key] ?? 0;
-                      const par = parLevels[key]?.par_level ?? 0;
-                      const rec = effectiveRecommended(p.id, d.id);
-                      return (
-                        <Fragment key={d.id}>
-                          <td className="border-l border-neutral-900 px-2 py-1.5 text-right text-neutral-400">
-                            {oh}
-                          </td>
-                          <td className="px-2 py-1.5 text-right">
-                            <input
-                              type="number"
-                              className="w-16 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-neutral-100"
-                              value={par}
-                              onChange={(e) =>
-                                handleParChange(p.id, d.id, Number(e.target.value) || 0)
-                              }
-                            />
-                          </td>
-                          <td className="px-2 py-1.5 text-right">
-                            <input
-                              type="number"
-                              className="w-16 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right font-medium text-amber-400"
-                              value={rec}
-                              onChange={(e) =>
-                                handleRecChange(p.id, d.id, Number(e.target.value) || 0)
-                              }
-                            />
-                          </td>
-                        </Fragment>
-                      );
-                    })}
+                  ))}
+                </tr>
+                <tr>
+                  <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 font-medium text-neutral-300">
+                    BBLs Available
+                  </td>
+                  {brands.map((b) => (
+                    <td
+                      key={b.id}
+                      className="border-l border-neutral-900 px-2 py-1.5 text-center"
+                    >
+                      <input
+                        type="number"
+                        className="w-20 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-center text-neutral-100"
+                        value={tankAllocations[b.id]?.bbls_available ?? 0}
+                        onChange={(e) =>
+                          handleTankNumericChange(
+                            b.id,
+                            "bbls_available",
+                            Number(e.target.value) || 0,
+                          )
+                        }
+                      />
+                    </td>
+                  ))}
+                </tr>
+                {TANK_PACKAGE_ROWS.map(({ field, label }) => (
+                  <tr key={field}>
+                    <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 font-medium text-neutral-300">
+                      {label}
+                    </td>
+                    {brands.map((b) => (
+                      <td
+                        key={b.id}
+                        className="border-l border-neutral-900 px-2 py-1.5 text-center"
+                      >
+                        <input
+                          type="number"
+                          className="w-20 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-center text-neutral-100"
+                          value={tankAllocations[b.id]?.[field] ?? 0}
+                          onChange={(e) =>
+                            handleTankNumericChange(
+                              b.id,
+                              field,
+                              Number(e.target.value) || 0,
+                            )
+                          }
+                        />
+                      </td>
+                    ))}
                   </tr>
-                );
-              })
+                ))}
+                <tr className="bg-neutral-900/50">
+                  <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-900/50 px-3 py-1.5 font-semibold text-neutral-200">
+                    BBLs Remaining
+                  </td>
+                  {brands.map((b) => {
+                    const remaining = tankBblsRemaining(tankAllocations[b.id]);
+                    return (
+                      <td
+                        key={b.id}
+                        className={`border-l border-neutral-900 px-2 py-1.5 text-center font-semibold ${
+                          remaining < 0 ? "text-red-400" : "text-emerald-400"
+                        }`}
+                      >
+                        {remaining.toFixed(2)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              </>
             )}
           </tbody>
         </table>
       </div>
 
-      <p className="text-xs text-neutral-500">
-        {savingKey ? "Saving…" : " "} On Hand mirrors Distributor Inventory (edit it there). Par
-        Level is a standing target — set it once, it applies to every future week until changed.
-        Recommended Order recalculates automatically until you edit a cell by hand; after that it
-        stays put.
-      </p>
+      {!week ? (
+        <p className="text-sm text-neutral-400">
+          Start a week to see and push Recommended Orders per distributor.
+        </p>
+      ) : (
+        <>
+          <div className="overflow-x-auto rounded-lg border border-neutral-800 bg-neutral-950">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="text-xs uppercase tracking-wide text-neutral-500">
+                  <th
+                    rowSpan={2}
+                    className="sticky top-0 left-0 z-20 whitespace-nowrap bg-neutral-900 px-3 text-left align-bottom"
+                  >
+                    Product
+                  </th>
+                  {distributors.map((d) => (
+                    <th
+                      key={d.id}
+                      colSpan={3}
+                      className="sticky top-0 z-10 whitespace-nowrap border-l border-neutral-800 bg-neutral-900 px-2 py-1 text-center"
+                    >
+                      <div style={{ color: d.color ?? undefined }}>
+                        {d.name}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handlePushClick(d)}
+                        disabled={pushingId === d.id}
+                        className="mt-1 rounded border border-neutral-700 px-2 py-0.5 text-[10px] font-normal normal-case text-neutral-300 hover:bg-neutral-800 disabled:opacity-50"
+                      >
+                        {pushingId === d.id
+                          ? "Pushing…"
+                          : "Push to Allocations"}
+                      </button>
+                      {pushResult && pushResult.distributorId === d.id && (
+                        <div
+                          className={`mt-1 max-w-[220px] whitespace-normal text-[10px] font-normal normal-case ${
+                            pushResult.isError
+                              ? "text-red-400"
+                              : "text-emerald-400"
+                          }`}
+                        >
+                          {pushResult.text}
+                        </div>
+                      )}
+                    </th>
+                  ))}
+                </tr>
+                <tr className="h-8 text-[10px] uppercase tracking-wide text-neutral-500">
+                  {distributors.map((d) => (
+                    <Fragment key={d.id}>
+                      <th className="sticky top-6 z-10 h-8 whitespace-nowrap border-l border-neutral-800 bg-neutral-900 px-2 text-right font-normal">
+                        On Hand
+                      </th>
+                      <th className="sticky top-6 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right font-normal">
+                        Par Level
+                      </th>
+                      <th
+                        className="sticky top-6 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right font-normal"
+                        title="Recommended Order"
+                      >
+                        Rec. Order
+                      </th>
+                    </Fragment>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-900">
+                {distributors.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={1}
+                      className="px-3 py-6 text-center text-neutral-500"
+                    >
+                      No active distributors.
+                    </td>
+                  </tr>
+                ) : (
+                  combined.map((row) => {
+                    if (row.kind === "divider") {
+                      return (
+                        <tr
+                          key={`divider:${row.item.id}`}
+                          className="bg-neutral-900/70"
+                        >
+                          <td
+                            colSpan={1 + distributors.length * 3}
+                            className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-300"
+                          >
+                            {row.item.label}
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    const p = row.item;
+                    return (
+                      <tr key={p.id} className="group hover:bg-neutral-900/60">
+                        <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 font-medium text-neutral-200 group-hover:bg-neutral-900">
+                          {p.name}
+                        </td>
+                        {distributors.map((d) => {
+                          const key = `${p.id}:${d.id}`;
+                          const oh = onHand[key] ?? 0;
+                          const par = parLevels[key]?.par_level ?? 0;
+                          const rec = effectiveRecommended(p.id, d.id);
+                          return (
+                            <Fragment key={d.id}>
+                              <td className="border-l border-neutral-900 px-2 py-1.5 text-right text-neutral-400">
+                                {oh}
+                              </td>
+                              <td className="px-2 py-1.5 text-right">
+                                <input
+                                  type="number"
+                                  className="w-16 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-neutral-100"
+                                  value={par}
+                                  onChange={(e) =>
+                                    handleParChange(
+                                      p.id,
+                                      d.id,
+                                      Number(e.target.value) || 0,
+                                    )
+                                  }
+                                />
+                              </td>
+                              <td className="px-2 py-1.5 text-right">
+                                <input
+                                  type="number"
+                                  className="w-16 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right font-medium text-amber-400"
+                                  value={rec}
+                                  onChange={(e) =>
+                                    handleRecChange(
+                                      p.id,
+                                      d.id,
+                                      Number(e.target.value) || 0,
+                                    )
+                                  }
+                                />
+                              </td>
+                            </Fragment>
+                          );
+                        })}
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <p className="text-xs text-neutral-500">
+            {savingKey ? "Saving…" : " "} On Hand mirrors Distributor Inventory
+            (edit it there). Par Level is a standing target — set it once, it
+            applies to every future week until changed. Recommended Order
+            recalculates automatically until you edit a cell by hand; after that
+            it stays put.
+          </p>
+        </>
+      )}
 
       {confirm && (
         <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/60 p-4">
@@ -570,11 +883,12 @@ export default function BuildOrdersPage() {
               {confirm.distributor.name} already has an order this week
             </h2>
             <p className="mt-2 text-sm text-neutral-400">
-              Inventory &amp; Allocation already has non-zero allocation quantities for{" "}
-              {confirm.distributor.name} this week. Overwrite that order with the Recommended
-              Order numbers, or create a new distributor column (e.g. &quot;
-              {confirm.distributor.name} 2&quot;) and push the recommendation there instead,
-              leaving the existing order untouched.
+              Inventory &amp; Allocation already has non-zero allocation
+              quantities for {confirm.distributor.name} this week. Overwrite
+              that order with the Recommended Order numbers, or create a new
+              distributor column (e.g. &quot;
+              {confirm.distributor.name} 2&quot;) and push the recommendation
+              there instead, leaving the existing order untouched.
             </p>
             <div className="mt-4 flex flex-wrap justify-end gap-2">
               <button
