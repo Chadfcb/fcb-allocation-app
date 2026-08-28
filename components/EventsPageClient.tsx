@@ -100,10 +100,14 @@ export default function EventsPageClient() {
     setUserId(user?.id ?? null);
 
     const [distRes, eventsRes, materialsRes, libraryRes] = await Promise.all([
+      // Unlike Inventory & Allocation, Events Calendar intentionally does
+      // NOT filter to active distributors only -- a distributor can be
+      // marked inactive there (e.g. Saccani) while still having historical
+      // or ongoing events on this calendar that should keep showing their
+      // real color instead of falling back to unassigned/grey.
       supabase
         .from("distributors")
         .select("*")
-        .eq("active", true)
         .order("sort_order", { ascending: true, nullsFirst: false })
         .order("name"),
       supabase
