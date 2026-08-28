@@ -634,6 +634,24 @@ create table if not exists pos_library (
   uploaded_at timestamptz not null default now()
 );
 
+-- POS > Labels — can/bottle label artwork, split into a fixed set of
+-- brand + size buckets (3 brands x 3 sizes = 9 combinations). Actual bytes
+-- live in the "pos-label-files" storage bucket (see the Storage section
+-- near the end of this file); this row is just the metadata. Standing
+-- data, not tied to a week. Admin-only, full stop, like Events Calendar.
+create table if not exists pos_label_files (
+  id uuid primary key default gen_random_uuid(),
+  brand text not null check (brand in ('fcb', 'speakeasy', 'sonoma-cider')),
+  size text not null check (size in ('19.2oz', '16oz', '12oz')),
+  file_name text not null,
+  storage_path text not null unique,
+  mime_type text,
+  size_bytes bigint,
+  uploaded_by uuid references profiles(id),
+  uploaded_at timestamptz not null default now()
+);
+create index if not exists pos_label_files_brand_size_idx on pos_label_files (brand, size);
+
 -- =========================================================
 -- Audit log — every meaningful change is recorded here so admins can
 -- review history and one-click undo a change.
@@ -727,6 +745,7 @@ alter table purchase_order_items enable row level security;
 alter table events enable row level security;
 alter table event_materials enable row level security;
 alter table pos_library enable row level security;
+alter table pos_label_files enable row level security;
 
 -- Everyone signed in can read their own profile + see other profiles (for
 -- attribution / "who changed this" display); only admins can change roles.
@@ -855,6 +874,11 @@ create policy "pos_library_admin" on pos_library for all using (
   exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
 );
 
+-- POS > Labels: admin-only, full stop, same as Events Calendar.
+create policy "pos_label_files_admin" on pos_label_files for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+
 -- Audit log: everyone can insert (so their own changes get logged); only
 -- admins can read/undo the full history.
 create policy "audit_log_insert" on audit_log for insert with check (auth.uid() is not null);
@@ -885,7 +909,7 @@ declare
     'custom_packaging_inventory', 'custom_label_inventory',
     'purchase_orders', 'purchase_order_items',
     'distributor_par_levels', 'build_order_recommendations', 'tank_allocations',
-    'events', 'event_materials', 'pos_library'
+    'events', 'event_materials', 'pos_library', 'pos_label_files'
   ];
 begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
@@ -916,5 +940,19 @@ create policy "event_materials_bucket_admin" on storage.objects for all using (
   and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
 ) with check (
   bucket_id = 'event-materials'
+  and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+
+-- "pos-label-files" bucket backs POS > Labels (see pos_label_files above).
+-- Private bucket; admin-only read/write, same convention as event-materials.
+insert into storage.buckets (id, name, public)
+values ('pos-label-files', 'pos-label-files', false)
+on conflict (id) do nothing;
+
+create policy "pos_label_files_bucket_admin" on storage.objects for all using (
+  bucket_id = 'pos-label-files'
+  and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+) with check (
+  bucket_id = 'pos-label-files'
   and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
 );

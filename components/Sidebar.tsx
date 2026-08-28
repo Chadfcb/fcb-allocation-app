@@ -41,11 +41,54 @@ const SALES_LINKS = [
 const OPERATIONS_STORAGE_KEY = "fcb-sidebar-operations-expanded";
 const SALES_STORAGE_KEY = "fcb-sidebar-sales-expanded";
 
+// POS > Labels > <brand> > <size> — a 3-level nested tree (unlike
+// Operations/Sales, which are just one level of flat links), so its
+// expand/collapse state is a single JSON blob keyed by node id rather than
+// one boolean per section.
+const POS_TREE_STORAGE_KEY = "fcb-sidebar-pos-tree-expanded";
+
+const POS_LABEL_BRANDS: {
+  treeKey: string;
+  label: string;
+  sizes: { href: string; label: string }[];
+}[] = [
+  {
+    treeKey: "pos-labels-fcb",
+    label: "FCB",
+    sizes: [
+      { href: "/pos/labels/fcb/19-2oz", label: "19.2 oz Labels" },
+      { href: "/pos/labels/fcb/16oz", label: "16 oz Labels" },
+      { href: "/pos/labels/fcb/12oz", label: "12 oz Labels" },
+    ],
+  },
+  {
+    treeKey: "pos-labels-speakeasy",
+    label: "Speakeasy",
+    sizes: [
+      { href: "/pos/labels/speakeasy/19-2oz", label: "19.2 oz Labels" },
+      { href: "/pos/labels/speakeasy/16oz", label: "16 oz Labels" },
+      { href: "/pos/labels/speakeasy/12oz", label: "12 oz Labels" },
+    ],
+  },
+  {
+    treeKey: "pos-labels-sonoma-cider",
+    label: "Sonoma Cider",
+    sizes: [
+      { href: "/pos/labels/sonoma-cider/19-2oz", label: "19.2 oz Labels" },
+      { href: "/pos/labels/sonoma-cider/16oz", label: "16 oz Labels" },
+      { href: "/pos/labels/sonoma-cider/12oz", label: "12 oz Labels" },
+    ],
+  },
+];
+
 export default function Sidebar({ role }: { role: Role | undefined }) {
   const pathname = usePathname();
   const [hidden, setHidden] = useState(false);
   const [operationsExpanded, setOperationsExpanded] = useState(true);
   const [salesExpanded, setSalesExpanded] = useState(true);
+  const [posTreeExpanded, setPosTreeExpanded] = useState<
+    Record<string, boolean>
+  >({ pos: true, "pos-labels": true });
 
   useEffect(() => {
     // Hydrate persisted expand/collapse prefs after mount rather than in the
@@ -59,6 +102,17 @@ export default function Sidebar({ role }: { role: Role | undefined }) {
     const storedSales = localStorage.getItem(SALES_STORAGE_KEY);
     if (storedSales !== null) {
       setSalesExpanded(storedSales === "true");
+    }
+    const storedPosTree = localStorage.getItem(POS_TREE_STORAGE_KEY);
+    if (storedPosTree) {
+      try {
+        setPosTreeExpanded((prev) => ({
+          ...prev,
+          ...JSON.parse(storedPosTree),
+        }));
+      } catch {
+        // Ignore malformed/stale localStorage content.
+      }
     }
   }, []);
 
@@ -74,6 +128,14 @@ export default function Sidebar({ role }: { role: Role | undefined }) {
     setSalesExpanded((prev) => {
       const next = !prev;
       localStorage.setItem(SALES_STORAGE_KEY, String(next));
+      return next;
+    });
+  }
+
+  function togglePosTree(key: string) {
+    setPosTreeExpanded((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      localStorage.setItem(POS_TREE_STORAGE_KEY, JSON.stringify(next));
       return next;
     });
   }
@@ -162,6 +224,53 @@ export default function Sidebar({ role }: { role: Role | undefined }) {
                     {link.label}
                   </Link>
                 ))}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => togglePosTree("pos")}
+              className="mt-1 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
+            >
+              POS
+            </button>
+            {posTreeExpanded.pos && (
+              <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
+                <button
+                  type="button"
+                  onClick={() => togglePosTree("pos-labels")}
+                  className="rounded px-2 py-1 text-left text-sm font-semibold text-neutral-400 hover:bg-neutral-900 hover:text-white"
+                >
+                  Labels
+                </button>
+                {posTreeExpanded["pos-labels"] && (
+                  <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
+                    {POS_LABEL_BRANDS.map((brand) => (
+                      <div key={brand.treeKey} className="flex flex-col gap-1">
+                        <button
+                          type="button"
+                          onClick={() => togglePosTree(brand.treeKey)}
+                          className="rounded px-2 py-1 text-left text-sm text-neutral-400 hover:bg-neutral-900 hover:text-white"
+                        >
+                          {brand.label}
+                        </button>
+                        {posTreeExpanded[brand.treeKey] && (
+                          <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
+                            {brand.sizes.map((s) => (
+                              <Link
+                                key={s.href}
+                                href={s.href}
+                                className={linkClass(s.href)}
+                              >
+                                {s.label}
+                              </Link>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 

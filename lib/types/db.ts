@@ -579,3 +579,22 @@ export interface PosLibraryFile {
   uploaded_by: string | null;
   uploaded_at: string;
 }
+
+// POS > Labels: a per-brand, per-size file library for can/bottle label
+// artwork. Admin-only, standing data (not week-scoped), same shape as
+// PosLibraryFile above but scoped by brand + size instead of being one
+// shared pool.
+export type PosLabelBrand = "fcb" | "speakeasy" | "sonoma-cider";
+export type PosLabelSize = "19.2oz" | "16oz" | "12oz";
+
+export interface PosLabelFile {
+  id: string;
+  brand: PosLabelBrand;
+  size: PosLabelSize;
+  file_name: string;
+  storage_path: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  uploaded_by: string | null;
+  uploaded_at: string;
+}
