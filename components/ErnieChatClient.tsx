@@ -96,7 +96,7 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
               <img
                 src="/ernie/thinking-static.png"
                 alt=""
-                className="h-[100px] w-[100px] shrink-0 object-contain"
+                className="h-[75px] w-[75px] shrink-0 object-contain"
               />
               <div className="whitespace-pre-wrap pt-1 text-sm text-neutral-100">{m.text}</div>
             </div>
@@ -106,7 +106,7 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
         {loading && (
           <div className="flex items-center gap-2">
             {/* eslint-disable-next-line @next/next/no-img-element -- plain img keeps gif animation intact, and lets the src swap between the static frame and the animated gif */}
-            <img src="/ernie/thinking.gif" alt="" className="h-[100px] w-[100px] shrink-0 object-contain" />
+            <img src="/ernie/thinking.gif" alt="" className="h-[75px] w-[75px] shrink-0 object-contain" />
             <p className="text-sm text-neutral-400">Ernie is thinking…</p>
           </div>
         )}
