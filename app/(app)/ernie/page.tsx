@@ -7,5 +7,8 @@ export default async function ErniePage() {
   if (profile?.role !== "admin") {
     redirect("/inventory");
   }
-  return <ErnieChatClient />;
+  const firstName =
+    profile.full_name?.trim().split(/\s+/)[0] || profile.email.split("@")[0];
+
+  return <ErnieChatClient firstName={firstName} />;
 }
