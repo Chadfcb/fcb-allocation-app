@@ -11,11 +11,13 @@
 // A plain <img> (not next/image) is used for the thinking gif so its
 // animation isn't touched by Next's image optimizer.
 //
-// The skeleton mascot stays on screen the whole time (fixed corner, no
-// card/background behind it) — it only actually animates while Ernie is
-// generating a reply. GIFs can't be paused via CSS, so this is done by
-// swapping the <img> src between a static first-frame PNG (idle) and the
-// real animated GIF (loading).
+// The skeleton mascot sits next to the header (not fixed/floating — a
+// fixed-viewport corner turned out to be unreliable across window sizes)
+// and stays on screen the whole time, since only the message list below it
+// scrolls. It only actually animates while Ernie is generating a reply.
+// GIFs can't be paused via CSS, so this is done by swapping the <img> src
+// between a static first-frame PNG (idle) and the real animated GIF
+// (loading).
 
 import { useEffect, useRef, useState } from "react";
 
@@ -74,7 +76,15 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
 
   return (
     <div className="flex h-full flex-col p-6">
-      <h1 className="mb-4 text-xl font-semibold text-neutral-100">Ernie AI</h1>
+      <div className="mb-4 flex items-center gap-3">
+        {/* eslint-disable-next-line @next/next/no-img-element -- plain img keeps gif animation intact, and lets the src swap between the static frame and the animated gif */}
+        <img
+          src={loading ? "/ernie/thinking.gif" : "/ernie/thinking-static.png"}
+          alt=""
+          className="h-12 w-12 object-contain"
+        />
+        <h1 className="text-xl font-semibold text-neutral-100">Ernie AI</h1>
+      </div>
 
       <div className="flex flex-1 flex-col overflow-hidden">
         <div className="flex-1 space-y-4 overflow-y-auto">
@@ -126,13 +136,6 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
           </button>
         </form>
       </div>
-
-      {/* eslint-disable-next-line @next/next/no-img-element -- plain img keeps gif animation intact, and lets the src swap between the static frame and the animated gif */}
-      <img
-        src={loading ? "/ernie/thinking.gif" : "/ernie/thinking-static.png"}
-        alt=""
-        className="pointer-events-none fixed bottom-6 right-6 h-24 w-24 object-contain"
-      />
     </div>
   );
 }
