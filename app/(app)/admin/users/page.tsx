@@ -15,7 +15,10 @@ export default function UsersPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase.from("profiles").select("*").order("created_at");
+    const { data } = await supabase
+      .from("profiles")
+      .select("*")
+      .order("created_at");
     setProfiles((data as Profile[]) ?? []);
     setLoading(false);
   }, [supabase]);
@@ -26,7 +29,9 @@ export default function UsersPage() {
   }, [load]);
 
   async function handleRoleChange(profileId: string, role: Role) {
-    setProfiles((prev) => prev.map((p) => (p.id === profileId ? { ...p, role } : p)));
+    setProfiles((prev) =>
+      prev.map((p) => (p.id === profileId ? { ...p, role } : p)),
+    );
     await supabase.from("profiles").update({ role }).eq("id", profileId);
   }
 
@@ -41,23 +46,42 @@ export default function UsersPage() {
 
     setCreating(true);
 
-    const res = await fetch("/api/admin/create-user", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: newEmail, password: newPassword }),
-    });
-    const body = await res.json();
+    try {
+      const res = await fetch("/api/admin/create-user", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: newEmail, password: newPassword }),
+      });
 
-    if (!res.ok) {
-      setCreateError(body.error ?? "Something went wrong creating that user.");
+      // The server route always returns JSON on purpose, but guard against
+      // an unexpected non-JSON response (a platform-level 500/timeout page,
+      // a network hiccup, etc.) so this can't get stuck on "Adding…" forever
+      // — surface a real error message instead.
+      let body: { error?: string; id?: string } = {};
+      try {
+        body = await res.json();
+      } catch {
+        body = {};
+      }
+
+      if (!res.ok) {
+        setCreateError(
+          body.error ??
+            `Something went wrong creating that user (${res.status}).`,
+        );
+        return;
+      }
+
+      setNewEmail("");
+      setNewPassword("");
+      await load();
+    } catch {
+      setCreateError(
+        "Couldn't reach the server to create that user — check your connection and try again.",
+      );
+    } finally {
       setCreating(false);
-      return;
     }
-
-    setNewEmail("");
-    setNewPassword("");
-    setCreating(false);
-    await load();
   }
 
   if (loading) return <p className="text-sm text-neutral-400">Loading…</p>;
@@ -67,14 +91,15 @@ export default function UsersPage() {
       <div>
         <h1 className="text-lg font-semibold text-neutral-100">Users</h1>
         <p className="text-sm text-neutral-400">
-          Admins can access Dashboard, Distributor Data, Weeks, Audit Log, and Users. Basic users
-          can only access Inventory & Allocation — they can enter allocations, on-hand/unlabeled/
-          to-package counts, and PO numbers, but can&apos;t add or delete products, start a new
-          week, or undo changes.
+          Admins can access Dashboard, Distributor Data, Weeks, Audit Log, and
+          Users. Basic users can only access Inventory & Allocation — they can
+          enter allocations, on-hand/unlabeled/ to-package counts, and PO
+          numbers, but can&apos;t add or delete products, start a new week, or
+          undo changes.
         </p>
         <p className="mt-1 text-xs text-neutral-500">
-          New people show up here automatically the first time they sign in, as a Basic user by
-          default.
+          New people show up here automatically the first time they sign in, as
+          a Basic user by default.
         </p>
       </div>
 
@@ -83,7 +108,9 @@ export default function UsersPage() {
         className="flex flex-wrap items-end gap-3 rounded-lg border border-neutral-800 bg-neutral-950 p-4"
       >
         <div>
-          <label className="mb-1 block text-xs font-medium text-neutral-400">Email</label>
+          <label className="mb-1 block text-xs font-medium text-neutral-400">
+            Email
+          </label>
           <input
             type="email"
             required
@@ -114,10 +141,13 @@ export default function UsersPage() {
         >
           {creating ? "Adding…" : "Add User"}
         </button>
-        {createError && <p className="w-full text-sm text-red-400">{createError}</p>}
+        {createError && (
+          <p className="w-full text-sm text-red-400">{createError}</p>
+        )}
         <p className="w-full text-xs text-neutral-500">
-          Share this email and temporary password with them directly — they&apos;ll be asked to
-          set their own password and name the first time they sign in.
+          Share this email and temporary password with them directly —
+          they&apos;ll be asked to set their own password and name the first
+          time they sign in.
         </p>
       </form>
 
@@ -140,7 +170,9 @@ export default function UsersPage() {
                 <td className="px-3 py-2">
                   <select
                     value={p.role}
-                    onChange={(e) => handleRoleChange(p.id, e.target.value as Role)}
+                    onChange={(e) =>
+                      handleRoleChange(p.id, e.target.value as Role)
+                    }
                     className="rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100"
                   >
                     <option value="admin">Admin</option>
