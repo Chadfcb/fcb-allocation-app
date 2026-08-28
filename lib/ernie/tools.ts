@@ -8,6 +8,18 @@
 // that should surface in user-facing text (see ERNIE_SYSTEM_PROMPT below).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { PriceListPackageKey } from "@/lib/types/db";
+import { PRICE_LIST_PACKAGE_KEYS, PRICE_LIST_PACKAGE_LABELS } from "@/lib/types/db";
+import { calcPackagingCost, OVERVIEW_BATCH_BBLS, OVERVIEW_PACKAGE_YIELDS } from "@/lib/costPerCase";
+import { PKG_META, calcPkg, calcBatchCan, calcBatchKeg } from "@/lib/marginAnalysis";
+import { computeContributionMarginLine } from "@/lib/contributionMargin";
+
+// Several Sales pages show numbers that are NOT stored in the database —
+// they're computed live in the browser from several tables at once (see
+// lib/marginAnalysis.ts, lib/costPerCase.ts, lib/contributionMargin.ts).
+// The get_pricing_data cases below import and run those exact same
+// functions so Ernie reports the same figures the pages show, not just the
+// raw inputs to those figures.
 
 export const ERNIE_TOOLS = [
   {
@@ -93,7 +105,7 @@ export const ERNIE_TOOLS = [
   {
     name: "get_pricing_data",
     description:
-      "Sales section data: Price List (brand price-to-retailer/distributor by package format), Margin Analysis (batch cost/yield + per-package PTR/PTD), Cost Per Case (packaging component/ingredient/labor prices), or Contribution Margin (revenue per case unit by brand/package).",
+      "Sales section data, computed the same way each page computes it (not just raw inputs): Price List (brand price-to-retailer/distributor by package format), Margin Analysis (PTR/PTD, gross profit $ and %, and full batch revenue/cost/profit/margin % per brand+package), Cost Per Case (packaging/labor cost per case, and each brand's ingredient cost per case), or Contribution Margin (revenue, cost, CM, and Margin % per case-equivalent, by brand+package).",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -260,6 +272,9 @@ export async function runErnieTool(
           distributor: distributorsById.get(r.distributor_id)?.name ?? "Unknown distributor",
           on_hand_qty: r.on_hand_qty,
           rate_of_sale: r.rate_of_sale,
+          // Same "Days OH" the page shows — on_hand / rate_of_sale, projecting
+          // how many days of supply remain at the current sell-through rate.
+          days_on_hand: r.rate_of_sale ? r.on_hand_qty / r.rate_of_sale : null,
           source: r.source,
         })),
       };
@@ -367,30 +382,209 @@ export async function runErnieTool(
         return brands;
       }
       if (section === "margin_analysis") {
-        const { data: brands } = await supabase.from("pricing_brands").select("id, name");
-        const { data, error } = await supabase
-          .from("margin_analyses")
-          .select("*, margin_analysis_packages(*)");
-        if (error) throw error;
+        const [
+          { data: brands, error: e1 },
+          { data: analyses, error: e2 },
+          { data: packages, error: e3 },
+          { data: components, error: e4 },
+          { data: laborRows, error: e5 },
+        ] = await Promise.all([
+          supabase.from("pricing_brands").select("id, name"),
+          supabase.from("margin_analyses").select("*"),
+          supabase.from("margin_analysis_packages").select("*"),
+          supabase.from("packaging_components").select("component_key, price"),
+          supabase.from("package_labor_costs").select("package_key, labor"),
+        ]);
+        const err = e1 || e2 || e3 || e4 || e5;
+        if (err) throw err;
+
         const brandsById = indexBy(brands ?? [], "id");
-        return (data ?? []).map((m) => ({ ...m, brand: brandsById.get(m.brand_id)?.name ?? null }));
+        const componentPriceMap: Record<string, number> = {};
+        for (const c of components ?? []) componentPriceMap[c.component_key] = c.price;
+        const laborCostMap: Record<string, number> = {};
+        for (const l of laborRows ?? []) laborCostMap[l.package_key] = l.labor;
+
+        const packagesByAnalysis = new Map<string, typeof packages>();
+        for (const p of packages ?? []) {
+          const list = packagesByAnalysis.get(p.analysis_id) ?? [];
+          list.push(p);
+          packagesByAnalysis.set(p.analysis_id, list);
+        }
+
+        // Same math as the live Margin Analysis page (lib/marginAnalysis.ts):
+        // per-package PTR/PTD gross profit, then full-batch economics using
+        // each package's own override or the live Cost Per Case default.
+        const rows: unknown[] = [];
+        for (const analysis of analyses ?? []) {
+          const brandName = brandsById.get(analysis.brand_id)?.name ?? "Unknown brand";
+          const pkgRows = packagesByAnalysis.get(analysis.id) ?? [];
+          for (const key of PRICE_LIST_PACKAGE_KEYS as PriceListPackageKey[]) {
+            const p = (pkgRows ?? []).find((r) => r.package_key === key);
+            if (!p || p.enabled === false) continue;
+            const meta = PKG_META[key];
+            const calc = p.ptr > 0 && p.ptd > 0 ? calcPkg(p.ptr, p.ptd, meta.units) : null;
+            if (!calc) {
+              rows.push({
+                brand: brandName,
+                package: PRICE_LIST_PACKAGE_LABELS[key],
+                note: "No PTR/PTD entered for this package yet.",
+              });
+              continue;
+            }
+            const labor = p.labor ?? laborCostMap[key] ?? meta.labor;
+            const yieldAmt = p.yield_amt ?? meta.defaultYield;
+            const packCost = p.pack_cost ?? (meta.isKeg ? 0 : calcPackagingCost(key, componentPriceMap));
+            const batch = meta.isKeg
+              ? calcBatchKeg(calc.ptd, yieldAmt, analysis.batch_cost, labor)
+              : calcBatchCan(calc.ptd, yieldAmt, analysis.batch_cost, packCost, labor);
+            rows.push({
+              brand: brandName,
+              package: PRICE_LIST_PACKAGE_LABELS[key],
+              ptr: p.ptr,
+              ptd: p.ptd,
+              gross_profit_per_unit: calc.gp$,
+              gross_profit_pct: calc.gp_pct * 100,
+              batch_cost: analysis.batch_cost,
+              yield_bbls: analysis.yield_bbls,
+              batch_yield_amt: yieldAmt,
+              batch_revenue: batch.revenue,
+              batch_total_cost: batch.total,
+              batch_profit: batch.profit,
+              batch_margin_pct: batch.margin * 100,
+            });
+          }
+        }
+        return rows;
       }
       if (section === "cost_per_case") {
-        const [{ data: components, error: e1 }, { data: ingredients, error: e2 }, { data: labor, error: e3 }] =
-          await Promise.all([
-            supabase.from("packaging_components").select("*"),
-            supabase.from("ingredient_costs").select("*"),
-            supabase.from("package_labor_costs").select("*"),
-          ]);
-        if (e1 || e2 || e3) throw e1 || e2 || e3;
-        return { packaging_components: components, ingredient_costs: ingredients, package_labor_costs: labor };
+        const [
+          { data: components, error: e1 },
+          { data: ingredients, error: e2 },
+          { data: laborRows, error: e3 },
+          { data: recipeItems, error: e4 },
+          { data: brands, error: e5 },
+        ] = await Promise.all([
+          supabase.from("packaging_components").select("*"),
+          supabase.from("ingredient_costs").select("*"),
+          supabase.from("package_labor_costs").select("*"),
+          supabase.from("batch_recipe_items").select("*"),
+          supabase.from("pricing_brands").select("id, name"),
+        ]);
+        const err = e1 || e2 || e3 || e4 || e5;
+        if (err) throw err;
+
+        const componentPriceMap: Record<string, number> = {};
+        for (const c of components ?? []) componentPriceMap[c.component_key] = c.price;
+        const ingredientPriceMap: Record<string, number> = {};
+        for (const i of ingredients ?? []) ingredientPriceMap[i.ingredient_key] = i.price;
+        const laborMap: Record<string, number> = {};
+        for (const l of laborRows ?? []) laborMap[l.package_key] = l.labor;
+
+        // Same math as the live Cost Per Case "Overview" tab
+        // (lib/costPerCase.ts): packaging cost per case from the fixed
+        // composition table, labor allocated across each format's fixed
+        // yield, and each brand's ingredient batch cost (always a flat
+        // 30-BBL batch) spread across each format's yield too.
+        const packagingCostPerCase: Record<string, number> = {};
+        const laborCostPerCase: Record<string, number> = {};
+        for (const key of PRICE_LIST_PACKAGE_KEYS as PriceListPackageKey[]) {
+          const isKeg = key === "sixth" || key === "half";
+          packagingCostPerCase[key] = isKeg ? 0 : calcPackagingCost(key, componentPriceMap);
+          const labor = laborMap[key] ?? PKG_META[key].labor;
+          laborCostPerCase[key] = labor / OVERVIEW_PACKAGE_YIELDS[key];
+        }
+
+        const recipeByBrand = new Map<string, typeof recipeItems>();
+        for (const r of recipeItems ?? []) {
+          const list = recipeByBrand.get(r.brand_id) ?? [];
+          list.push(r);
+          recipeByBrand.set(r.brand_id, list);
+        }
+
+        const ingredientCostByBrand = (brands ?? [])
+          .map((b) => {
+            const recipe = recipeByBrand.get(b.id) ?? [];
+            const costPerBatch = (recipe ?? []).reduce(
+              (sum, r) => sum + r.qty_per_bbl * OVERVIEW_BATCH_BBLS * (ingredientPriceMap[r.ingredient_key] ?? 0),
+              0,
+            );
+            const costPerCase: Record<string, number> = {};
+            for (const key of PRICE_LIST_PACKAGE_KEYS as PriceListPackageKey[]) {
+              costPerCase[key] = costPerBatch / OVERVIEW_PACKAGE_YIELDS[key];
+            }
+            return { brand: b.name, cost_per_30bbl_batch: costPerBatch, ingredient_cost_per_case: costPerCase };
+          })
+          .filter((b) => b.cost_per_30bbl_batch > 0);
+
+        return {
+          packaging_cost_per_case: packagingCostPerCase,
+          labor_cost_per_case: laborCostPerCase,
+          ingredient_cost_per_brand: ingredientCostByBrand,
+          raw_component_prices: components,
+          raw_ingredient_prices: ingredients,
+          raw_labor_costs: laborRows,
+        };
       }
       if (section === "contribution_margin") {
-        const { data: brands } = await supabase.from("pricing_brands").select("id, name");
-        const { data, error } = await supabase.from("contribution_margin_lines").select("*");
-        if (error) throw error;
+        const [
+          { data: lines, error: e1 },
+          { data: brands, error: e2 },
+          { data: components, error: e3 },
+          { data: ingredients, error: e4 },
+          { data: laborRows, error: e5 },
+          { data: recipeItems, error: e6 },
+        ] = await Promise.all([
+          supabase.from("contribution_margin_lines").select("*"),
+          supabase.from("pricing_brands").select("id, name, company"),
+          supabase.from("packaging_components").select("*"),
+          supabase.from("ingredient_costs").select("*"),
+          supabase.from("package_labor_costs").select("*"),
+          supabase.from("batch_recipe_items").select("*"),
+        ]);
+        const err = e1 || e2 || e3 || e4 || e5 || e6;
+        if (err) throw err;
+
         const brandsById = indexBy(brands ?? [], "id");
-        return (data ?? []).map((l) => ({ ...l, brand: brandsById.get(l.brand_id)?.name ?? null }));
+        const componentPriceMap: Record<string, number> = {};
+        for (const c of components ?? []) componentPriceMap[c.component_key] = c.price;
+        const ingredientPriceMap: Record<string, number> = {};
+        for (const i of ingredients ?? []) ingredientPriceMap[i.ingredient_key] = i.price;
+        const laborMap: Record<string, number> = {};
+        for (const l of laborRows ?? []) laborMap[l.package_key] = l.labor;
+        const recipeByBrand = new Map<string, { ingredientKey: string; qtyPerBbl: number }[]>();
+        for (const r of recipeItems ?? []) {
+          const list = recipeByBrand.get(r.brand_id) ?? [];
+          list.push({ ingredientKey: r.ingredient_key, qtyPerBbl: r.qty_per_bbl });
+          recipeByBrand.set(r.brand_id, list);
+        }
+
+        // Same math as the live Contribution Margin page
+        // (lib/contributionMargin.ts) — only brands with a company set are
+        // in scope there, same restriction applied here.
+        return (lines ?? [])
+          .map((line) => {
+            const brand = brandsById.get(line.brand_id);
+            if (!brand || !brand.company) return null;
+            const calc = computeContributionMarginLine({
+              packageKey: line.package_key,
+              revenuePerCe: line.revenue_per_ce,
+              componentPrices: componentPriceMap,
+              recipeItems: recipeByBrand.get(line.brand_id) ?? [],
+              ingredientPrices: ingredientPriceMap,
+              laborForPackage: laborMap[line.package_key] ?? 0,
+            });
+            return {
+              brand: brand.name,
+              package: PRICE_LIST_PACKAGE_LABELS[line.package_key as PriceListPackageKey],
+              revenue_per_ce: calc.revenuePerCE,
+              cost_per_ce: calc.totalCostPerCE,
+              cm_per_ce: calc.cm,
+              margin_pct: calc.cmPct,
+              inventory_value: calc.inventoryValue,
+              total_batch_cost: calc.totalBatchCost,
+            };
+          })
+          .filter((r) => r !== null);
       }
       return { error: `Unknown section "${section}"` };
     }
@@ -409,7 +603,7 @@ export async function runErnieTool(
     case "get_users": {
       const { data, error } = await supabase
         .from("profiles")
-        .select("full_name, email, role")
+        .select("full_name, email, role, created_at")
         .order("full_name");
       if (error) throw error;
       return data;
