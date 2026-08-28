@@ -10,6 +10,12 @@
 //
 // A plain <img> (not next/image) is used for the thinking gif so its
 // animation isn't touched by Next's image optimizer.
+//
+// The skeleton mascot stays on screen the whole time (fixed corner, no
+// card/background behind it) — it only actually animates while Ernie is
+// generating a reply. GIFs can't be paused via CSS, so this is done by
+// swapping the <img> src between a static first-frame PNG (idle) and the
+// real animated GIF (loading).
 
 import { useEffect, useRef, useState } from "react";
 
@@ -97,15 +103,7 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
             </div>
           ))}
 
-          {loading && (
-            <div className="flex justify-start">
-              <div className="flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2">
-                {/* eslint-disable-next-line @next/next/no-img-element -- plain img keeps gif animation intact */}
-                <img src="/ernie/thinking.gif" alt="Ernie is thinking" className="h-8 w-8 object-contain" />
-                <span className="text-sm text-neutral-400">Ernie is thinking…</span>
-              </div>
-            </div>
-          )}
+          {loading && <p className="text-sm text-neutral-400">Ernie is thinking…</p>}
 
           {error && <p className="text-sm text-red-400">{error}</p>}
           <div ref={scrollRef} />
@@ -128,6 +126,13 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
           </button>
         </form>
       </div>
+
+      {/* eslint-disable-next-line @next/next/no-img-element -- plain img keeps gif animation intact, and lets the src swap between the static frame and the animated gif */}
+      <img
+        src={loading ? "/ernie/thinking.gif" : "/ernie/thinking-static.png"}
+        alt=""
+        className="pointer-events-none fixed bottom-6 right-6 h-24 w-24 object-contain"
+      />
     </div>
   );
 }
