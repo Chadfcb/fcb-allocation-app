@@ -44,7 +44,7 @@ export default function LoginPage() {
         alt=""
         fill
         sizes="100vw"
-        className="object-cover"
+        className="object-contain"
         priority
       />
 
@@ -91,7 +91,7 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <p className="mt-6 text-xs text-neutral-500">
+        <p className="mt-6 text-xs text-white">
           Accounts are created by an admin — contact Chad if you need access.
         </p>
       </div>
