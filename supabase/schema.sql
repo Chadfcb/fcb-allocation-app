@@ -577,6 +577,64 @@ create table if not exists purchase_order_items (
 create index if not exists purchase_order_items_po_idx on purchase_order_items (purchase_order_id, sort_order);
 
 -- =========================================================
+-- Events Calendar — FCB's outside/off-site events program (festivals,
+-- tastings, donations, distributor work-withs), recreated from the
+-- standalone "FCB Events" Electron app. Standing data, not tied to a week.
+-- Admin-only, full stop, like Sales and Purchase Orders. distributor_id
+-- reuses the existing distributors table (name + color) instead of a
+-- separate list, since that table's color column was already built to
+-- match this app's distributor color convention.
+-- =========================================================
+create table if not exists events (
+  id uuid primary key default gen_random_uuid(),
+  title text not null,
+  start_date date not null,
+  end_date date,
+  time_label text,
+  type text not null default 'other'
+    check (type in ('festival', 'tasting', 'donation', 'work-with', 'other')),
+  location text,
+  distributor_id uuid references distributors(id) on delete set null,
+  rep text,
+  notes text,
+  created_by uuid references profiles(id),
+  updated_by uuid references profiles(id),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists events_start_date_idx on events (start_date);
+
+-- POS materials attached to one specific event (flyers, images, PDFs).
+-- Actual bytes live in the "event-materials" storage bucket (see the
+-- Storage section near the end of this file); this row is just the
+-- metadata + which event it belongs to.
+create table if not exists event_materials (
+  id uuid primary key default gen_random_uuid(),
+  event_id uuid not null references events(id) on delete cascade,
+  file_name text not null,
+  storage_path text not null,
+  mime_type text,
+  size_bytes bigint,
+  uploaded_by uuid references profiles(id),
+  uploaded_at timestamptz not null default now()
+);
+create index if not exists event_materials_event_idx on event_materials (event_id);
+
+-- Shared POS library — files not tied to any one event, which can be
+-- attached to an event later (attaching just adds a row to
+-- event_materials pointing at the same storage_path; the file itself
+-- isn't duplicated).
+create table if not exists pos_library (
+  id uuid primary key default gen_random_uuid(),
+  file_name text not null,
+  storage_path text not null unique,
+  mime_type text,
+  size_bytes bigint,
+  uploaded_by uuid references profiles(id),
+  uploaded_at timestamptz not null default now()
+);
+
+-- =========================================================
 -- Audit log — every meaningful change is recorded here so admins can
 -- review history and one-click undo a change.
 -- =========================================================
@@ -666,6 +724,9 @@ alter table batch_recipe_items enable row level security;
 alter table contribution_margin_lines enable row level security;
 alter table purchase_orders enable row level security;
 alter table purchase_order_items enable row level security;
+alter table events enable row level security;
+alter table event_materials enable row level security;
+alter table pos_library enable row level security;
 
 -- Everyone signed in can read their own profile + see other profiles (for
 -- attribution / "who changed this" display); only admins can change roles.
@@ -782,6 +843,18 @@ create policy "purchase_order_items_admin" on purchase_order_items for all using
   exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
 );
 
+-- Events Calendar: admin-only, full stop (read and write) — hidden from
+-- basic users entirely, same as Sales and Purchase Orders.
+create policy "events_admin" on events for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+create policy "event_materials_admin" on event_materials for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+create policy "pos_library_admin" on pos_library for all using (
+  exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);
+
 -- Audit log: everyone can insert (so their own changes get logged); only
 -- admins can read/undo the full history.
 create policy "audit_log_insert" on audit_log for insert with check (auth.uid() is not null);
@@ -811,7 +884,8 @@ declare
     'packaging_inventory', 'label_inventory',
     'custom_packaging_inventory', 'custom_label_inventory',
     'purchase_orders', 'purchase_order_items',
-    'distributor_par_levels', 'build_order_recommendations', 'tank_allocations'
+    'distributor_par_levels', 'build_order_recommendations', 'tank_allocations',
+    'events', 'event_materials', 'pos_library'
   ];
 begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
@@ -826,3 +900,21 @@ begin
   end if;
 end
 $$;
+
+-- =========================================================
+-- Storage — "event-materials" bucket backs both per-event POS materials
+-- and the shared POS library (see events/event_materials/pos_library
+-- above). Private bucket; admin-only read/write, same as the tables that
+-- hold each file's metadata.
+-- =========================================================
+insert into storage.buckets (id, name, public)
+values ('event-materials', 'event-materials', false)
+on conflict (id) do nothing;
+
+create policy "event_materials_bucket_admin" on storage.objects for all using (
+  bucket_id = 'event-materials'
+  and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+) with check (
+  bucket_id = 'event-materials'
+  and exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
+);

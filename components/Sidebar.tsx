@@ -133,7 +133,11 @@ export default function Sidebar({ role }: { role: Role | undefined }) {
             {operationsExpanded && (
               <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
                 {OPERATIONS_LINKS.map((link) => (
-                  <Link key={link.href} href={link.href} className={linkClass(link.href)}>
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    className={linkClass(link.href)}
+                  >
                     {link.label}
                   </Link>
                 ))}
@@ -150,14 +154,25 @@ export default function Sidebar({ role }: { role: Role | undefined }) {
             {salesExpanded && (
               <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
                 {SALES_LINKS.map((link) => (
-                  <Link key={link.href} href={link.href} className={linkClass(link.href)}>
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    className={linkClass(link.href)}
+                  >
                     {link.label}
                   </Link>
                 ))}
               </div>
             )}
 
-            <Link href="/admin/users" className={`mt-1 ${linkClass("/admin/users")}`}>
+            <Link href="/events" className={`mt-1 ${linkClass("/events")}`}>
+              Events Calendar
+            </Link>
+
+            <Link
+              href="/admin/users"
+              className={`mt-1 ${linkClass("/admin/users")}`}
+            >
               Users
             </Link>
           </>

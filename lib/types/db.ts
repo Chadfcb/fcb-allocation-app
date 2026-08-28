@@ -536,3 +536,46 @@ export interface PurchaseOrderItem {
   line_total: number | null;
   sort_order: number;
 }
+
+export type EventType =
+  "festival" | "tasting" | "donation" | "work-with" | "other";
+
+// Named CalendarEvent (not Event) to avoid colliding with the DOM's global
+// Event type.
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  start_date: string;
+  end_date: string | null;
+  time_label: string | null;
+  type: EventType;
+  location: string | null;
+  distributor_id: string | null;
+  rep: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EventMaterial {
+  id: string;
+  event_id: string;
+  file_name: string;
+  storage_path: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  uploaded_by: string | null;
+  uploaded_at: string;
+}
+
+export interface PosLibraryFile {
+  id: string;
+  file_name: string;
+  storage_path: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  uploaded_by: string | null;
+  uploaded_at: string;
+}
