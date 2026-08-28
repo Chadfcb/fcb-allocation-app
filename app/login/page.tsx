@@ -34,7 +34,10 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-black px-4">
+    // bg-[#121212] (not the app's usual pure black) matches the logo
+    // image's own background exactly, so the letterboxed edges around it
+    // blend in seamlessly instead of showing a visible seam.
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#121212] px-4">
       {/* Full-page background layer — full brand colors, no dimming
           (Chad: "keep the colors"). The sign-in card sits on top and
           covers most of it, at 50% opacity so it's still visible through
