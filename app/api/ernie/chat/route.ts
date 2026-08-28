@@ -15,6 +15,17 @@ import { ERNIE_TOOLS, ERNIE_SYSTEM_PROMPT, runErnieTool } from "@/lib/ernie/tool
 const ANTHROPIC_MODEL = "claude-sonnet-5";
 const MAX_TOOL_ROUNDS = 6;
 
+// Anthropic's own hosted web search tool — unlike ERNIE_TOOLS (which we
+// execute ourselves against Supabase), Anthropic runs this one server-side
+// and resolves it within the same API response, so no extra handling is
+// needed in the loop below beyond including it in the request. Billed
+// per-search on the Anthropic account; max_uses caps it per Ernie reply.
+const WEB_SEARCH_TOOL = {
+  type: "web_search_20250305",
+  name: "web_search",
+  max_uses: 5,
+};
+
 interface ChatMessage {
   role: "user" | "assistant";
   text: string;
@@ -80,7 +91,7 @@ export async function POST(req: NextRequest) {
           model: ANTHROPIC_MODEL,
           max_tokens: 2048,
           system: ERNIE_SYSTEM_PROMPT,
-          tools: ERNIE_TOOLS,
+          tools: [...ERNIE_TOOLS, WEB_SEARCH_TOOL],
           messages: anthropicMessages,
         }),
       });
