@@ -185,6 +185,10 @@ export default function Sidebar({ role }: { role: Role | undefined }) {
               Dashboard
             </Link>
 
+            <Link href="/ernie" className={`mt-1 ${linkClass("/ernie")}`}>
+              Ernie AI
+            </Link>
+
             <button
               type="button"
               onClick={toggleOperations}
