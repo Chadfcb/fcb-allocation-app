@@ -12,12 +12,22 @@
 //
 // A plain <img> (not next/image) is used for the thinking gif so its
 // animation isn't touched by Next's image optimizer. The skeleton mascot
-// appears next to every one of Ernie's replies — the static first-frame PNG
-// once a reply is showing, swapped for the real animated GIF only for the
-// transient "Ernie is thinking…" row while a reply is being generated
-// (GIFs can't be paused via CSS, hence swapping src instead).
+// appears next to only the most recent one of Ernie's replies — the static
+// first-frame PNG once that reply is showing, swapped for the real animated
+// GIF only for the transient "Ernie is thinking…" row while a reply is
+// being generated (GIFs can't be paused via CSS, hence swapping src
+// instead).
+//
+// The app's shared (app) layout doesn't give its <main> an explicit height
+// (other pages just grow with their content and let the whole page scroll),
+// so a plain h-full here wouldn't reliably fill the remaining viewport —
+// the input bar would sit right under the last message instead of staying
+// pinned to the bottom of the screen the way Claude's own chat UI does.
+// Measuring the panel's own top offset and sizing it to fill exactly the
+// rest of the viewport (updated on resize) sidesteps that without having to
+// change the shared layout for every other page.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -30,10 +40,23 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [panelHeight, setPanelHeight] = useState<number | null>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
+
+  useLayoutEffect(() => {
+    function updateHeight() {
+      if (!panelRef.current) return;
+      const top = panelRef.current.getBoundingClientRect().top;
+      setPanelHeight(window.innerHeight - top);
+    }
+    updateHeight();
+    window.addEventListener("resize", updateHeight);
+    return () => window.removeEventListener("resize", updateHeight);
+  }, []);
 
   async function send(text: string) {
     const trimmed = text.trim();
@@ -73,35 +96,50 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
   }
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-3xl flex-col p-6">
+    <div
+      ref={panelRef}
+      style={panelHeight != null ? { height: panelHeight } : undefined}
+      className="mx-auto flex w-full max-w-3xl flex-col p-6"
+    >
       <h1 className="mb-4 text-xl font-semibold text-neutral-100">Ernie AI</h1>
 
-      <div className="flex-1 space-y-4 overflow-y-auto">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
         {messages.length === 0 && (
           <p className="text-lg text-neutral-300">
             Hi {firstName}, what can I help you with?
           </p>
         )}
 
-        {messages.map((m, i) =>
-          m.role === "user" ? (
-            <div key={i} className="flex justify-end">
-              <div className="max-w-[75%] whitespace-pre-wrap rounded-lg bg-white px-3 py-2 text-sm text-black">
-                {m.text}
+        {(() => {
+          let lastAssistantIndex = -1;
+          messages.forEach((m, i) => {
+            if (m.role === "assistant") lastAssistantIndex = i;
+          });
+
+          return messages.map((m, i) =>
+            m.role === "user" ? (
+              <div key={i} className="flex justify-end">
+                <div className="max-w-[75%] whitespace-pre-wrap rounded-lg bg-white px-3 py-2 text-sm text-black">
+                  {m.text}
+                </div>
               </div>
-            </div>
-          ) : (
-            <div key={i} className="flex items-start gap-2">
-              {/* eslint-disable-next-line @next/next/no-img-element -- plain img keeps gif animation intact */}
-              <img
-                src="/ernie/thinking-static.png"
-                alt=""
-                className="h-[75px] w-[75px] shrink-0 object-contain"
-              />
-              <div className="whitespace-pre-wrap pt-1 text-sm text-neutral-100">{m.text}</div>
-            </div>
-          ),
-        )}
+            ) : (
+              <div key={i} className="flex items-start gap-2">
+                {i === lastAssistantIndex ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- plain img keeps gif animation intact
+                  <img
+                    src="/ernie/thinking-static.png"
+                    alt=""
+                    className="h-[75px] w-[75px] shrink-0 object-contain"
+                  />
+                ) : (
+                  <div className="w-[75px] shrink-0" />
+                )}
+                <div className="whitespace-pre-wrap pt-1 text-sm text-neutral-100">{m.text}</div>
+              </div>
+            ),
+          );
+        })()}
 
         {loading && (
           <div className="flex items-center gap-2">
