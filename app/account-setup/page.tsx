@@ -8,6 +8,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 
 export default function AccountSetupPage() {
@@ -39,7 +40,9 @@ export default function AccountSetupPage() {
 
     setLoading(true);
 
-    const { error: passwordError } = await supabase.auth.updateUser({ password });
+    const { error: passwordError } = await supabase.auth.updateUser({
+      password,
+    });
     if (passwordError) {
       setError(passwordError.message);
       setLoading(false);
@@ -74,16 +77,35 @@ export default function AccountSetupPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-black px-4">
-      <div className="w-full max-w-sm rounded-lg border border-neutral-800 bg-neutral-950 p-8 shadow-sm">
-        <h1 className="mb-1 text-xl font-semibold text-neutral-100">Welcome to FCB Data</h1>
+    // Same background treatment as the sign-in page: the full logo behind
+    // everything at its natural size (not cropped), the page's own
+    // background matched to the logo's exact color (#121212, not pure
+    // black) so the edges blend in seamlessly, and the card sitting on top
+    // at 50% opacity so the logo shows through faintly.
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#121212] px-4">
+      <Image
+        src="/branding/fcb-logo.png"
+        alt=""
+        fill
+        sizes="100vw"
+        className="object-contain"
+        priority
+      />
+
+      <div className="relative z-10 w-full max-w-sm rounded-lg border border-neutral-800 bg-neutral-950/50 p-8 shadow-sm">
+        <h1 className="mb-1 text-xl font-semibold text-neutral-100">
+          Welcome to FCB Data
+        </h1>
         <p className="mb-6 text-sm text-neutral-400">
-          First time signing in — set your own password and let us know your name.
+          First time signing in — set your own password and let us know your
+          name.
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="mb-1 block text-sm font-medium text-neutral-300">Your Name</label>
+            <label className="mb-1 block text-sm font-medium text-neutral-300">
+              Your Name
+            </label>
             <input
               type="text"
               required
