@@ -7,10 +7,15 @@ import { ERNIE_TOOLS, ERNIE_SYSTEM_PROMPT, runErnieTool } from "@/lib/ernie/tool
 // user) with a fixed set of read-only data tools (lib/ernie/tools.ts) it can
 // call to look up real app data. No tool here can write to the database.
 //
-// The client sends the full message history each request (plain
-// {role, text} pairs) and gets back Ernie's final text reply — the
-// tool-use back-and-forth with Claude's API happens entirely inside this
-// one request and is never sent back to the browser.
+// The database (ernie_conversations / ernie_messages) is the source of
+// truth for conversation history — the client only ever sends the ONE new
+// message it wants to ask, plus which conversation it belongs to (omitted
+// to start a new one). This route loads that conversation's prior messages
+// itself, runs the same tool-use back-and-forth with Claude's API as
+// before, and persists both the new user message and Ernie's reply before
+// responding. That's what lets a conversation survive navigating away from
+// /ernie and back, a page refresh, or opening it from a different device —
+// previously the full history only ever lived in the browser tab's memory.
 
 const ANTHROPIC_MODEL = "claude-sonnet-5";
 const MAX_TOOL_ROUNDS = 6;
@@ -29,6 +34,12 @@ const WEB_SEARCH_TOOL = {
 interface ChatMessage {
   role: "user" | "assistant";
   text: string;
+}
+
+function titleFromMessage(text: string) {
+  const oneLine = text.replace(/\s+/g, " ").trim();
+  if (!oneLine) return "New conversation";
+  return oneLine.length > 60 ? `${oneLine.slice(0, 57)}...` : oneLine;
 }
 
 export async function POST(req: NextRequest) {
@@ -55,10 +66,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { messages } = (await req.json()) as { messages: ChatMessage[] };
+    const body = (await req.json()) as { conversationId?: string; message?: string };
+    const newMessageText = body.message?.trim();
 
-    if (!Array.isArray(messages) || messages.length === 0) {
-      return NextResponse.json({ error: "No messages provided" }, { status: 400 });
+    if (!newMessageText) {
+      return NextResponse.json({ error: "No message provided" }, { status: 400 });
     }
 
     if (!process.env.ANTHROPIC_API_KEY) {
@@ -71,8 +83,60 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Resolve (or create) the conversation this message belongs to, and
+    // load its prior messages (RLS already restricts this to the signed-in
+    // admin's own conversations, so a stale/foreign id just comes back empty).
+    let conversationId = body.conversationId;
+    let priorMessages: ChatMessage[] = [];
+
+    if (conversationId) {
+      const { data: existing, error: convErr } = await supabase
+        .from("ernie_conversations")
+        .select("id")
+        .eq("id", conversationId)
+        .maybeSingle();
+      if (convErr) throw convErr;
+
+      if (!existing) {
+        // Stale/invalid id (e.g. leftover in another browser's
+        // sessionStorage, or the conversation was removed) — fall back to
+        // starting a fresh conversation instead of erroring out.
+        conversationId = undefined;
+      } else {
+        const { data: history, error: histErr } = await supabase
+          .from("ernie_messages")
+          .select("role, content")
+          .eq("conversation_id", conversationId)
+          .order("created_at", { ascending: true });
+        if (histErr) throw histErr;
+        priorMessages = (history ?? []).map((m) => ({
+          role: m.role as "user" | "assistant",
+          text: m.content,
+        }));
+      }
+    }
+
+    if (!conversationId) {
+      const { data: created, error: createErr } = await supabase
+        .from("ernie_conversations")
+        .insert({ user_id: user.id, title: titleFromMessage(newMessageText) })
+        .select("id")
+        .single();
+      if (createErr) throw createErr;
+      conversationId = created.id;
+    }
+
+    const { error: insertUserErr } = await supabase.from("ernie_messages").insert({
+      conversation_id: conversationId,
+      role: "user",
+      content: newMessageText,
+    });
+    if (insertUserErr) throw insertUserErr;
+
+    const allMessages: ChatMessage[] = [...priorMessages, { role: "user", text: newMessageText }];
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic message content shape varies (string vs. content blocks) across the tool-use loop
-    const anthropicMessages: any[] = messages.map((m) => ({
+    const anthropicMessages: any[] = allMessages.map((m) => ({
       role: m.role,
       content: m.text,
     }));
@@ -145,7 +209,21 @@ export async function POST(req: NextRequest) {
         "I wasn't able to put together an answer for that — try rephrasing, or ask something more specific.";
     }
 
-    return NextResponse.json({ text: finalText });
+    const { error: insertAssistantErr } = await supabase.from("ernie_messages").insert({
+      conversation_id: conversationId,
+      role: "assistant",
+      content: finalText,
+    });
+    if (insertAssistantErr) throw insertAssistantErr;
+
+    // Bump updated_at so this conversation sorts to the top of the history
+    // list and is what gets restored by default next time.
+    await supabase
+      .from("ernie_conversations")
+      .update({ updated_at: new Date().toISOString() })
+      .eq("id", conversationId);
+
+    return NextResponse.json({ text: finalText, conversationId });
   } catch (err) {
     return NextResponse.json(
       {
