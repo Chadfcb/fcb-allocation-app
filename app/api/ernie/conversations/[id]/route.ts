@@ -3,7 +3,8 @@ import { createClient } from "@/lib/supabase/server";
 
 // Loads one Ernie conversation's full message history — used both to
 // restore "the conversation I was just in" after navigating back to /ernie,
-// and to reopen a past conversation picked from the history list. RLS on
+// and to reopen a past conversation picked from the history list. Open to
+// every signed-in user (Basic and admin alike); RLS on
 // ernie_conversations/ernie_messages already restricts this to the caller's
 // own rows, so a foreign or stale id just comes back as "not found".
 
@@ -19,19 +20,6 @@ export async function GET(
 
   if (!user) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-
-  if (profile?.role !== "admin") {
-    return NextResponse.json(
-      { error: "Ernie is only available to admins" },
-      { status: 403 },
-    );
   }
 
   const { data: conversation, error: convErr } = await supabase

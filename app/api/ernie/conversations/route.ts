@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
-// Lists the signed-in admin's own Ernie conversations, most recently
-// updated first — powers the history list in the Ernie chat UI. RLS on
-// ernie_conversations already restricts this to the caller's own rows.
+// Lists the signed-in user's own Ernie conversations, most recently
+// updated first — powers the history list in the Ernie chat UI. Open to
+// every signed-in user (Basic and admin alike); RLS on ernie_conversations
+// already restricts this to the caller's own rows regardless of role.
 
 export async function GET() {
   const supabase = await createClient();
@@ -13,19 +14,6 @@ export async function GET() {
 
   if (!user) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
-  }
-
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .single();
-
-  if (profile?.role !== "admin") {
-    return NextResponse.json(
-      { error: "Ernie is only available to admins" },
-      { status: 403 },
-    );
   }
 
   const { data, error } = await supabase

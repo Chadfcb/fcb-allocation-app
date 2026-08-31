@@ -3,8 +3,10 @@
 // Left-hand navigation sidebar, replacing the old top nav bar. Admins get
 // "Dashboard" (standalone), "Operations" and "Sales" (collapsible
 // categories — click the name itself, no chevrons/icons), and "Users"
-// (standalone). Basic users only ever see a single "Inventory &
-// Allocation" link, matching their existing page restriction.
+// (standalone). Basic users see "Inventory & Allocation" plus "Ernie AI" —
+// Ernie is available to every signed-in user, but a Basic user's own tool
+// access within Ernie is restricted server-side (see lib/ernie/tools.ts) to
+// just the data they can already see here.
 //
 // Two independent bits of UI state:
 // - Whether Operations/Sales are expanded — remembered per-browser via
@@ -290,9 +292,14 @@ export default function Sidebar({ role }: { role: Role | undefined }) {
             </Link>
           </>
         ) : (
-          <Link href="/inventory" className={linkClass("/inventory")}>
-            Inventory & Allocation
-          </Link>
+          <>
+            <Link href="/inventory" className={linkClass("/inventory")}>
+              Inventory & Allocation
+            </Link>
+            <Link href="/ernie" className={`mt-1 ${linkClass("/ernie")}`}>
+              Ernie AI
+            </Link>
+          </>
         )}
       </nav>
     </div>

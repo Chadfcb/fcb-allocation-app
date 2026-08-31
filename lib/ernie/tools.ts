@@ -139,6 +139,33 @@ export const ERNIE_TOOLS = [
   },
 ];
 
+// Tools whose underlying tables are admin-only in the app's own RLS policies
+// (Distributor Inventory, Build Orders, Purchase Orders, Events, Sales/
+// pricing, POS Label Files), plus get_users — which is app-level restricted
+// even though the profiles table itself is readable by any signed-in user
+// (see profiles_select_all in supabase/schema.sql), because there's no
+// "list every user" capability anywhere in the app for Basic users to
+// already have. Basic users get everything else: list_weeks,
+// get_inventory_and_allocations, and get_distributors all read tables any
+// signed-in user can already see on the Inventory & Allocation page.
+const ADMIN_ONLY_TOOL_NAMES = new Set([
+  "get_distributor_inventory",
+  "get_build_orders",
+  "get_purchase_orders",
+  "get_events",
+  "get_pricing_data",
+  "get_pos_label_files",
+  "get_users",
+]);
+
+// Role-aware tool list to hand to the Anthropic API — Basic users never see
+// (and so can never ask Ernie to call) the admin-only tools above.
+export function getErnieTools(isAdmin: boolean) {
+  return isAdmin
+    ? ERNIE_TOOLS
+    : ERNIE_TOOLS.filter((tool) => !ADMIN_ONLY_TOOL_NAMES.has(tool.name));
+}
+
 async function resolveWeek(supabase: SupabaseClient, weekLabel?: string) {
   if (weekLabel) {
     const { data } = await supabase
@@ -178,7 +205,16 @@ export async function runErnieTool(
   supabase: SupabaseClient,
   name: string,
   input: Record<string, unknown>,
+  isAdmin: boolean,
 ): Promise<unknown> {
+  // Defense in depth: getErnieTools() already keeps admin-only tools out of
+  // a Basic user's tool list, so Claude has nothing to call here — but
+  // enforce it at the data layer too rather than relying solely on what
+  // tools we handed the model.
+  if (ADMIN_ONLY_TOOL_NAMES.has(name) && !isAdmin) {
+    return { error: `Tool "${name}" is admin-only and not available to this user.` };
+  }
+
   switch (name) {
     case "list_weeks": {
       const { data, error } = await supabase
@@ -615,14 +651,22 @@ export async function runErnieTool(
 }
 
 // Kept out of the tools list (not a data lookup) but shared here since it's
-// tightly coupled to what the tools above can/can't do.
-export const ERNIE_SYSTEM_PROMPT = `You are Ernie, an internal AI assistant built into FCB Data (Full Circle Brewing Co.'s inventory/allocations/operations app). You are only ever shown to admins.
+// tightly coupled to what the tools above can/can't do. Role-aware: a Basic
+// user's prompt describes a narrower, accurate set of data Ernie can reach
+// for them (matching getErnieTools() above), rather than claiming access
+// Ernie doesn't actually have for that user.
+export function buildErnieSystemPrompt(isAdmin: boolean): string {
+  const dataAccessParagraph = isAdmin
+    ? `You can read data — inventory, allocations, distributors, distributor-reported inventory, Build Orders, the Events Calendar, purchase orders, Sales/pricing data, POS label files, and the app's user list — via the tools available to you. You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`
+    : `You can read inventory and allocations data — on-hand/unlabeled/to-be-packaged/remaining quantities, per-distributor allocations, PO numbers and status, and distributor pricing (so order value can be computed) — and the distributor list, via the tools available to you. This is the same data this user can already see on the app's Inventory & Allocation page. You do NOT have access to purchase orders, Sales/pricing data, distributor-reported on-hand inventory, Build Orders, the Events Calendar, POS label files, or the list of app users — those are admin-only areas of the app. If someone asks about any of those, say plainly that you don't have access to that and they should check with an admin, rather than guessing or refusing to engage. You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`;
 
-You can read data — inventory, allocations, distributors, events, purchase orders, pricing, users — via the tools available to you. You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.
+  return `You are Ernie, an internal AI assistant built into FCB Data (Full Circle Brewing Co.'s inventory/allocations/operations app), available to every signed-in user.
+
+${dataAccessParagraph}
 
 When someone's message isn't actually a question or request — a stray "test", "check", "hi", or similar — just respond briefly and naturally, the way a person would. Don't recite your list of capabilities every time; said the same way twice it starts to sound like a canned script. Only describe what you can help with when it's genuinely useful in the moment — e.g. the very first message of a brand-new conversation, or someone seems unsure what to ask — and vary the wording rather than reusing the same phrasing each time.
 
-You are NOT limited to app-data questions — answer general knowledge, how-to, math, and any other question the way any capable assistant would, using your own knowledge. Only reach for the app-data tools when the question is actually about FCB Data's own inventory/allocations/distributors/events/POs/pricing/users; don't mention those tools or their limits when a question has nothing to do with the app.
+You are NOT limited to app-data questions — answer general knowledge, how-to, math, and any other question the way any capable assistant would, using your own knowledge. Only reach for the app-data tools when the question is actually about FCB Data's own data; don't mention those tools or their limits when a question has nothing to do with the app.
 
 You also have live web search. Use it for anything that could have changed since your training — current events, today's prices, who currently holds some role, etc. — rather than guessing from memory. Don't mention that it's a "tool" or how it works; just search and answer.
 
@@ -631,3 +675,4 @@ Be direct and brief. Answer exactly what was asked — a specific question gets 
 This chat only displays plain text — never use markdown formatting. No **bold**, no tables, no headers, no bullet/numbered lists, no backticks. Write in plain conversational sentences, the way you'd answer someone out loud. If you're listing a few items, just write them into a sentence (e.g. "Big Daddy IPA has 12 cases on hand; Mystic Haze, Prohibition, and Peachy Vibes are all at zero.") instead of a table or list.
 
 Never mention Claude, Anthropic, or any underlying model/vendor — you are Ernie, full stop.`;
+}

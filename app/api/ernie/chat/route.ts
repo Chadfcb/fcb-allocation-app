@@ -1,11 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { ERNIE_TOOLS, ERNIE_SYSTEM_PROMPT, runErnieTool } from "@/lib/ernie/tools";
+import { getErnieTools, buildErnieSystemPrompt, runErnieTool } from "@/lib/ernie/tools";
 
-// Ernie's chat backend. Admin-only, read-only: this route calls Claude's
-// Messages API directly (Ernie's underlying model — never surfaced to the
-// user) with a fixed set of read-only data tools (lib/ernie/tools.ts) it can
-// call to look up real app data. No tool here can write to the database.
+// Ernie's chat backend. Open to every signed-in user, read-only: this route
+// calls Claude's Messages API directly (Ernie's underlying model — never
+// surfaced to the user) with a read-only set of data tools
+// (lib/ernie/tools.ts) it can call to look up real app data. No tool here
+// can write to the database. Which tools are on offer — and what the system
+// prompt tells Ernie it can/can't do — depends on the caller's role: a
+// Basic user only ever gets tools backed by tables their own RLS policies
+// already let them read elsewhere in the app (see getErnieTools() and
+// buildErnieSystemPrompt() in lib/ernie/tools.ts); admin-only data (Purchase
+// Orders, Sales/pricing, Distributor Inventory, Build Orders, Events, POS
+// Label Files, the user list) never reaches a Basic user through Ernie.
 //
 // The database (ernie_conversations / ernie_messages) is the source of
 // truth for conversation history — the client only ever sends the ONE new
@@ -59,12 +66,7 @@ export async function POST(req: NextRequest) {
       .eq("id", user.id)
       .single();
 
-    if (profile?.role !== "admin") {
-      return NextResponse.json(
-        { error: "Ernie is only available to admins" },
-        { status: 403 },
-      );
-    }
+    const isAdmin = profile?.role === "admin";
 
     const body = (await req.json()) as { conversationId?: string; message?: string };
     const newMessageText = body.message?.trim();
@@ -154,8 +156,8 @@ export async function POST(req: NextRequest) {
         body: JSON.stringify({
           model: ANTHROPIC_MODEL,
           max_tokens: 2048,
-          system: ERNIE_SYSTEM_PROMPT,
-          tools: [...ERNIE_TOOLS, WEB_SEARCH_TOOL],
+          system: buildErnieSystemPrompt(isAdmin),
+          tools: [...getErnieTools(isAdmin), WEB_SEARCH_TOOL],
           messages: anthropicMessages,
         }),
       });
@@ -177,7 +179,7 @@ export async function POST(req: NextRequest) {
           if (block.type !== "tool_use") continue;
           let result: unknown;
           try {
-            result = await runErnieTool(supabase, block.name, block.input ?? {});
+            result = await runErnieTool(supabase, block.name, block.input ?? {}, isAdmin);
           } catch (toolErr) {
             result = {
               error:
