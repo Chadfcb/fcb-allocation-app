@@ -7,6 +7,11 @@ import { createClient } from "@/lib/supabase/server";
 // every signed-in user (Basic and admin alike); RLS on
 // ernie_conversations/ernie_messages already restricts this to the caller's
 // own rows, so a foreign or stale id just comes back as "not found".
+//
+// Each message's attached/produced files (added 2026-08-31) are resolved
+// into real file metadata here (RLS on ernie_files scopes this to the
+// caller's own files too) so reopening an old conversation still shows
+// download chips for whatever was uploaded or produced in it.
 
 export async function GET(
   _req: NextRequest,
@@ -37,7 +42,7 @@ export async function GET(
 
   const { data: messages, error } = await supabase
     .from("ernie_messages")
-    .select("role, content, created_at")
+    .select("role, content, file_ids, created_at")
     .eq("conversation_id", id)
     .order("created_at", { ascending: true });
 
@@ -45,8 +50,27 @@ export async function GET(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  const allFileIds = Array.from(new Set((messages ?? []).flatMap((m) => m.file_ids ?? [])));
+  const filesById = new Map<
+    string,
+    { id: string; file_name: string; mime_type: string | null; size_bytes: number | null }
+  >();
+  if (allFileIds.length > 0) {
+    const { data: fileRows } = await supabase
+      .from("ernie_files")
+      .select("id, file_name, mime_type, size_bytes")
+      .in("id", allFileIds);
+    for (const f of fileRows ?? []) filesById.set(f.id, f);
+  }
+
   return NextResponse.json({
     conversation,
-    messages: (messages ?? []).map((m) => ({ role: m.role, text: m.content })),
+    messages: (messages ?? []).map((m) => ({
+      role: m.role,
+      text: m.content,
+      files: (m.file_ids ?? [])
+        .map((fid: string) => filesById.get(fid))
+        .filter((f: unknown): f is NonNullable<typeof f> => Boolean(f)),
+    })),
   });
 }

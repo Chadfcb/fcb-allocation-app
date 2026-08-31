@@ -1,9 +1,13 @@
 // Read-only data tools for Ernie (the in-app AI assistant, see
-// app/api/ernie/chat/route.ts). Nothing here writes to the database. Most
-// of these tools are narrow, purpose-built queries against one slice of
-// the app's data, shaped in plain JS — but "run_read_only_query" (see its
-// case below) is a deliberate exception: a general-purpose read-only SQL
-// tool, added 2026-08-31 after enough one-off narrow tools had been
+// app/api/ernie/chat/route.ts). Nothing here writes to the app's own
+// database (allocations, inventory, pricing, etc.) — the one deliberate
+// exception to "Ernie never changes anything" is edit_spreadsheet, which
+// edits a FILE the user themselves uploaded (not app data) and hands back
+// a new version, same as if they'd edited it in Excel and saved a copy.
+// Most of these tools are narrow, purpose-built queries against one slice
+// of the app's data, shaped in plain JS — but "run_read_only_query" (see
+// its case below) is a deliberate exception: a general-purpose read-only
+// SQL tool, added 2026-08-31 after enough one-off narrow tools had been
 // hand-built that Chad asked for a genuinely versatile one instead
 // ("the more versatile the tool the better"). It calls the
 // `ernie_readonly_query` Postgres function (sql/ernie_readonly_query.sql)
@@ -14,6 +18,16 @@
 // safety writeup (statement-shape checks, the profiles carve-out, schema
 // blocks, row cap, timeout).
 //
+// File upload (added 2026-08-31, "spreadsheets is important, we use so
+// many, having ernie to be able to edit them and analyze them would be
+// huge" — Chad): list_uploaded_files/read_uploaded_file/edit_spreadsheet
+// work with whatever a user attaches in the chat (see lib/ernie/files.ts
+// for the actual byte-level work — download from Storage, render a
+// spreadsheet into an address-labeled text grid, apply edits in place with
+// ExcelJS so formatting/other sheets/formulas survive untouched). RLS on
+// ernie_files plus a per-user Storage folder policy (sql/ernie_files.sql)
+// keeps everyone to their own files, same as ernie_conversations/messages.
+//
 // Ernie itself runs on Anthropic's Claude API under the hood; nothing about
 // that should surface in user-facing text (see ERNIE_SYSTEM_PROMPT below).
 
@@ -23,6 +37,7 @@ import { PRICE_LIST_PACKAGE_KEYS, PRICE_LIST_PACKAGE_LABELS } from "@/lib/types/
 import { calcPackagingCost, OVERVIEW_BATCH_BBLS, OVERVIEW_PACKAGE_YIELDS } from "@/lib/costPerCase";
 import { PKG_META, calcPkg, calcBatchCan, calcBatchKeg } from "@/lib/marginAnalysis";
 import { computeContributionMarginLine } from "@/lib/contributionMargin";
+import { buildFileContentBlocks, applySpreadsheetEdits, type SpreadsheetEditInput } from "@/lib/ernie/files";
 
 // Several Sales pages show numbers that are NOT stored in the database —
 // they're computed live in the browser from several tables at once (see
@@ -209,6 +224,66 @@ Two Postgres functions already implement the exact packaging/label bill-of-mater
       required: ["query"],
     },
   },
+  {
+    name: "list_uploaded_files",
+    description:
+      "List files this signed-in user has uploaded to Ernie (or that Ernie has produced by editing one), most recent first — file_id, file name, type, size, and whether it's something they uploaded or something Ernie produced. Use this to find a file_id when someone refers to a file from earlier without re-attaching it (e.g. \"that spreadsheet from before\", \"the file I sent you yesterday\").",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
+  {
+    name: "read_uploaded_file",
+    description:
+      "Read the contents of a previously-uploaded (or previously Ernie-produced) file again, by file_id — for when someone refers to a file from earlier in this or a past conversation without re-attaching it. Use list_uploaded_files first if you don't already have the file_id. Spreadsheets, CSV, plain text, and images all work; a PDF can't be re-read this way — ask the user to re-attach it instead.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        file_id: {
+          type: "string",
+          description: "The file's id, from list_uploaded_files or from earlier in this conversation.",
+        },
+      },
+      required: ["file_id"],
+    },
+  },
+  {
+    name: "edit_spreadsheet",
+    description:
+      `Edit specific cells in a spreadsheet (.xlsx) or CSV file the user uploaded, and save the result as a new downloadable file — the original file's other cells, formatting, other sheets, and formulas are left untouched; only the cells listed here change. Always read the file first (it's included automatically when freshly attached, or use read_uploaded_file for one from earlier) so you know its real sheet names and current values — cell addresses like "B3" must match exactly what you saw when you read it.
+
+Each edit is {sheet, cell, value}: sheet is the exact sheet name (omit for a CSV, or to use the file's first/only sheet); cell is a spreadsheet-style address such as "B3"; value is the new value (a string, a number, or null to clear the cell) — a string starting with "=" is set as a formula (.xlsx only, ignored for CSV). Pass every cell that needs to change in one call rather than calling this once per cell. After it succeeds, tell the user plainly what changed and that a new file is ready to download — don't just say "done" with no detail, and never claim you edited a file if this tool wasn't actually called or didn't succeed.`,
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        file_id: { type: "string", description: "The spreadsheet or CSV file's id to edit." },
+        edits: {
+          type: "array",
+          items: {
+            type: "object" as const,
+            properties: {
+              sheet: {
+                type: "string",
+                description: "Exact sheet name (.xlsx only). Omit for CSV, or to use the file's first sheet.",
+              },
+              cell: { type: "string", description: 'Spreadsheet-style address, e.g. "B3".' },
+              value: {
+                type: ["string", "number", "null"],
+                description: "The new value for this cell — string, number, or null to clear it.",
+              },
+            },
+            required: ["cell", "value"],
+          },
+        },
+        output_file_name: {
+          type: "string",
+          description: "Optional new file name for the edited file. Omit to keep the original name.",
+        },
+      },
+      required: ["file_id", "edits"],
+    },
+  },
 ];
 
 // Tools whose underlying tables are admin-only in the app's own RLS policies
@@ -256,6 +331,9 @@ const TOOL_STATUS_LABELS: Record<string, string> = {
   get_users: "Checking the user list",
   search_past_conversations: "Searching past conversations",
   run_read_only_query: "Running a custom data lookup",
+  list_uploaded_files: "Checking your uploaded files",
+  read_uploaded_file: "Reading your uploaded file",
+  edit_spreadsheet: "Editing your spreadsheet",
 };
 
 export function describeErnieToolCall(name: string): string {
@@ -804,6 +882,68 @@ export async function runErnieTool(
       return data;
     }
 
+    case "list_uploaded_files": {
+      // RLS on ernie_files already scopes this to the signed-in user's own
+      // files, same pattern as search_past_conversations above.
+      const { data, error } = await supabase
+        .from("ernie_files")
+        .select("id, file_name, mime_type, size_bytes, direction, created_at")
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (error) throw error;
+      return data;
+    }
+
+    case "read_uploaded_file": {
+      const fileId = input.file_id as string | undefined;
+      if (!fileId) return { error: "No file_id provided." };
+      const { data: file, error } = await supabase
+        .from("ernie_files")
+        .select("id, file_name, mime_type, size_bytes, storage_path")
+        .eq("id", fileId)
+        .maybeSingle();
+      if (error) throw error;
+      if (!file) {
+        return { error: "No file found with that id (it may not exist, or belong to someone else)." };
+      }
+      // __contentBlocks is a signal to app/api/ernie/chat/route.ts to pass
+      // this straight through as the tool_result's content array (which can
+      // include an image block) instead of JSON-stringifying it into inert
+      // text — every other tool's result goes through the normal
+      // stringified path untouched.
+      const blocks = await buildFileContentBlocks(supabase, file, { forToolResult: true });
+      return { __contentBlocks: blocks };
+    }
+
+    case "edit_spreadsheet": {
+      const fileId = input.file_id as string | undefined;
+      const edits = input.edits as SpreadsheetEditInput[] | undefined;
+      if (!fileId) return { error: "No file_id provided." };
+      if (!edits || !edits.length) return { error: "No edits provided." };
+
+      const { data: file, error } = await supabase
+        .from("ernie_files")
+        .select("id, file_name, mime_type, size_bytes, storage_path")
+        .eq("id", fileId)
+        .maybeSingle();
+      if (error) throw error;
+      if (!file) {
+        return { error: "No file found with that id (it may not exist, or belong to someone else)." };
+      }
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return { error: "Not signed in." };
+
+      try {
+        const outputFileName = input.output_file_name as string | undefined;
+        return await applySpreadsheetEdits(supabase, user.id, file, edits, outputFileName);
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : "Couldn't edit that file." };
+      }
+    }
+
     default:
       return { error: `Unknown tool "${name}"` };
   }
@@ -834,6 +974,8 @@ You also have a tool to search this same signed-in user's own past Ernie convers
 On the Inventory & Allocation tools: each product (at the whole-inventory level) and each distributor's allocation of that product carries a status_flag — one of good_confirmed (on hand, confirmed), dont_have, have_some, need_to_package, need_pakteks, need_labels, need_cans, or need_kegs. This is the direct, already-tracked answer to "what does distributor X's order still need" or "what needs to be packaged for X" — filter that distributor's allocations by status_flag rather than trying to infer a shortfall yourself from on-hand/remaining numbers, and say plainly if nothing is currently flagged that way rather than treating an empty result as a failure to answer.
 
 You also have run_read_only_query, a general-purpose tool that runs any read-only SQL SELECT against the app's own database — reach for it whenever a question isn't already covered by one of the specific tools above (for example: "do we have enough cans and lids on hand to cover this week's whole 16oz can order across every distributor", or any other cross-table or aggregate question) rather than guessing, refusing, or claiming you have no way to find out. Its own description lists the real table and column names to use, and two existing database functions (classify_product_packaging, packaging_consumed_for_week) that already implement the same packaging bill-of-materials math the Inventory page itself uses — call those instead of re-deriving the recipe from scratch. If a query comes back with zero rows for something that plausibly exists, that most often means this account doesn't have permission to see that data (see above), not that the data doesn't exist — say so rather than concluding there's nothing there. If a query is rejected outright (a database error message about what's not allowed), rewrite it as a single plain read-only SELECT and try again before giving up.
+
+Anyone can attach files to a message (drag-and-drop onto the chat, or the attach button) — a freshly-attached file's contents are included automatically, with no tool call needed. Images, PDFs, spreadsheets (.xlsx), CSV, and plain text files are all read directly; any other file type can still be uploaded but you can't read its contents yet, so say that plainly rather than guessing what's in it. If someone refers to a file from earlier without re-attaching it, use list_uploaded_files to find it and read_uploaded_file to pull its contents back up (this works for everything except PDFs — ask for a PDF to be re-attached instead). For spreadsheets and CSV specifically, you can also edit them with edit_spreadsheet: read the file first so you know its real sheet names and current cell values, then give it the exact cells to change — it edits that file in place (preserving everything else: formatting, other sheets, formulas) and hands back a new file to download. Never claim you've edited or analyzed a file without actually having its contents in front of you.
 
 Be direct and brief. Answer exactly what was asked — a specific question gets a specific, short answer, not a full data dump of everything related to it. Only include extra context (other SKUs, other distributors, caveats, etc.) if it's clearly relevant to what they're trying to find out, or if they asked for a fuller breakdown. When asked a question, use the tools to pull real current data rather than guessing. Cite specific numbers/names from the tool results. If a question is ambiguous about which week it refers to, use the current open week by default and say which week you used. If you genuinely can't find an answer after checking, say so plainly and suggest what to try instead — don't go quiet.
 

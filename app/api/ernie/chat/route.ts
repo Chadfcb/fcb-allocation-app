@@ -1,18 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getErnieTools, buildErnieSystemPrompt, runErnieTool, describeErnieToolCall } from "@/lib/ernie/tools";
+import { buildFileContentBlocks } from "@/lib/ernie/files";
 
-// Ernie's chat backend. Open to every signed-in user, read-only: this route
-// calls Claude's Messages API directly (Ernie's underlying model — never
-// surfaced to the user) with a read-only set of data tools
-// (lib/ernie/tools.ts) it can call to look up real app data. No tool here
-// can write to the database. Which tools are on offer — and what the system
-// prompt tells Ernie it can/can't do — depends on the caller's role: a
-// Basic user only ever gets tools backed by tables their own RLS policies
-// already let them read elsewhere in the app (see getErnieTools() and
-// buildErnieSystemPrompt() in lib/ernie/tools.ts); admin-only data (Purchase
-// Orders, Sales/pricing, Distributor Inventory, Build Orders, Events, POS
-// Label Files, the user list) never reaches a Basic user through Ernie.
+// Ernie's chat backend. Open to every signed-in user, read-only against the
+// app's own data: this route calls Claude's Messages API directly (Ernie's
+// underlying model — never surfaced to the user) with a read-only set of
+// data tools (lib/ernie/tools.ts) it can call to look up real app data. No
+// tool here can write to the app's database. Which tools are on offer — and
+// what the system prompt tells Ernie it can/can't do — depends on the
+// caller's role: a Basic user only ever gets tools backed by tables their
+// own RLS policies already let them read elsewhere in the app (see
+// getErnieTools() and buildErnieSystemPrompt() in lib/ernie/tools.ts);
+// admin-only data (Purchase Orders, Sales/pricing, Distributor Inventory,
+// Build Orders, Events, POS Label Files, the user list) never reaches a
+// Basic user through Ernie.
+//
+// File attachments (added 2026-08-31): the client uploads a file straight
+// to Supabase Storage and inserts its own ernie_files row (see
+// ErnieChatClient.tsx — RLS keeps that to the caller's own files), then
+// just passes the resulting file_id(s) here alongside the message. This
+// route resolves those ids back into real file rows (RLS-scoped, so a
+// foreign id just comes back empty) and builds the actual content Claude
+// sees — image/PDF bytes natively, spreadsheets/CSV/text rendered to text.
+// edit_spreadsheet (lib/ernie/tools.ts) is the one tool that writes
+// anything — but only a NEW file the user gets to download, never the
+// app's own database.
 //
 // The database (ernie_conversations / ernie_messages) is the source of
 // truth for conversation history — the client only ever sends the ONE new
@@ -45,9 +58,10 @@ const WEB_SEARCH_TOOL = {
   max_uses: 5,
 };
 
-interface ChatMessage {
+interface StoredMessage {
   role: "user" | "assistant";
   text: string;
+  file_ids: string[];
 }
 
 function titleFromMessage(text: string) {
@@ -74,10 +88,15 @@ export async function POST(req: NextRequest) {
 
   const isAdmin = profile?.role === "admin";
 
-  const body = (await req.json()) as { conversationId?: string; message?: string };
+  const body = (await req.json()) as {
+    conversationId?: string;
+    message?: string;
+    fileIds?: string[];
+  };
   const newMessageText = body.message?.trim();
+  const newFileIds = Array.isArray(body.fileIds) ? body.fileIds.filter((id) => typeof id === "string") : [];
 
-  if (!newMessageText) {
+  if (!newMessageText && newFileIds.length === 0) {
     return NextResponse.json({ error: "No message provided" }, { status: 400 });
   }
 
@@ -107,7 +126,7 @@ export async function POST(req: NextRequest) {
         // signed-in user's own conversations, so a stale/foreign id just
         // comes back empty).
         let conversationId = requestConversationId;
-        let priorMessages: ChatMessage[] = [];
+        let priorMessages: StoredMessage[] = [];
 
         if (conversationId) {
           const { data: existing, error: convErr } = await supabase
@@ -125,13 +144,14 @@ export async function POST(req: NextRequest) {
           } else {
             const { data: history, error: histErr } = await supabase
               .from("ernie_messages")
-              .select("role, content")
+              .select("role, content, file_ids")
               .eq("conversation_id", conversationId)
               .order("created_at", { ascending: true });
             if (histErr) throw histErr;
             priorMessages = (history ?? []).map((m) => ({
               role: m.role as "user" | "assistant",
               text: m.content,
+              file_ids: m.file_ids ?? [],
             }));
           }
         }
@@ -139,7 +159,7 @@ export async function POST(req: NextRequest) {
         if (!conversationId) {
           const { data: created, error: createErr } = await supabase
             .from("ernie_conversations")
-            .insert({ user_id: user.id, title: titleFromMessage(newMessageText) })
+            .insert({ user_id: user.id, title: titleFromMessage(newMessageText || "Uploaded file") })
             .select("id")
             .single();
           if (createErr) throw createErr;
@@ -149,19 +169,70 @@ export async function POST(req: NextRequest) {
         const { error: insertUserErr } = await supabase.from("ernie_messages").insert({
           conversation_id: conversationId,
           role: "user",
-          content: newMessageText,
+          content: newMessageText || "(no message — file attached)",
+          file_ids: newFileIds,
         });
         if (insertUserErr) throw insertUserErr;
 
-        const allMessages: ChatMessage[] = [...priorMessages, { role: "user", text: newMessageText }];
+        // Resolve every file_id referenced anywhere in this conversation
+        // (history + the new message) into filenames in one batch query, so
+        // a short "[Attached: x.xlsx]" note can be appended to whichever
+        // historical message(s) had attachments — Ernie gets a persistent
+        // crumb that a file was there even on a much later turn, without
+        // re-sending every file's full contents every round. The full
+        // contents of anything from earlier are still just a
+        // read_uploaded_file call away.
+        const allMessages: StoredMessage[] = [
+          ...priorMessages,
+          { role: "user", text: newMessageText || "(no message — file attached)", file_ids: newFileIds },
+        ];
+        const allReferencedIds = Array.from(new Set(allMessages.flatMap((m) => m.file_ids)));
+        const fileNameById = new Map<string, string>();
+        if (allReferencedIds.length > 0) {
+          const { data: fileRows } = await supabase
+            .from("ernie_files")
+            .select("id, file_name")
+            .in("id", allReferencedIds);
+          for (const f of fileRows ?? []) fileNameById.set(f.id, f.file_name);
+        }
+
+        function historicalText(m: StoredMessage): string {
+          if (!m.file_ids.length) return m.text;
+          const names = m.file_ids.map((id) => fileNameById.get(id) ?? "a file").join(", ");
+          return `${m.text}\n\n[Attached: ${names}]`;
+        }
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic message content shape varies (string vs. content blocks) across the tool-use loop
-        const anthropicMessages: any[] = allMessages.map((m) => ({
-          role: m.role,
-          content: m.text,
-        }));
+        const anthropicMessages: any[] = [];
+        for (let i = 0; i < allMessages.length; i++) {
+          const m = allMessages[i];
+          const isCurrentTurn = i === allMessages.length - 1;
+          if (isCurrentTurn && m.file_ids.length > 0) {
+            // The message being answered right now: attach real file
+            // content (images/PDFs as native blocks, spreadsheets/CSV/text
+            // rendered to text), not just a filename note.
+            const fileRows = (
+              await supabase
+                .from("ernie_files")
+                .select("id, file_name, mime_type, size_bytes, storage_path")
+                .in("id", m.file_ids)
+            ).data;
+            const orderedRows = m.file_ids
+              .map((id) => (fileRows ?? []).find((f) => f.id === id))
+              .filter((f): f is NonNullable<typeof f> => Boolean(f));
+            const blockLists = await Promise.all(orderedRows.map((f) => buildFileContentBlocks(supabase, f)));
+            const fileBlocks = blockLists.flat();
+            anthropicMessages.push({
+              role: m.role,
+              content: [...fileBlocks, { type: "text", text: m.text }],
+            });
+          } else {
+            anthropicMessages.push({ role: m.role, content: historicalText(m) });
+          }
+        }
 
         let finalText = "";
+        const outputFileIds: string[] = [];
 
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
           // On the last round, force a plain-text answer instead of allowing
@@ -228,10 +299,32 @@ export async function POST(req: NextRequest) {
                     toolErr instanceof Error ? toolErr.message : "Tool lookup failed",
                 };
               }
+
+              // edit_spreadsheet's successful result carries the new
+              // output file's id — collect it so it can be attached to the
+              // persisted assistant message and surfaced to the client as
+              // a download chip, same as a freshly-uploaded file.
+              if (
+                block.name === "edit_spreadsheet" &&
+                result &&
+                typeof result === "object" &&
+                "id" in result &&
+                !("error" in (result as Record<string, unknown>))
+              ) {
+                outputFileIds.push((result as { id: string }).id);
+              }
+
+              // read_uploaded_file signals real Anthropic content blocks
+              // (which can include an image) via __contentBlocks rather
+              // than plain JSON, so those get passed through as the actual
+              // tool_result content array instead of being stringified
+              // into inert text — every other tool keeps the normal
+              // JSON-stringified path.
+              const maybeBlocks = (result as { __contentBlocks?: unknown })?.__contentBlocks;
               toolResults.push({
                 type: "tool_result",
                 tool_use_id: block.id,
-                content: JSON.stringify(result),
+                content: Array.isArray(maybeBlocks) ? maybeBlocks : JSON.stringify(result),
               });
             }
             anthropicMessages.push({ role: "user", content: toolResults });
@@ -257,6 +350,7 @@ export async function POST(req: NextRequest) {
           conversation_id: conversationId,
           role: "assistant",
           content: finalText,
+          file_ids: outputFileIds,
         });
         if (insertAssistantErr) throw insertAssistantErr;
 
@@ -267,7 +361,7 @@ export async function POST(req: NextRequest) {
           .update({ updated_at: new Date().toISOString() })
           .eq("id", conversationId);
 
-        send({ type: "done", text: finalText, conversationId });
+        send({ type: "done", text: finalText, conversationId, outputFileIds });
       } catch (err) {
         send({
           type: "error",
