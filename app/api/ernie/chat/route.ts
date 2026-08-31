@@ -27,6 +27,18 @@ import { buildFileContentBlocks } from "@/lib/ernie/files";
 // anything — but only a NEW file the user gets to download, never the
 // app's own database.
 //
+// get_file_for_download (added 2026-08-31) is a second, deliberately
+// generic way Ernie can hand someone a real file: given a bucket + path it
+// already found via run_read_only_query (e.g. a row in pos_label_files,
+// event_materials, or pos_library), it fetches that file and turns it into
+// a download chip — the SAME outputFileIds mechanism edit_spreadsheet uses
+// below. It's NOT admin-gated at the tool level; whether the fetch
+// succeeds is decided entirely by that bucket's own Row Level Security
+// evaluated against the caller's real session, so it automatically
+// respects whatever access rule is in force today (or after the
+// per-user/per-area permission system Chad's planning eventually replaces
+// admin/basic) with no changes needed here.
+//
 // The database (ernie_conversations / ernie_messages) is the source of
 // truth for conversation history — the client only ever sends the ONE new
 // message it wants to ask, plus which conversation it belongs to (omitted
@@ -301,11 +313,14 @@ export async function POST(req: NextRequest) {
               }
 
               // edit_spreadsheet's successful result carries the new
-              // output file's id — collect it so it can be attached to the
-              // persisted assistant message and surfaced to the client as
-              // a download chip, same as a freshly-uploaded file.
+              // output file's id, and get_file_for_download's successful
+              // result carries a reference to an existing file elsewhere
+              // in the app — either way, collect the id so it can be
+              // attached to the persisted assistant message and surfaced
+              // to the client as a download chip, same as a
+              // freshly-uploaded file.
               if (
-                block.name === "edit_spreadsheet" &&
+                (block.name === "edit_spreadsheet" || block.name === "get_file_for_download") &&
                 result &&
                 typeof result === "object" &&
                 "id" in result &&

@@ -11,7 +11,10 @@ import { createClient } from "@/lib/supabase/server";
 // Each message's attached/produced files (added 2026-08-31) are resolved
 // into real file metadata here (RLS on ernie_files scopes this to the
 // caller's own files too) so reopening an old conversation still shows
-// download chips for whatever was uploaded or produced in it.
+// download chips for whatever was uploaded or produced in it. source_bucket
+// (added 2026-08-31) is included so a file Ernie fetched from elsewhere in
+// the app (e.g. via get_file_for_download) still downloads from wherever
+// it actually lives, not from the default ernie-files bucket.
 
 export async function GET(
   _req: NextRequest,
@@ -53,12 +56,18 @@ export async function GET(
   const allFileIds = Array.from(new Set((messages ?? []).flatMap((m) => m.file_ids ?? [])));
   const filesById = new Map<
     string,
-    { id: string; file_name: string; mime_type: string | null; size_bytes: number | null }
+    {
+      id: string;
+      file_name: string;
+      mime_type: string | null;
+      size_bytes: number | null;
+      source_bucket: string | null;
+    }
   >();
   if (allFileIds.length > 0) {
     const { data: fileRows } = await supabase
       .from("ernie_files")
-      .select("id, file_name, mime_type, size_bytes")
+      .select("id, file_name, mime_type, size_bytes, source_bucket")
       .in("id", allFileIds);
     for (const f of fileRows ?? []) filesById.set(f.id, f);
   }

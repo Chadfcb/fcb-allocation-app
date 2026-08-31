@@ -64,6 +64,12 @@ interface ErnieFile {
   mime_type: string | null;
   size_bytes: number | null;
   storage_path: string;
+  // Which Storage bucket storage_path actually lives in. Null/undefined
+  // means the default "ernie-files" bucket (every file the user uploads,
+  // and every spreadsheet Ernie edits) — only set when Ernie fetched this
+  // via get_file_for_download from some OTHER part of the app (e.g. a POS
+  // label file), where the bytes were never copied, just referenced.
+  source_bucket?: string | null;
 }
 
 interface ChatMessage {
@@ -296,7 +302,11 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
   async function handleDownloadFile(f: ErnieFile) {
     setDownloadingId(f.id);
     try {
-      const { data } = await supabase.storage.from(ERNIE_FILES_BUCKET).createSignedUrl(f.storage_path, 300);
+      // A file Ernie fetched from elsewhere in the app (source_bucket set)
+      // lives in that original bucket, never copied into ernie-files —
+      // download from wherever it actually is.
+      const bucket = f.source_bucket || ERNIE_FILES_BUCKET;
+      const { data } = await supabase.storage.from(bucket).createSignedUrl(f.storage_path, 300);
       if (!data?.signedUrl) return;
       const res = await fetch(data.signedUrl);
       const blob = await res.blob();
@@ -412,7 +422,7 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
             if (event.outputFileIds && event.outputFileIds.length > 0) {
               const { data } = await supabase
                 .from("ernie_files")
-                .select("id, file_name, mime_type, size_bytes, storage_path")
+                .select("id, file_name, mime_type, size_bytes, storage_path, source_bucket")
                 .in("id", event.outputFileIds);
               outputFiles = (data as ErnieFile[] | null) ?? undefined;
             }

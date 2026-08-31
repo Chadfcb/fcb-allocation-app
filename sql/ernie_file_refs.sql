@@ -1,0 +1,31 @@
+-- Lets Ernie fetch and hand back files that already live in OTHER parts of
+-- the app (e.g. an existing row in pos_label_files, event_materials, or
+-- pos_library) — not just files a user uploaded directly to Ernie, or a
+-- spreadsheet Ernie itself edited. Added 2026-08-31 per Chad: "pos may not
+-- be the only place we end up having files stored... but either way, we
+-- need ernie to have the ability to pull files and present them if asked."
+--
+-- Rather than copying another feature's bytes into the "ernie-files"
+-- bucket every time someone asks Ernie for one, this adds a single nullable
+-- column recording which bucket a given ernie_files row's storage_path
+-- actually lives in. A null value (every row created before this migration,
+-- and every future upload/edited-spreadsheet row) means the default
+-- "ernie-files" bucket — no existing code or data needs to change. A
+-- non-null value marks a genuine external reference: the file's bytes stay
+-- exactly where they already were, never duplicated, and the ernie_files
+-- row is just a lightweight breadcrumb ("Ernie handed this user a link to
+-- this file in this conversation") for the download-chip UI and for
+-- reopening a past conversation later.
+--
+-- Access control is NOT enforced by this table or column — it's enforced by
+-- the real Row Level Security on whichever bucket/table the file actually
+-- came from, evaluated against the caller's own session at the moment the
+-- file is fetched (see get_file_for_download in lib/ernie/tools.ts). That's
+-- deliberate: it means this needs no changes at all when the admin/basic
+-- role split is eventually replaced by the granular per-user, per-area
+-- permission system Chad's planning — whatever that system ends up
+-- enforcing on a given bucket is what this automatically inherits.
+--
+-- Idempotent — safe to re-run.
+
+alter table ernie_files add column if not exists source_bucket text;

@@ -389,3 +389,69 @@ export async function applySpreadsheetEdits(
 
   return { ...inserted, note };
 }
+
+// get_file_for_download's implementation (added 2026-08-31, Chad: "pos may
+// not be the only place we end up having files stored... but either way,
+// we need ernie to have the ability to pull files and present them if
+// asked"). Deliberately generic and feature-agnostic: it doesn't know or
+// care whether the file came from POS > Labels, an event's materials, the
+// shared POS library, or something built after this — Ernie itself finds
+// the bucket + storage_path first (via run_read_only_query against
+// whatever table holds that library) and just hands both to this function.
+//
+// Whether the download actually succeeds is decided entirely by that
+// bucket's own Row Level Security, evaluated against the caller's real,
+// request-scoped session — never a service-role bypass. That's what makes
+// this safe to leave un-gated (not in ADMIN_ONLY_TOOL_NAMES): a Basic user
+// calling this against an admin-only bucket like pos-label-files simply
+// gets an access error back from Storage, the exact same way a raw
+// run_read_only_query against an admin-only table comes back empty. It
+// also means this function needs no changes at all once the admin/basic
+// split is replaced by a real per-user, per-area permission system —
+// whatever RLS ends up enforcing on that bucket is what this inherits
+// automatically.
+//
+// The file's bytes are never copied into Ernie's own "ernie-files" bucket —
+// only a lightweight ernie_files row is created (direction: "output",
+// source_bucket: the ORIGINAL bucket, storage_path: the ORIGINAL path) so
+// the chat UI's existing download-chip machinery can resolve it later,
+// including after reopening a past conversation.
+export async function fetchExternalFileForDownload(
+  supabase: SupabaseClient,
+  userId: string,
+  bucket: string,
+  path: string,
+  fileName?: string,
+): Promise<{ id: string; file_name: string; mime_type: string | null; size_bytes: number; note: string }> {
+  if (!bucket.trim() || !path.trim()) {
+    throw new Error("Both a bucket and a path are required.");
+  }
+
+  const { data, error } = await supabase.storage.from(bucket).download(path);
+  if (error || !data) {
+    throw new Error(
+      "Couldn't fetch that file — either it doesn't exist, or you don't currently have access to it.",
+    );
+  }
+  const buffer = Buffer.from(await data.arrayBuffer());
+  const finalName = fileName?.trim() || path.split("/").pop() || path;
+
+  const { data: inserted, error: insertErr } = await supabase
+    .from("ernie_files")
+    .insert({
+      user_id: userId,
+      direction: "output",
+      source_bucket: bucket,
+      file_name: finalName,
+      mime_type: null,
+      size_bytes: buffer.length,
+      storage_path: path,
+    })
+    .select("id, file_name, mime_type, size_bytes")
+    .single();
+  if (insertErr) {
+    throw new Error(`Found the file but couldn't prepare it for download: ${insertErr.message}`);
+  }
+
+  return { ...inserted, note: `Ready to download: "${finalName}".` };
+}

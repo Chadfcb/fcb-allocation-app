@@ -28,6 +28,21 @@
 // ernie_files plus a per-user Storage folder policy (sql/ernie_files.sql)
 // keeps everyone to their own files, same as ernie_conversations/messages.
 //
+// get_file_for_download (added 2026-08-31, Chad: "pos may not be the only
+// place we end up having files stored... but either way, we need ernie to
+// have the ability to pull files and present them if asked") is a second,
+// deliberately generic way Ernie hands someone a real file — not something
+// they uploaded to Ernie, but a file that already exists elsewhere in the
+// app (a POS label file, event material, etc.), found first via
+// run_read_only_query. It isn't in ADMIN_ONLY_TOOL_NAMES below, because it
+// doesn't need to be: whether the fetch actually succeeds is decided
+// entirely by that bucket's own Row Level Security, evaluated against the
+// caller's real session (see fetchExternalFileForDownload in
+// lib/ernie/files.ts) — the same "admin-only data just comes back empty/
+// denied" pattern as run_read_only_query, and one that needs zero changes
+// when the admin/basic split is eventually replaced by a real per-user,
+// per-area permission system.
+//
 // Ernie itself runs on Anthropic's Claude API under the hood; nothing about
 // that should surface in user-facing text (see ERNIE_SYSTEM_PROMPT below).
 
@@ -37,7 +52,12 @@ import { PRICE_LIST_PACKAGE_KEYS, PRICE_LIST_PACKAGE_LABELS } from "@/lib/types/
 import { calcPackagingCost, OVERVIEW_BATCH_BBLS, OVERVIEW_PACKAGE_YIELDS } from "@/lib/costPerCase";
 import { PKG_META, calcPkg, calcBatchCan, calcBatchKeg } from "@/lib/marginAnalysis";
 import { computeContributionMarginLine } from "@/lib/contributionMargin";
-import { buildFileContentBlocks, applySpreadsheetEdits, type SpreadsheetEditInput } from "@/lib/ernie/files";
+import {
+  buildFileContentBlocks,
+  applySpreadsheetEdits,
+  fetchExternalFileForDownload,
+  type SpreadsheetEditInput,
+} from "@/lib/ernie/files";
 
 // Several Sales pages show numbers that are NOT stored in the database —
 // they're computed live in the browser from several tables at once (see
@@ -198,7 +218,9 @@ Key tables and their columns:
 - distributor_par_levels(distributor_id, product_id, par_level) / build_order_recommendations(week_id, distributor_id, product_id, recommended_qty) [admin-only]
 - purchase_orders(id, supplier, po_date, expected_delivery_date, total_cost, payment_status, ordered_status, comments) / purchase_order_items(purchase_order_id, item, quantity, unit_cost, line_total) [admin-only]
 - events(id, title, type, start_date, end_date, time_label, location, distributor_id, rep, notes) [admin-only]
-- pos_label_files(brand, size, file_name, size_bytes, uploaded_at) [admin-only]
+- event_materials(id, event_id, file_name, storage_path, mime_type, size_bytes, uploaded_at) [admin-only] — files attached to one specific event; bucket is "event-materials"
+- pos_library(id, file_name, storage_path, mime_type, size_bytes, uploaded_at) [admin-only] — the shared POS materials library, not tied to any one event; same "event-materials" bucket
+- pos_label_files(id, brand, size, file_name, storage_path, mime_type, size_bytes, uploaded_at) [admin-only] — can/bottle label artwork; bucket is "pos-label-files"
 - profiles(id, full_name, email, role, created_at) [admin-only through this tool]
 
 Sales section tables (all admin-only, folded in from the old FCB Pricing desktop app):
@@ -212,7 +234,9 @@ Sales section tables (all admin-only, folded in from the old FCB Pricing desktop
 - batch_recipe_items(id, brand_id, ingredient_key, qty_per_bbl, unit, sort_order) — one row per ingredient in a brand's batch recipe, quantity per BBL of batch. This is Sales > Cost Per Case > Batch Ingredients: to answer "what are the batch ingredients and costs for N bbls of <brand>," join batch_recipe_items to ingredient_costs on ingredient_key, multiply qty_per_bbl * N * ingredient_costs.price for each ingredient's cost, and sum across a brand's rows for the batch total — N is whatever batch size was asked about, it does not have to match that brand's usual margin_analyses.yield_bbls
 - contribution_margin_lines(id, brand_id, package_key, revenue_per_ce) — revenue per case-equivalent, the one user-edited figure Contribution Margin needs; everything else there is computed from Cost Per Case's and Margin Analysis's tables
 
-Two Postgres functions already implement the exact packaging/label bill-of-materials math the Inventory & Allocation page uses — call them from SQL rather than re-deriving the recipe yourself: classify_product_packaging(product_name text) returns one of can_19_2oz/can_16oz/can_12oz/keg_1_2bbl/keg_1_6bbl/tap_handle/unrecognized; packaging_consumed_for_week(week_id uuid) returns a table(item_key, consumed) of total packaging consumed by that week's allocations (every distributor combined — join allocations yourself, filtered by distributor_id, if you need one distributor's share instead).`,
+Two Postgres functions already implement the exact packaging/label bill-of-materials math the Inventory & Allocation page uses — call them from SQL rather than re-deriving the recipe yourself: classify_product_packaging(product_name text) returns one of can_19_2oz/can_16oz/can_12oz/keg_1_2bbl/keg_1_6bbl/tap_handle/unrecognized; packaging_consumed_for_week(week_id uuid) returns a table(item_key, consumed) of total packaging consumed by that week's allocations (every distributor combined — join allocations yourself, filtered by distributor_id, if you need one distributor's share instead).
+
+Any table above with a storage_path column (event_materials, pos_library, pos_label_files today — there may be more as the app grows) is describing a real file, not just data. Querying one of those only tells you the file EXISTS — to actually hand it to the user as a download, call get_file_for_download with that row's storage_path and its bucket (event-materials for event_materials/pos_library, pos-label-files for pos_label_files). Whenever someone asks you to pull up, send them, or let them download a specific file — not just tell them about it — that's the tool to reach for.`,
     input_schema: {
       type: "object" as const,
       properties: {
@@ -284,6 +308,31 @@ Each edit is {sheet, cell, value}: sheet is the exact sheet name (omit for a CSV
       required: ["file_id", "edits"],
     },
   },
+  {
+    name: "get_file_for_download",
+    description:
+      `Fetch a file that already exists somewhere else in the app — found via run_read_only_query against a table with a storage_path column (event_materials, pos_library, pos_label_files today) — and hand it to the user as a real downloadable attachment in this chat, instead of just describing that it exists. Pass the exact bucket and storage_path from that row.
+
+Whether this succeeds depends entirely on whether YOU (the signed-in user asking) actually have access to that file, same as everywhere else in the app — an error back from this tool means access is restricted, not that anything is broken, so explain it that way rather than guessing at a bug. Use this any time someone asks you to pull up, send, or let them download a specific file.`,
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        bucket: {
+          type: "string",
+          description: 'The storage bucket name, e.g. "pos-label-files" or "event-materials".',
+        },
+        path: {
+          type: "string",
+          description: "The file's storage_path exactly as returned by the query that found it.",
+        },
+        file_name: {
+          type: "string",
+          description: "A human-readable file name to show the user. Omit to derive one from the path.",
+        },
+      },
+      required: ["bucket", "path"],
+    },
+  },
 ];
 
 // Tools whose underlying tables are admin-only in the app's own RLS policies
@@ -334,6 +383,7 @@ const TOOL_STATUS_LABELS: Record<string, string> = {
   list_uploaded_files: "Checking your uploaded files",
   read_uploaded_file: "Reading your uploaded file",
   edit_spreadsheet: "Editing your spreadsheet",
+  get_file_for_download: "Fetching that file",
 };
 
 export function describeErnieToolCall(name: string): string {
@@ -944,6 +994,30 @@ export async function runErnieTool(
       }
     }
 
+    case "get_file_for_download": {
+      // Deliberately NOT in ADMIN_ONLY_TOOL_NAMES — access is enforced by
+      // the target bucket's own RLS at fetch time (see
+      // fetchExternalFileForDownload in lib/ernie/files.ts), not by
+      // whether this tool is on offer, so it inherits whatever the real
+      // access rule is for THIS signed-in user without any special-casing
+      // here.
+      const bucket = typeof input.bucket === "string" ? input.bucket.trim() : "";
+      const path = typeof input.path === "string" ? input.path.trim() : "";
+      if (!bucket || !path) return { error: "Both bucket and path are required." };
+
+      const {
+        data: { user: currentUser },
+      } = await supabase.auth.getUser();
+      if (!currentUser) return { error: "Not signed in." };
+
+      try {
+        const fileName = typeof input.file_name === "string" ? input.file_name : undefined;
+        return await fetchExternalFileForDownload(supabase, currentUser.id, bucket, path, fileName);
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : "Couldn't fetch that file." };
+      }
+    }
+
     default:
       return { error: `Unknown tool "${name}"` };
   }
@@ -976,6 +1050,8 @@ On the Inventory & Allocation tools: each product (at the whole-inventory level)
 You also have run_read_only_query, a general-purpose tool that runs any read-only SQL SELECT against the app's own database — reach for it whenever a question isn't already covered by one of the specific tools above (for example: "do we have enough cans and lids on hand to cover this week's whole 16oz can order across every distributor", or any other cross-table or aggregate question) rather than guessing, refusing, or claiming you have no way to find out. Its own description lists the real table and column names to use, and two existing database functions (classify_product_packaging, packaging_consumed_for_week) that already implement the same packaging bill-of-materials math the Inventory page itself uses — call those instead of re-deriving the recipe from scratch. If a query comes back with zero rows for something that plausibly exists, that most often means this account doesn't have permission to see that data (see above), not that the data doesn't exist — say so rather than concluding there's nothing there. If a query is rejected outright (a database error message about what's not allowed), rewrite it as a single plain read-only SELECT and try again before giving up.
 
 Anyone can attach files to a message (drag-and-drop onto the chat, or the attach button) — a freshly-attached file's contents are included automatically, with no tool call needed. Images, PDFs, spreadsheets (.xlsx), CSV, and plain text files are all read directly; any other file type can still be uploaded but you can't read its contents yet, so say that plainly rather than guessing what's in it. If someone refers to a file from earlier without re-attaching it, use list_uploaded_files to find it and read_uploaded_file to pull its contents back up (this works for everything except PDFs — ask for a PDF to be re-attached instead). For spreadsheets and CSV specifically, you can also edit them with edit_spreadsheet: read the file first so you know its real sheet names and current cell values, then give it the exact cells to change — it edits that file in place (preserving everything else: formatting, other sheets, formulas) and hands back a new file to download. Never claim you've edited or analyzed a file without actually having its contents in front of you.
+
+You can also pull up and hand over files that already exist elsewhere in the app — not just files someone uploaded directly to you. If a question is really "get me this file" (e.g. POS materials for a brand, an event's attached files) rather than "look up this data," use run_read_only_query to find the matching row(s) in whatever table holds that library (see the schema notes on run_read_only_query for which tables have files and what bucket each uses), then call get_file_for_download with that row's bucket and storage_path to actually hand it over as a download — don't just describe that the file exists. Whether that succeeds depends on your own access to that file, exactly like every other data lookup; an error back from it means access is restricted for this account, not that something is broken.
 
 Be direct and brief. Answer exactly what was asked — a specific question gets a specific, short answer, not a full data dump of everything related to it. Only include extra context (other SKUs, other distributors, caveats, etc.) if it's clearly relevant to what they're trying to find out, or if they asked for a fuller breakdown. When asked a question, use the tools to pull real current data rather than guessing. Cite specific numbers/names from the tool results. If a question is ambiguous about which week it refers to, use the current open week by default and say which week you used. If you genuinely can't find an answer after checking, say so plainly and suggest what to try instead — don't go quiet.
 
