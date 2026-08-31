@@ -1,8 +1,18 @@
 // Read-only data tools for Ernie (the in-app AI assistant, see
-// app/api/ernie/chat/route.ts). Each tool is a narrow, purpose-built query
-// against one slice of the app's data — never a raw/arbitrary SQL executor —
-// so Ernie can only ever read exactly what these functions expose, joined
-// and shaped in plain JS. Nothing here writes to the database.
+// app/api/ernie/chat/route.ts). Nothing here writes to the database. Most
+// of these tools are narrow, purpose-built queries against one slice of
+// the app's data, shaped in plain JS — but "run_read_only_query" (see its
+// case below) is a deliberate exception: a general-purpose read-only SQL
+// tool, added 2026-08-31 after enough one-off narrow tools had been
+// hand-built that Chad asked for a genuinely versatile one instead
+// ("the more versatile the tool the better"). It calls the
+// `ernie_readonly_query` Postgres function (sql/ernie_readonly_query.sql)
+// with `security invoker`, so it runs as the actual signed-in user and is
+// bound by the exact same Row Level Security policies as anything else —
+// a Basic user's query against admin-only data comes back empty there too,
+// same as everywhere else in the app. See that SQL file for the full
+// safety writeup (statement-shape checks, the profiles carve-out, schema
+// blocks, row cap, timeout).
 //
 // Ernie itself runs on Anthropic's Claude API under the hood; nothing about
 // that should surface in user-facing text (see ERNIE_SYSTEM_PROMPT below).
@@ -151,6 +161,54 @@ export const ERNIE_TOOLS = [
       },
     },
   },
+  {
+    name: "run_read_only_query",
+    description:
+      `Run any read-only Postgres SELECT query against the app's own database to answer a question none of the other tools already cover — join, filter, group, or aggregate across whatever tables this signed-in user is allowed to see. Prefer a more specific tool above when one already answers the question directly; reach for this whenever it doesn't, instead of guessing or saying you can't help.
+
+Permissions work exactly like the rest of the app: this runs as the actual signed-in user, so the database's own row-level security applies automatically — a Basic user's query against an admin-only table (purchase_orders, distributor_inventory, build_order_recommendations, events, pricing_brands/brand_price_list/margin_analyses/margin_analysis_packages/packaging_components/ingredient_costs/package_labor_costs/batch_recipe_items/contribution_margin_lines, pos_label_files) simply comes back with zero rows — that almost always means "this account doesn't have access to that," not "no such thing exists," so say so rather than concluding nothing exists. A non-admin's query mentioning the profiles table is rejected outright (that table holds the full user list, which stays admin-only). Only a single SELECT (or WITH ... SELECT) statement is allowed — no INSERT/UPDATE/DELETE/DDL, no semicolons, capped at 500 rows, an 8 second timeout.
+
+Key tables and their columns:
+- weeks(id, label, week_start, status, previous_week_id)
+- products(id, name, sku, avg_price, active, sort_order)
+- distributors(id, name, active, track_inventory, sort_order)
+- inventory_snapshots(id, week_id, product_id, on_hand, unlabeled, to_be_packaged, status_flag) — or the inventory_with_remaining view, same columns plus a computed "remaining" (total minus all allocations)
+- allocations(id, week_id, distributor_id, product_id, quantity, status_flag) — status_flag on both tables is one of good_confirmed/dont_have/have_some/need_to_package/need_pakteks/need_labels/need_cans/need_kegs
+- distributor_pos(week_id, distributor_id, po_number, po_status) — po_status is approved/pending/delivered
+- distributor_prices(distributor_id, product_id, price)
+- packaging_inventory(week_id, item_key, on_hand_qty) — item_key is one of cans_19_2oz/cans_16oz/cans_12oz/pakteks_4pack/pakteks_6pack/trays_12_16oz/trays_19oz/lids_202/kegs_1_6bbl/kegs_1_2bbl
+- label_inventory(week_id, product_id, on_hand_qty) — one row of on-hand labels per product per week
+- custom_packaging_items(id, name, active) / custom_packaging_inventory(week_id, item_id, on_hand_qty), and the same shape for custom_label_items / custom_label_inventory — freeform items beyond the fixed list above
+- distributor_inventory(week_id, distributor_id, product_id, on_hand_qty, rate_of_sale, source) [admin-only]
+- distributor_par_levels(distributor_id, product_id, par_level) / build_order_recommendations(week_id, distributor_id, product_id, recommended_qty) [admin-only]
+- purchase_orders(id, supplier, po_date, expected_delivery_date, total_cost, payment_status, ordered_status, comments) / purchase_order_items(purchase_order_id, item, quantity, unit_cost, line_total) [admin-only]
+- events(id, title, type, start_date, end_date, time_label, location, distributor_id, rep, notes) [admin-only]
+- pos_label_files(brand, size, file_name, size_bytes, uploaded_at) [admin-only]
+- profiles(id, full_name, email, role, created_at) [admin-only through this tool]
+
+Sales section tables (all admin-only, folded in from the old FCB Pricing desktop app):
+- pricing_brands(id, name, sort_order, active, company) — one row per brand; company groups a brand under a parent for Contribution Margin, null for brands outside that feature's scope
+- brand_price_list(id, brand_id, package_key, price) — Price List: what's charged per package format, package_key one of 6pk/4pack/single/sixth/half
+- margin_analyses(id, brand_id, batch_cost, yield_bbls) — one row per brand: total cost and BBL yield of that brand's standard batch (yield_bbls defaults to 30)
+- margin_analysis_packages(id, analysis_id, package_key, enabled, ptr, ptd, pack_cost, labor, yield_amt) — per-package overrides off a margin_analyses row; a null pack_cost/labor/yield_amt means "use the standard default for that format," not zero
+- packaging_components(component_key, label, category, price) — unit prices for cans/lids/trays/pakteks and the rest of Cost Per Case's fixed packaging composition
+- ingredient_costs(id, category_key, ingredient_key, name, unit, price) — unit price per raw ingredient; category_key is one of yeast/grain/hops/flavoring/other
+- package_labor_costs(package_key, labor) — labor cost per package format
+- batch_recipe_items(id, brand_id, ingredient_key, qty_per_bbl, unit, sort_order) — one row per ingredient in a brand's batch recipe, quantity per BBL of batch. This is Sales > Cost Per Case > Batch Ingredients: to answer "what are the batch ingredients and costs for N bbls of <brand>," join batch_recipe_items to ingredient_costs on ingredient_key, multiply qty_per_bbl * N * ingredient_costs.price for each ingredient's cost, and sum across a brand's rows for the batch total — N is whatever batch size was asked about, it does not have to match that brand's usual margin_analyses.yield_bbls
+- contribution_margin_lines(id, brand_id, package_key, revenue_per_ce) — revenue per case-equivalent, the one user-edited figure Contribution Margin needs; everything else there is computed from Cost Per Case's and Margin Analysis's tables
+
+Two Postgres functions already implement the exact packaging/label bill-of-materials math the Inventory & Allocation page uses — call them from SQL rather than re-deriving the recipe yourself: classify_product_packaging(product_name text) returns one of can_19_2oz/can_16oz/can_12oz/keg_1_2bbl/keg_1_6bbl/tap_handle/unrecognized; packaging_consumed_for_week(week_id uuid) returns a table(item_key, consumed) of total packaging consumed by that week's allocations (every distributor combined — join allocations yourself, filtered by distributor_id, if you need one distributor's share instead).`,
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        query: {
+          type: "string",
+          description: "A single read-only Postgres SELECT statement (or WITH ... SELECT). No semicolons.",
+        },
+      },
+      required: ["query"],
+    },
+  },
 ];
 
 // Tools whose underlying tables are admin-only in the app's own RLS policies
@@ -197,6 +255,7 @@ const TOOL_STATUS_LABELS: Record<string, string> = {
   get_pos_label_files: "Checking label files",
   get_users: "Checking the user list",
   search_past_conversations: "Searching past conversations",
+  run_read_only_query: "Running a custom data lookup",
 };
 
 export function describeErnieToolCall(name: string): string {
@@ -730,6 +789,21 @@ export async function runErnieTool(
       }));
     }
 
+    case "run_read_only_query": {
+      // All the real safety enforcement lives in the ernie_readonly_query
+      // Postgres function itself (sql/ernie_readonly_query.sql) — it runs
+      // `security invoker`, so this executes as the actual signed-in
+      // user and is bound by the same RLS policies as everything else in
+      // the app, plus its own statement-shape checks, the profiles
+      // carve-out, schema blocks, row cap, and timeout. This case is just
+      // the thin call-through.
+      const query = (input.query as string | undefined)?.trim();
+      if (!query) return { error: "No query provided." };
+      const { data, error } = await supabase.rpc("ernie_readonly_query", { query_text: query });
+      if (error) throw error;
+      return data;
+    }
+
     default:
       return { error: `Unknown tool "${name}"` };
   }
@@ -742,8 +816,8 @@ export async function runErnieTool(
 // Ernie doesn't actually have for that user.
 export function buildErnieSystemPrompt(isAdmin: boolean): string {
   const dataAccessParagraph = isAdmin
-    ? `You can read data — inventory, allocations, distributors, distributor-reported inventory, Build Orders, the Events Calendar, purchase orders, Sales/pricing data, POS label files, and the app's user list — via the tools available to you. You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`
-    : `You can read inventory and allocations data — on-hand/unlabeled/to-be-packaged/remaining quantities, per-distributor allocations, PO numbers and status, and distributor pricing (so order value can be computed) — and the distributor list, via the tools available to you. This is the same data this user can already see on the app's Inventory & Allocation page. You do NOT have access to purchase orders, Sales/pricing data, distributor-reported on-hand inventory, Build Orders, the Events Calendar, POS label files, or the list of app users — those are admin-only areas of the app. If someone asks about any of those, say plainly that you don't have access to that and they should check with an admin, rather than guessing or refusing to engage. You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`;
+    ? `You can read data — inventory, allocations, distributors, distributor-reported inventory, Build Orders, the Events Calendar, purchase orders, Sales/pricing data, POS label files, and the app's user list — via the tools available to you, plus a general-purpose read-only database query tool (run_read_only_query) for anything the specific tools don't already cover. You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`
+    : `You can read inventory and allocations data — on-hand/unlabeled/to-be-packaged/remaining quantities, per-distributor allocations, PO numbers and status, and distributor pricing (so order value can be computed) — and the distributor list, via the tools available to you. This is the same data this user can already see on the app's Inventory & Allocation page. You also have a general-purpose read-only database query tool (run_read_only_query) for anything the specific tools don't already cover — it runs with this same user's own database permissions, so it naturally reaches only the same data they already have access to elsewhere, never more. You do NOT have access to purchase orders, Sales/pricing data, distributor-reported on-hand inventory, Build Orders, the Events Calendar, POS label files, or the list of app users — those are admin-only areas of the app, and a query touching them will simply come back empty rather than erroring, no matter how it's phrased. If someone asks about any of those, say plainly that you don't have access to that and they should check with an admin, rather than guessing or refusing to engage. You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`;
 
   return `You are Ernie, an internal AI assistant built into FCB Data (Full Circle Brewing Co.'s inventory/allocations/operations app), available to every signed-in user.
 
@@ -758,6 +832,8 @@ You also have live web search. Use it for anything that could have changed since
 You also have a tool to search this same signed-in user's own past Ernie conversations (never anyone else's) — reach for it whenever someone refers to something discussed earlier, asks you to recall a previous conversation, or a question seems to depend on context from before this chat. Don't assume you have no memory of anything outside the current conversation; check past conversations first if there's any chance the answer is there.
 
 On the Inventory & Allocation tools: each product (at the whole-inventory level) and each distributor's allocation of that product carries a status_flag — one of good_confirmed (on hand, confirmed), dont_have, have_some, need_to_package, need_pakteks, need_labels, need_cans, or need_kegs. This is the direct, already-tracked answer to "what does distributor X's order still need" or "what needs to be packaged for X" — filter that distributor's allocations by status_flag rather than trying to infer a shortfall yourself from on-hand/remaining numbers, and say plainly if nothing is currently flagged that way rather than treating an empty result as a failure to answer.
+
+You also have run_read_only_query, a general-purpose tool that runs any read-only SQL SELECT against the app's own database — reach for it whenever a question isn't already covered by one of the specific tools above (for example: "do we have enough cans and lids on hand to cover this week's whole 16oz can order across every distributor", or any other cross-table or aggregate question) rather than guessing, refusing, or claiming you have no way to find out. Its own description lists the real table and column names to use, and two existing database functions (classify_product_packaging, packaging_consumed_for_week) that already implement the same packaging bill-of-materials math the Inventory page itself uses — call those instead of re-deriving the recipe from scratch. If a query comes back with zero rows for something that plausibly exists, that most often means this account doesn't have permission to see that data (see above), not that the data doesn't exist — say so rather than concluding there's nothing there. If a query is rejected outright (a database error message about what's not allowed), rewrite it as a single plain read-only SELECT and try again before giving up.
 
 Be direct and brief. Answer exactly what was asked — a specific question gets a specific, short answer, not a full data dump of everything related to it. Only include extra context (other SKUs, other distributors, caveats, etc.) if it's clearly relevant to what they're trying to find out, or if they asked for a fuller breakdown. When asked a question, use the tools to pull real current data rather than guessing. Cite specific numbers/names from the tool results. If a question is ambiguous about which week it refers to, use the current open week by default and say which week you used. If you genuinely can't find an answer after checking, say so plainly and suggest what to try instead — don't go quiet.
 
