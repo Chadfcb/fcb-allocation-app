@@ -137,6 +137,20 @@ export const ERNIE_TOOLS = [
       properties: {},
     },
   },
+  {
+    name: "search_past_conversations",
+    description:
+      "Search THIS SAME signed-in user's own past Ernie conversations (every conversation except the current one) for messages matching a keyword or phrase. Use this whenever someone refers to something discussed earlier, asks you to recall a previous conversation, or a question seems to depend on context from before this chat (e.g. \"like I asked last week\", \"what did you tell me about X before\", \"pull up that conversation about...\"). Omit the query to just list recent past conversations instead of searching by keyword. Never returns any other user's conversations — only this one's.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        query: {
+          type: "string",
+          description: "Keyword or phrase to search for in past messages. Omit to list recent past conversations instead.",
+        },
+      },
+    },
+  },
 ];
 
 // Tools whose underlying tables are admin-only in the app's own RLS policies
@@ -164,6 +178,29 @@ export function getErnieTools(isAdmin: boolean) {
   return isAdmin
     ? ERNIE_TOOLS
     : ERNIE_TOOLS.filter((tool) => !ADMIN_ONLY_TOOL_NAMES.has(tool.name));
+}
+
+// Friendly, human-readable labels shown live in the chat UI while Ernie is
+// working (see app/api/ernie/chat/route.ts and ErnieChatClient.tsx) — never
+// the raw tool/function name. Anthropic's own hosted "web_search" isn't one
+// of ERNIE_TOOLS (it's a server-side tool Anthropic runs itself), so it's
+// handled as a special case wherever this is called from.
+const TOOL_STATUS_LABELS: Record<string, string> = {
+  list_weeks: "Checking delivery weeks",
+  get_inventory_and_allocations: "Checking inventory & allocations",
+  get_distributor_inventory: "Checking distributor-reported inventory",
+  get_build_orders: "Checking Build Orders",
+  get_distributors: "Checking the distributor list",
+  get_purchase_orders: "Checking purchase orders",
+  get_events: "Checking the events calendar",
+  get_pricing_data: "Checking Sales & pricing data",
+  get_pos_label_files: "Checking label files",
+  get_users: "Checking the user list",
+  search_past_conversations: "Searching past conversations",
+};
+
+export function describeErnieToolCall(name: string): string {
+  return TOOL_STATUS_LABELS[name] ?? "Looking something up";
 }
 
 async function resolveWeek(supabase: SupabaseClient, weekLabel?: string) {
@@ -206,6 +243,7 @@ export async function runErnieTool(
   name: string,
   input: Record<string, unknown>,
   isAdmin: boolean,
+  currentConversationId?: string,
 ): Promise<unknown> {
   // Defense in depth: getErnieTools() already keeps admin-only tools out of
   // a Basic user's tool list, so Claude has nothing to call here — but
@@ -645,6 +683,53 @@ export async function runErnieTool(
       return data;
     }
 
+    case "search_past_conversations": {
+      // RLS on ernie_messages/ernie_conversations already scopes both
+      // tables to this signed-in user's own rows, so there's no separate
+      // user-id filter to apply here — a Basic user searching their own
+      // history can never see another user's conversations, same as an
+      // admin can never see another admin's.
+      const query = (input.query as string | undefined)?.trim();
+      let messagesQuery = supabase
+        .from("ernie_messages")
+        .select("conversation_id, role, content, created_at")
+        .order("created_at", { ascending: false })
+        .limit(60);
+      if (currentConversationId) {
+        messagesQuery = messagesQuery.neq("conversation_id", currentConversationId);
+      }
+      if (query) {
+        messagesQuery = messagesQuery.ilike("content", `%${query}%`);
+      }
+      const { data: messages, error } = await messagesQuery;
+      if (error) throw error;
+
+      if (!messages || messages.length === 0) {
+        return {
+          results: [],
+          note: query
+            ? `No past messages matched "${query}".`
+            : "No past conversations found.",
+        };
+      }
+
+      const conversationIds = Array.from(new Set(messages.map((m) => m.conversation_id)));
+      const { data: conversations, error: convErr } = await supabase
+        .from("ernie_conversations")
+        .select("id, title, updated_at")
+        .in("id", conversationIds);
+      if (convErr) throw convErr;
+      const conversationsById = indexBy(conversations ?? [], "id");
+
+      return messages.map((m) => ({
+        conversation_title: conversationsById.get(m.conversation_id)?.title ?? "Untitled conversation",
+        conversation_last_updated: conversationsById.get(m.conversation_id)?.updated_at ?? null,
+        role: m.role,
+        message: m.content,
+        said_at: m.created_at,
+      }));
+    }
+
     default:
       return { error: `Unknown tool "${name}"` };
   }
@@ -670,7 +755,11 @@ You are NOT limited to app-data questions — answer general knowledge, how-to, 
 
 You also have live web search. Use it for anything that could have changed since your training — current events, today's prices, who currently holds some role, etc. — rather than guessing from memory. Don't mention that it's a "tool" or how it works; just search and answer.
 
-Be direct and brief. Answer exactly what was asked — a specific question gets a specific, short answer, not a full data dump of everything related to it. Only include extra context (other SKUs, other distributors, caveats, etc.) if it's clearly relevant to what they're trying to find out, or if they asked for a fuller breakdown. When asked a question, use the tools to pull real current data rather than guessing. Cite specific numbers/names from the tool results. If a question is ambiguous about which week it refers to, use the current open week by default and say which week you used.
+You also have a tool to search this same signed-in user's own past Ernie conversations (never anyone else's) — reach for it whenever someone refers to something discussed earlier, asks you to recall a previous conversation, or a question seems to depend on context from before this chat. Don't assume you have no memory of anything outside the current conversation; check past conversations first if there's any chance the answer is there.
+
+On the Inventory & Allocation tools: each product (at the whole-inventory level) and each distributor's allocation of that product carries a status_flag — one of good_confirmed (on hand, confirmed), dont_have, have_some, need_to_package, need_pakteks, need_labels, need_cans, or need_kegs. This is the direct, already-tracked answer to "what does distributor X's order still need" or "what needs to be packaged for X" — filter that distributor's allocations by status_flag rather than trying to infer a shortfall yourself from on-hand/remaining numbers, and say plainly if nothing is currently flagged that way rather than treating an empty result as a failure to answer.
+
+Be direct and brief. Answer exactly what was asked — a specific question gets a specific, short answer, not a full data dump of everything related to it. Only include extra context (other SKUs, other distributors, caveats, etc.) if it's clearly relevant to what they're trying to find out, or if they asked for a fuller breakdown. When asked a question, use the tools to pull real current data rather than guessing. Cite specific numbers/names from the tool results. If a question is ambiguous about which week it refers to, use the current open week by default and say which week you used. If you genuinely can't find an answer after checking, say so plainly and suggest what to try instead — don't go quiet.
 
 This chat only displays plain text — never use markdown formatting. No **bold**, no tables, no headers, no bullet/numbered lists, no backticks. Write in plain conversational sentences, the way you'd answer someone out loud. If you're listing a few items, just write them into a sentence (e.g. "Big Daddy IPA has 12 cases on hand; Mystic Haze, Prohibition, and Peachy Vibes are all at zero.") instead of a table or list.
 

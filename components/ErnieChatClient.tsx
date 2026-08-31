@@ -74,6 +74,10 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  // Live "what Ernie is doing right now" label (e.g. "Checking inventory &
+  // allocations"), driven by status events streamed from /api/ernie/chat —
+  // purely a live UI thing, never persisted with the conversation.
+  const [statusLabel, setStatusLabel] = useState<string | null>(null);
   const [initializing, setInitializing] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -184,6 +188,7 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
     setMessages((prev) => [...prev, { role: "user", text: trimmed }]);
     setInput("");
     setError(null);
+    setStatusLabel(null);
     setLoading(true);
 
     try {
@@ -195,25 +200,66 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
           message: trimmed,
         }),
       });
-      const data = await res.json();
 
-      if (!res.ok) {
+      // A handful of early failures (not signed in, no message, missing
+      // server API key) come back as a plain JSON error rather than a
+      // stream — everything else is Server-Sent Events, one event per line
+      // prefixed "data: ", ending in a "done" or "error" event.
+      const isStream = (res.headers.get("content-type") ?? "").includes("text/event-stream");
+      if (!res.ok || !isStream || !res.body) {
+        const data = await res.json().catch(() => ({}) as { error?: string });
         setError(data.error ?? "Something went wrong asking Ernie that.");
-        setLoading(false);
         return;
       }
 
-      setMessages((prev) => [...prev, { role: "assistant", text: data.text }]);
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let settled = false;
 
-      if (data.conversationId && data.conversationId !== conversationId) {
-        setConversationId(data.conversationId);
-        sessionStorage.setItem(ACTIVE_CONVERSATION_KEY, data.conversationId);
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let separatorIndex: number;
+        while ((separatorIndex = buffer.indexOf("\n\n")) !== -1) {
+          const rawEvent = buffer.slice(0, separatorIndex);
+          buffer = buffer.slice(separatorIndex + 2);
+          const dataLine = rawEvent.split("\n").find((line) => line.startsWith("data: "));
+          if (!dataLine) continue;
+
+          let event: { type?: string; label?: string; text?: string; conversationId?: string; error?: string };
+          try {
+            event = JSON.parse(dataLine.slice("data: ".length));
+          } catch {
+            continue;
+          }
+
+          if (event.type === "status" && event.label) {
+            setStatusLabel(event.label);
+          } else if (event.type === "done") {
+            settled = true;
+            setMessages((prev) => [...prev, { role: "assistant", text: event.text ?? "" }]);
+            if (event.conversationId && event.conversationId !== conversationId) {
+              setConversationId(event.conversationId);
+              sessionStorage.setItem(ACTIVE_CONVERSATION_KEY, event.conversationId);
+            }
+            refreshHistoryIfOpen();
+          } else if (event.type === "error") {
+            settled = true;
+            setError(event.error ?? "Something went wrong asking Ernie that.");
+          }
+        }
       }
 
-      refreshHistoryIfOpen();
+      if (!settled) {
+        setError("Ernie stopped responding before finishing — try asking again.");
+      }
     } catch {
       setError("Couldn't reach Ernie — check your connection and try again.");
     } finally {
+      setStatusLabel(null);
       setLoading(false);
     }
   }
@@ -373,7 +419,9 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
           <div className="flex items-center gap-2">
             {/* eslint-disable-next-line @next/next/no-img-element -- plain img keeps gif animation intact, and lets the src swap between the static frame and the animated gif */}
             <img src="/ernie/thinking.gif" alt="" className="h-[75px] w-[75px] shrink-0 object-contain" />
-            <p className="text-sm text-neutral-400">Ernie is thinking…</p>
+            <p className="text-sm text-neutral-400">
+              {statusLabel ? `${statusLabel}…` : "Ernie is thinking…"}
+            </p>
           </div>
         )}
 
