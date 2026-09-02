@@ -47,7 +47,20 @@ export default function PricingPage() {
         .select("role")
         .eq("id", user.id)
         .maybeSingle();
-      setIsAdmin(profile?.role === "admin");
+      // Section access replaces the old admin-only gate — see
+      // lib/permissions.ts. An admin still always gets in; a Basic user
+      // needs the "distributor_pricing" section granted from Users > Edit.
+      if (profile?.role === "admin") {
+        setIsAdmin(true);
+      } else {
+        const { data: grant } = await supabase
+          .from("user_section_access")
+          .select("section_key")
+          .eq("user_id", user.id)
+          .eq("section_key", "distributor_pricing")
+          .maybeSingle();
+        setIsAdmin(!!grant);
+      }
     }
 
     // Same product list, order, and brand dividers as the Inventory &
@@ -147,7 +160,8 @@ export default function PricingPage() {
   if (!isAdmin) {
     return (
       <p className="text-sm text-neutral-400">
-        Distributor Pricing is only available to admins.
+        You don&apos;t have access to Distributor Pricing. Ask an admin to
+        grant it from Users.
       </p>
     );
   }

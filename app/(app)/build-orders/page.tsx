@@ -107,7 +107,20 @@ export default function BuildOrdersPage() {
         .select("role")
         .eq("id", user.id)
         .maybeSingle();
-      setIsAdmin(profile?.role === "admin");
+      // Section access replaces the old admin-only gate — see
+      // lib/permissions.ts. An admin still always gets in; a Basic user
+      // needs the "build_orders" section granted from Users > Edit.
+      if (profile?.role === "admin") {
+        setIsAdmin(true);
+      } else {
+        const { data: grant } = await supabase
+          .from("user_section_access")
+          .select("section_key")
+          .eq("user_id", user.id)
+          .eq("section_key", "build_orders")
+          .maybeSingle();
+        setIsAdmin(!!grant);
+      }
     }
 
     const { data: weekData } = await supabase
@@ -637,7 +650,8 @@ export default function BuildOrdersPage() {
   if (!isAdmin) {
     return (
       <p className="text-sm text-neutral-400">
-        Build Orders is only available to admins.
+        You don&apos;t have access to Build Orders. Ask an admin to grant
+        it from Users.
       </p>
     );
   }

@@ -47,6 +47,8 @@
 // that should surface in user-facing text (see ERNIE_SYSTEM_PROMPT below).
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Role } from "@/lib/types/db";
+import { hasSection, hasAnySection, type AnySectionKey } from "@/lib/permissions";
 import type { PriceListPackageKey } from "@/lib/types/db";
 import { PRICE_LIST_PACKAGE_KEYS, PRICE_LIST_PACKAGE_LABELS } from "@/lib/types/db";
 import { calcPackagingCost, OVERVIEW_BATCH_BBLS, OVERVIEW_PACKAGE_YIELDS } from "@/lib/costPerCase";
@@ -354,12 +356,38 @@ const ADMIN_ONLY_TOOL_NAMES = new Set([
   "get_users",
 ]);
 
-// Role-aware tool list to hand to the Anthropic API — Basic users never see
-// (and so can never ask Ernie to call) the admin-only tools above.
-export function getErnieTools(isAdmin: boolean) {
-  return isAdmin
-    ? ERNIE_TOOLS
-    : ERNIE_TOOLS.filter((tool) => !ADMIN_ONLY_TOOL_NAMES.has(tool.name));
+// Which section(s) unlock each formerly-admin-only tool — mirrors the RLS
+// grouping in sql/user_section_access.sql. get_pricing_data covers Sales
+// broadly (it reuses the same calc functions all 4 Sales pages share), so
+// having ANY one Sales section is enough to ask Ernie about pricing/margin
+// data. get_users has no section — it stays hard admin-only, same as
+// today, since there's no "list every user" capability anywhere else in
+// the app for a Basic user to already have.
+const TOOL_SECTIONS: Record<string, AnySectionKey[] | null> = {
+  get_distributor_inventory: ["distributor_inventory", "build_orders"],
+  get_build_orders: ["build_orders"],
+  get_purchase_orders: ["purchase_orders"],
+  get_events: ["events_calendar"],
+  get_pricing_data: ["price_list", "margin_analysis", "cost_per_case", "contribution_margin"],
+  get_pos_label_files: ["pos_labels"],
+  get_users: null,
+};
+
+function canUseTool(name: string, role: Role | undefined, sections: AnySectionKey[]) {
+  if (!ADMIN_ONLY_TOOL_NAMES.has(name)) return true;
+  const allowedSections = TOOL_SECTIONS[name];
+  if (!allowedSections) return role === "admin";
+  return hasAnySection(role, sections, allowedSections);
+}
+
+// Section-aware tool list to hand to the Anthropic API — a Basic user
+// never sees (and so can never ask Ernie to call) a tool backed by a
+// section they haven't been granted. Ernie itself is gated separately, one
+// level up, by the "ernie_ai" section (see app/api/ernie/chat/route.ts) —
+// this function assumes that check already passed.
+export function getErnieTools(role: Role | undefined, sections: AnySectionKey[]) {
+  if (role === "admin") return ERNIE_TOOLS;
+  return ERNIE_TOOLS.filter((tool) => canUseTool(tool.name, role, sections));
 }
 
 // Friendly, human-readable labels shown live in the chat UI while Ernie is
@@ -429,15 +457,16 @@ export async function runErnieTool(
   supabase: SupabaseClient,
   name: string,
   input: Record<string, unknown>,
-  isAdmin: boolean,
+  role: Role | undefined,
+  sections: AnySectionKey[],
   currentConversationId?: string,
 ): Promise<unknown> {
-  // Defense in depth: getErnieTools() already keeps admin-only tools out of
-  // a Basic user's tool list, so Claude has nothing to call here — but
-  // enforce it at the data layer too rather than relying solely on what
-  // tools we handed the model.
-  if (ADMIN_ONLY_TOOL_NAMES.has(name) && !isAdmin) {
-    return { error: `Tool "${name}" is admin-only and not available to this user.` };
+  // Defense in depth: getErnieTools() already keeps a tool a user isn't
+  // granted out of their tool list, so Claude has nothing to call here —
+  // but enforce it at the data layer too rather than relying solely on
+  // what tools we handed the model.
+  if (!canUseTool(name, role, sections)) {
+    return { error: `Tool "${name}" isn't available to this user — the section it needs hasn't been granted.` };
   }
 
   switch (name) {
@@ -1028,10 +1057,38 @@ export async function runErnieTool(
 // user's prompt describes a narrower, accurate set of data Ernie can reach
 // for them (matching getErnieTools() above), rather than claiming access
 // Ernie doesn't actually have for that user.
-export function buildErnieSystemPrompt(isAdmin: boolean): string {
-  const dataAccessParagraph = isAdmin
-    ? `You can read data — inventory, allocations, distributors, distributor-reported inventory, Build Orders, the Events Calendar, purchase orders, Sales/pricing data, POS label files, and the app's user list — via the tools available to you, plus a general-purpose read-only database query tool (run_read_only_query) for anything the specific tools don't already cover. You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`
-    : `You can read inventory and allocations data — on-hand/unlabeled/to-be-packaged/remaining quantities, per-distributor allocations, PO numbers and status, and distributor pricing (so order value can be computed) — and the distributor list, via the tools available to you. This is the same data this user can already see on the app's Inventory & Allocation page. You also have a general-purpose read-only database query tool (run_read_only_query) for anything the specific tools don't already cover — it runs with this same user's own database permissions, so it naturally reaches only the same data they already have access to elsewhere, never more. You do NOT have access to purchase orders, Sales/pricing data, distributor-reported on-hand inventory, Build Orders, the Events Calendar, POS label files, or the list of app users — those are admin-only areas of the app, and a query touching them will simply come back empty rather than erroring, no matter how it's phrased. If someone asks about any of those, say plainly that you don't have access to that and they should check with an admin, rather than guessing or refusing to engage. You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`;
+const TOOL_SECTION_DESCRIPTIONS: [AnySectionKey[], string][] = [
+  [["distributor_inventory", "build_orders"], "distributor-reported inventory"],
+  [["build_orders"], "Build Orders"],
+  [["purchase_orders"], "purchase orders"],
+  [["events_calendar"], "the Events Calendar"],
+  [
+    ["price_list", "margin_analysis", "cost_per_case", "contribution_margin"],
+    "Sales/pricing data",
+  ],
+  [["pos_labels"], "POS label files"],
+];
+
+export function buildErnieSystemPrompt(role: Role | undefined, sections: AnySectionKey[]): string {
+  const dataAccessParagraph =
+    role === "admin"
+      ? `You can read data — inventory, allocations, distributors, distributor-reported inventory, Build Orders, the Events Calendar, purchase orders, Sales/pricing data, POS label files, and the app's user list — via the tools available to you, plus a general-purpose read-only database query tool (run_read_only_query) for anything the specific tools don't already cover. You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`
+      : (() => {
+          const granted = TOOL_SECTION_DESCRIPTIONS.filter(([keys]) =>
+            hasAnySection(role, sections, keys),
+          ).map(([, label]) => label);
+          const withheld = TOOL_SECTION_DESCRIPTIONS.filter(
+            ([keys]) => !hasAnySection(role, sections, keys),
+          ).map(([, label]) => label);
+
+          const grantedSentence = granted.length
+            ? ` You also have access to: ${granted.join(", ")} — same as this user can already see elsewhere in the app.`
+            : "";
+          const withheldAll = [...withheld, "the list of app users"];
+          const withheldSentence = ` You do NOT have access to: ${withheldAll.join(", ")} — those aren't areas of the app this user has been granted (the user list is admin-only regardless), and a query touching them will simply come back empty rather than erroring, no matter how it's phrased. If someone asks about any of those, say plainly that you don't have access to that and they should check with an admin, rather than guessing or refusing to engage.`;
+
+          return `You can read inventory and allocations data — on-hand/unlabeled/to-be-packaged/remaining quantities, per-distributor allocations, PO numbers and status, and distributor pricing (so order value can be computed) — and the distributor list, via the tools available to you. This is the same data this user can already see on the app's Inventory & Allocation page.${grantedSentence} You also have a general-purpose read-only database query tool (run_read_only_query) for anything the specific tools don't already cover — it runs with this same user's own database permissions, so it naturally reaches only the same data they already have access to elsewhere, never more.${withheldSentence} You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`;
+        })();
 
   return `You are Ernie, an internal AI assistant built into FCB Data (Full Circle Brewing Co.'s inventory/allocations/operations app), available to every signed-in user.
 

@@ -1,43 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getErnieTools, buildErnieSystemPrompt, runErnieTool, describeErnieToolCall } from "@/lib/ernie/tools";
-import { buildFileContentBlocks } from "@/lib/ernie/files";
+import { hasSection, getUserSections, ERNIE_SECTION } from "@/lib/permissions";
 
-// Ernie's chat backend. Open to every signed-in user, read-only against the
-// app's own data: this route calls Claude's Messages API directly (Ernie's
-// underlying model — never surfaced to the user) with a read-only set of
-// data tools (lib/ernie/tools.ts) it can call to look up real app data. No
-// tool here can write to the app's database. Which tools are on offer — and
-// what the system prompt tells Ernie it can/can't do — depends on the
-// caller's role: a Basic user only ever gets tools backed by tables their
-// own RLS policies already let them read elsewhere in the app (see
-// getErnieTools() and buildErnieSystemPrompt() in lib/ernie/tools.ts);
-// admin-only data (Purchase Orders, Sales/pricing, Distributor Inventory,
-// Build Orders, Events, POS Label Files, the user list) never reaches a
-// Basic user through Ernie.
-//
-// File attachments (added 2026-08-31): the client uploads a file straight
-// to Supabase Storage and inserts its own ernie_files row (see
-// ErnieChatClient.tsx — RLS keeps that to the caller's own files), then
-// just passes the resulting file_id(s) here alongside the message. This
-// route resolves those ids back into real file rows (RLS-scoped, so a
-// foreign id just comes back empty) and builds the actual content Claude
-// sees — image/PDF bytes natively, spreadsheets/CSV/text rendered to text.
-// edit_spreadsheet (lib/ernie/tools.ts) is the one tool that writes
-// anything — but only a NEW file the user gets to download, never the
-// app's own database.
-//
-// get_file_for_download (added 2026-08-31) is a second, deliberately
-// generic way Ernie can hand someone a real file: given a bucket + path it
-// already found via run_read_only_query (e.g. a row in pos_label_files,
-// event_materials, or pos_library), it fetches that file and turns it into
-// a download chip — the SAME outputFileIds mechanism edit_spreadsheet uses
-// below. It's NOT admin-gated at the tool level; whether the fetch
-// succeeds is decided entirely by that bucket's own Row Level Security
-// evaluated against the caller's real session, so it automatically
-// respects whatever access rule is in force today (or after the
-// per-user/per-area permission system Chad's planning eventually replaces
-// admin/basic) with no changes needed here.
+// Ernie's chat backend. Open to every signed-in user, read-only: this route
+// calls Claude's Messages API directly (Ernie's underlying model — never
+// surfaced to the user) with a read-only set of data tools
+// (lib/ernie/tools.ts) it can call to look up real app data. No tool here
+// can write to the database. Which tools are on offer — and what the system
+// prompt tells Ernie it can/can't do — depends on the caller's role: a
+// Basic user only ever gets tools backed by tables their own RLS policies
+// already let them read elsewhere in the app (see getErnieTools() and
+// buildErnieSystemPrompt() in lib/ernie/tools.ts); admin-only data (Purchase
+// Orders, Sales/pricing, Distributor Inventory, Build Orders, Events, POS
+// Label Files, the user list) never reaches a Basic user through Ernie.
 //
 // The database (ernie_conversations / ernie_messages) is the source of
 // truth for conversation history — the client only ever sends the ONE new
@@ -70,10 +46,9 @@ const WEB_SEARCH_TOOL = {
   max_uses: 5,
 };
 
-interface StoredMessage {
+interface ChatMessage {
   role: "user" | "assistant";
   text: string;
-  file_ids: string[];
 }
 
 function titleFromMessage(text: string) {
@@ -98,17 +73,24 @@ export async function POST(req: NextRequest) {
     .eq("id", user.id)
     .single();
 
-  const isAdmin = profile?.role === "admin";
+  const role = profile?.role;
+  const sections = role === "admin" ? [] : await getUserSections(supabase, user.id);
 
-  const body = (await req.json()) as {
-    conversationId?: string;
-    message?: string;
-    fileIds?: string[];
-  };
+  // Ernie is itself a grantable section (see lib/permissions.ts) — an admin
+  // always has it; a Basic user needs it explicitly checked from Users >
+  // Edit. Block the whole chat here rather than just filtering tools, since
+  // Chad was explicit some people may not get Ernie at all.
+  if (!hasSection(role, sections, ERNIE_SECTION)) {
+    return NextResponse.json(
+      { error: "Ernie isn't available on your account — ask an admin to grant Ernie AI access from Users." },
+      { status: 403 },
+    );
+  }
+
+  const body = (await req.json()) as { conversationId?: string; message?: string };
   const newMessageText = body.message?.trim();
-  const newFileIds = Array.isArray(body.fileIds) ? body.fileIds.filter((id) => typeof id === "string") : [];
 
-  if (!newMessageText && newFileIds.length === 0) {
+  if (!newMessageText) {
     return NextResponse.json({ error: "No message provided" }, { status: 400 });
   }
 
@@ -138,7 +120,7 @@ export async function POST(req: NextRequest) {
         // signed-in user's own conversations, so a stale/foreign id just
         // comes back empty).
         let conversationId = requestConversationId;
-        let priorMessages: StoredMessage[] = [];
+        let priorMessages: ChatMessage[] = [];
 
         if (conversationId) {
           const { data: existing, error: convErr } = await supabase
@@ -156,14 +138,13 @@ export async function POST(req: NextRequest) {
           } else {
             const { data: history, error: histErr } = await supabase
               .from("ernie_messages")
-              .select("role, content, file_ids")
+              .select("role, content")
               .eq("conversation_id", conversationId)
               .order("created_at", { ascending: true });
             if (histErr) throw histErr;
             priorMessages = (history ?? []).map((m) => ({
               role: m.role as "user" | "assistant",
               text: m.content,
-              file_ids: m.file_ids ?? [],
             }));
           }
         }
@@ -171,7 +152,7 @@ export async function POST(req: NextRequest) {
         if (!conversationId) {
           const { data: created, error: createErr } = await supabase
             .from("ernie_conversations")
-            .insert({ user_id: user.id, title: titleFromMessage(newMessageText || "Uploaded file") })
+            .insert({ user_id: user.id, title: titleFromMessage(newMessageText) })
             .select("id")
             .single();
           if (createErr) throw createErr;
@@ -181,70 +162,19 @@ export async function POST(req: NextRequest) {
         const { error: insertUserErr } = await supabase.from("ernie_messages").insert({
           conversation_id: conversationId,
           role: "user",
-          content: newMessageText || "(no message — file attached)",
-          file_ids: newFileIds,
+          content: newMessageText,
         });
         if (insertUserErr) throw insertUserErr;
 
-        // Resolve every file_id referenced anywhere in this conversation
-        // (history + the new message) into filenames in one batch query, so
-        // a short "[Attached: x.xlsx]" note can be appended to whichever
-        // historical message(s) had attachments — Ernie gets a persistent
-        // crumb that a file was there even on a much later turn, without
-        // re-sending every file's full contents every round. The full
-        // contents of anything from earlier are still just a
-        // read_uploaded_file call away.
-        const allMessages: StoredMessage[] = [
-          ...priorMessages,
-          { role: "user", text: newMessageText || "(no message — file attached)", file_ids: newFileIds },
-        ];
-        const allReferencedIds = Array.from(new Set(allMessages.flatMap((m) => m.file_ids)));
-        const fileNameById = new Map<string, string>();
-        if (allReferencedIds.length > 0) {
-          const { data: fileRows } = await supabase
-            .from("ernie_files")
-            .select("id, file_name")
-            .in("id", allReferencedIds);
-          for (const f of fileRows ?? []) fileNameById.set(f.id, f.file_name);
-        }
-
-        function historicalText(m: StoredMessage): string {
-          if (!m.file_ids.length) return m.text;
-          const names = m.file_ids.map((id) => fileNameById.get(id) ?? "a file").join(", ");
-          return `${m.text}\n\n[Attached: ${names}]`;
-        }
+        const allMessages: ChatMessage[] = [...priorMessages, { role: "user", text: newMessageText }];
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic message content shape varies (string vs. content blocks) across the tool-use loop
-        const anthropicMessages: any[] = [];
-        for (let i = 0; i < allMessages.length; i++) {
-          const m = allMessages[i];
-          const isCurrentTurn = i === allMessages.length - 1;
-          if (isCurrentTurn && m.file_ids.length > 0) {
-            // The message being answered right now: attach real file
-            // content (images/PDFs as native blocks, spreadsheets/CSV/text
-            // rendered to text), not just a filename note.
-            const fileRows = (
-              await supabase
-                .from("ernie_files")
-                .select("id, file_name, mime_type, size_bytes, storage_path")
-                .in("id", m.file_ids)
-            ).data;
-            const orderedRows = m.file_ids
-              .map((id) => (fileRows ?? []).find((f) => f.id === id))
-              .filter((f): f is NonNullable<typeof f> => Boolean(f));
-            const blockLists = await Promise.all(orderedRows.map((f) => buildFileContentBlocks(supabase, f)));
-            const fileBlocks = blockLists.flat();
-            anthropicMessages.push({
-              role: m.role,
-              content: [...fileBlocks, { type: "text", text: m.text }],
-            });
-          } else {
-            anthropicMessages.push({ role: m.role, content: historicalText(m) });
-          }
-        }
+        const anthropicMessages: any[] = allMessages.map((m) => ({
+          role: m.role,
+          content: m.text,
+        }));
 
         let finalText = "";
-        const outputFileIds: string[] = [];
 
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
           // On the last round, force a plain-text answer instead of allowing
@@ -270,8 +200,8 @@ export async function POST(req: NextRequest) {
             body: JSON.stringify({
               model: ANTHROPIC_MODEL,
               max_tokens: 2048,
-              system: buildErnieSystemPrompt(isAdmin),
-              tools: [...getErnieTools(isAdmin), WEB_SEARCH_TOOL],
+              system: buildErnieSystemPrompt(role, sections),
+              tools: [...getErnieTools(role, sections), WEB_SEARCH_TOOL],
               ...(isLastRound ? { tool_choice: { type: "none" } } : {}),
               messages: anthropicMessages,
             }),
@@ -304,42 +234,17 @@ export async function POST(req: NextRequest) {
               send({ type: "status", label: describeErnieToolCall(block.name) });
               let result: unknown;
               try {
-                result = await runErnieTool(supabase, block.name, block.input ?? {}, isAdmin, conversationId);
+                result = await runErnieTool(supabase, block.name, block.input ?? {}, role, sections, conversationId);
               } catch (toolErr) {
                 result = {
                   error:
                     toolErr instanceof Error ? toolErr.message : "Tool lookup failed",
                 };
               }
-
-              // edit_spreadsheet's successful result carries the new
-              // output file's id, and get_file_for_download's successful
-              // result carries a reference to an existing file elsewhere
-              // in the app — either way, collect the id so it can be
-              // attached to the persisted assistant message and surfaced
-              // to the client as a download chip, same as a
-              // freshly-uploaded file.
-              if (
-                (block.name === "edit_spreadsheet" || block.name === "get_file_for_download") &&
-                result &&
-                typeof result === "object" &&
-                "id" in result &&
-                !("error" in (result as Record<string, unknown>))
-              ) {
-                outputFileIds.push((result as { id: string }).id);
-              }
-
-              // read_uploaded_file signals real Anthropic content blocks
-              // (which can include an image) via __contentBlocks rather
-              // than plain JSON, so those get passed through as the actual
-              // tool_result content array instead of being stringified
-              // into inert text — every other tool keeps the normal
-              // JSON-stringified path.
-              const maybeBlocks = (result as { __contentBlocks?: unknown })?.__contentBlocks;
               toolResults.push({
                 type: "tool_result",
                 tool_use_id: block.id,
-                content: Array.isArray(maybeBlocks) ? maybeBlocks : JSON.stringify(result),
+                content: JSON.stringify(result),
               });
             }
             anthropicMessages.push({ role: "user", content: toolResults });
@@ -365,7 +270,6 @@ export async function POST(req: NextRequest) {
           conversation_id: conversationId,
           role: "assistant",
           content: finalText,
-          file_ids: outputFileIds,
         });
         if (insertAssistantErr) throw insertAssistantErr;
 
@@ -376,7 +280,7 @@ export async function POST(req: NextRequest) {
           .update({ updated_at: new Date().toISOString() })
           .eq("id", conversationId);
 
-        send({ type: "done", text: finalText, conversationId, outputFileIds });
+        send({ type: "done", text: finalText, conversationId });
       } catch (err) {
         send({
           type: "error",

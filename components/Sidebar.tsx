@@ -1,43 +1,45 @@
 "use client";
 
-// Left-hand navigation sidebar, replacing the old top nav bar. Admins get
-// "Dashboard" (standalone), "Operations" and "Sales" (collapsible
-// categories — click the name itself, no chevrons/icons), and "Users"
-// (standalone). Basic users see "Inventory & Allocation" plus "Ernie AI" —
-// Ernie is available to every signed-in user, but a Basic user's own tool
-// access within Ernie is restricted server-side (see lib/ernie/tools.ts) to
-// just the data they can already see here.
+// Left-hand navigation sidebar. Every link below is shown based on the
+// signed-in person's per-section access (see lib/permissions.ts) — an admin
+// sees everything unconditionally; a Basic user sees exactly the sections
+// an admin has granted them from Users > Edit, nothing more. Dashboard and
+// Users management are the two exceptions: they stay admin-only, full
+// stop, same as always — they aren't grantable sections.
 //
-// Two independent bits of UI state:
+// Three independent bits of UI state:
 // - Whether Operations/Sales are expanded — remembered per-browser via
 //   localStorage, so collapsing one stays collapsed next time you load the
 //   app.
 // - Whether the whole sidebar is hidden — NOT persisted; it always starts
 //   visible on a fresh page load, per Chad's request.
+// - Nothing about WHICH links show is persisted — that comes fresh from
+//   the server on every load via the `sections` prop.
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { Role } from "@/lib/types/db";
+import { hasSection, ERNIE_SECTION, type AnySectionKey, type SectionKey } from "@/lib/permissions";
 
-const OPERATIONS_LINKS = [
-  { href: "/purchase-orders", label: "Purchase Orders" },
-  { href: "/inventory", label: "Inventory & Allocation" },
-  { href: "/distributor-inventory", label: "Distributor Inventory" },
-  { href: "/build-orders", label: "Build Orders" },
-  { href: "/pricing", label: "Distributor Pricing" },
-  { href: "/admin/weeks", label: "Weeks" },
-  { href: "/admin/audit", label: "Audit Log" },
+const OPERATIONS_LINKS: { href: string; label: string; section: SectionKey }[] = [
+  { href: "/purchase-orders", label: "Purchase Orders", section: "purchase_orders" },
+  { href: "/inventory", label: "Inventory & Allocation", section: "inventory_allocation" },
+  { href: "/distributor-inventory", label: "Distributor Inventory", section: "distributor_inventory" },
+  { href: "/build-orders", label: "Build Orders", section: "build_orders" },
+  { href: "/pricing", label: "Distributor Pricing", section: "distributor_pricing" },
+  { href: "/admin/weeks", label: "Weeks", section: "weeks" },
+  { href: "/admin/audit", label: "Audit Log", section: "audit_log" },
 ];
 
 // Sales sub-links get added here one at a time as each piece of the old FCB
 // Pricing desktop app is folded in — Price List first, then Margin Analysis,
 // Cost Per Case, and Contribution Margin.
-const SALES_LINKS = [
-  { href: "/sales/pricing", label: "Price List" },
-  { href: "/sales/margin-analysis", label: "Margin Analysis" },
-  { href: "/sales/cost-per-case", label: "Cost Per Case" },
-  { href: "/sales/contribution-margin", label: "Contribution Margin" },
+const SALES_LINKS: { href: string; label: string; section: SectionKey }[] = [
+  { href: "/sales/pricing", label: "Price List", section: "price_list" },
+  { href: "/sales/margin-analysis", label: "Margin Analysis", section: "margin_analysis" },
+  { href: "/sales/cost-per-case", label: "Cost Per Case", section: "cost_per_case" },
+  { href: "/sales/contribution-margin", label: "Contribution Margin", section: "contribution_margin" },
 ];
 
 const OPERATIONS_STORAGE_KEY = "fcb-sidebar-operations-expanded";
@@ -46,7 +48,7 @@ const SALES_STORAGE_KEY = "fcb-sidebar-sales-expanded";
 // POS > Labels > <brand> > <size> — a 3-level nested tree (unlike
 // Operations/Sales, which are just one level of flat links), so its
 // expand/collapse state is a single JSON blob keyed by node id rather than
-// one boolean per section.
+// one boolean per section. The whole tree shares one section ('pos_labels').
 const POS_TREE_STORAGE_KEY = "fcb-sidebar-pos-tree-expanded";
 
 const POS_LABEL_BRANDS: {
@@ -83,7 +85,13 @@ const POS_LABEL_BRANDS: {
   },
 ];
 
-export default function Sidebar({ role }: { role: Role | undefined }) {
+export default function Sidebar({
+  role,
+  sections,
+}: {
+  role: Role | undefined;
+  sections: AnySectionKey[];
+}) {
   const pathname = usePathname();
   const [hidden, setHidden] = useState(false);
   const [operationsExpanded, setOperationsExpanded] = useState(true);
@@ -146,6 +154,10 @@ export default function Sidebar({ role }: { role: Role | undefined }) {
     return pathname === href;
   }
 
+  function can(section: SectionKey | typeof ERNIE_SECTION) {
+    return hasSection(role, sections, section);
+  }
+
   const linkClass = (href: string) =>
     `rounded px-2 py-1.5 ${
       isActive(href)
@@ -167,6 +179,20 @@ export default function Sidebar({ role }: { role: Role | undefined }) {
     );
   }
 
+  const visibleOperations = OPERATIONS_LINKS.filter((link) => can(link.section));
+  const visibleSales = SALES_LINKS.filter((link) => can(link.section));
+  const showPosTree = can("pos_labels");
+  const showEvents = can("events_calendar");
+  const showErnie = can(ERNIE_SECTION);
+
+  const nothingVisible =
+    role !== "admin" &&
+    !showErnie &&
+    visibleOperations.length === 0 &&
+    visibleSales.length === 0 &&
+    !showPosTree &&
+    !showEvents;
+
   return (
     <div className="flex w-56 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950 p-3">
       <div className="mb-4 flex items-center justify-between gap-2">
@@ -181,16 +207,20 @@ export default function Sidebar({ role }: { role: Role | undefined }) {
       </div>
 
       <nav className="flex flex-col gap-1 text-sm">
-        {role === "admin" ? (
+        {role === "admin" && (
+          <Link href="/dashboard" className={linkClass("/dashboard")}>
+            Dashboard
+          </Link>
+        )}
+
+        {showErnie && (
+          <Link href="/ernie" className={`mt-1 ${linkClass("/ernie")}`}>
+            Ernie AI
+          </Link>
+        )}
+
+        {visibleOperations.length > 0 && (
           <>
-            <Link href="/dashboard" className={linkClass("/dashboard")}>
-              Dashboard
-            </Link>
-
-            <Link href="/ernie" className={`mt-1 ${linkClass("/ernie")}`}>
-              Ernie AI
-            </Link>
-
             <button
               type="button"
               onClick={toggleOperations}
@@ -200,7 +230,7 @@ export default function Sidebar({ role }: { role: Role | undefined }) {
             </button>
             {operationsExpanded && (
               <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
-                {OPERATIONS_LINKS.map((link) => (
+                {visibleOperations.map((link) => (
                   <Link
                     key={link.href}
                     href={link.href}
@@ -211,7 +241,11 @@ export default function Sidebar({ role }: { role: Role | undefined }) {
                 ))}
               </div>
             )}
+          </>
+        )}
 
+        {visibleSales.length > 0 && (
+          <>
             <button
               type="button"
               onClick={toggleSales}
@@ -221,7 +255,7 @@ export default function Sidebar({ role }: { role: Role | undefined }) {
             </button>
             {salesExpanded && (
               <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
-                {SALES_LINKS.map((link) => (
+                {visibleSales.map((link) => (
                   <Link
                     key={link.href}
                     href={link.href}
@@ -232,7 +266,11 @@ export default function Sidebar({ role }: { role: Role | undefined }) {
                 ))}
               </div>
             )}
+          </>
+        )}
 
+        {showPosTree && (
+          <>
             <button
               type="button"
               onClick={() => togglePosTree("pos")}
@@ -279,27 +317,29 @@ export default function Sidebar({ role }: { role: Role | undefined }) {
                 )}
               </div>
             )}
-
-            <Link href="/events" className={`mt-1 ${linkClass("/events")}`}>
-              Events Calendar
-            </Link>
-
-            <Link
-              href="/admin/users"
-              className={`mt-1 ${linkClass("/admin/users")}`}
-            >
-              Users
-            </Link>
           </>
-        ) : (
-          <>
-            <Link href="/inventory" className={linkClass("/inventory")}>
-              Inventory & Allocation
-            </Link>
-            <Link href="/ernie" className={`mt-1 ${linkClass("/ernie")}`}>
-              Ernie AI
-            </Link>
-          </>
+        )}
+
+        {showEvents && (
+          <Link href="/events" className={`mt-1 ${linkClass("/events")}`}>
+            Events Calendar
+          </Link>
+        )}
+
+        {role === "admin" && (
+          <Link
+            href="/admin/users"
+            className={`mt-1 ${linkClass("/admin/users")}`}
+          >
+            Users
+          </Link>
+        )}
+
+        {nothingVisible && (
+          <p className="mt-2 px-2 text-xs leading-relaxed text-neutral-600">
+            No sections granted yet — ask an admin to give you access from
+            Users.
+          </p>
         )}
       </nav>
     </div>

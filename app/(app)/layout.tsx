@@ -14,7 +14,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex min-h-screen bg-black">
-      <Sidebar role={profile?.role} />
+      <Sidebar role={profile?.role} sections={profile?.sections ?? []} />
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="border-b border-neutral-800 bg-neutral-950">
           <div className="flex items-center justify-end px-4 py-3">

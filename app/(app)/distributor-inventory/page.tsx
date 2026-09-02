@@ -72,7 +72,20 @@ export default function DistributorInventoryPage() {
         .select("role")
         .eq("id", user.id)
         .maybeSingle();
-      setIsAdmin(profile?.role === "admin");
+      // Section access replaces the old admin-only gate — see
+      // lib/permissions.ts. An admin still always gets in; a Basic user
+      // needs the "distributor_inventory" section granted from Users > Edit.
+      if (profile?.role === "admin") {
+        setIsAdmin(true);
+      } else {
+        const { data: grant } = await supabase
+          .from("user_section_access")
+          .select("section_key")
+          .eq("user_id", user.id)
+          .eq("section_key", "distributor_inventory")
+          .maybeSingle();
+        setIsAdmin(!!grant);
+      }
     }
 
     const { data: weekData } = await supabase
@@ -249,7 +262,8 @@ export default function DistributorInventoryPage() {
   if (!isAdmin) {
     return (
       <p className="text-sm text-neutral-400">
-        Distributor Inventory is only available to admins.
+        You don&apos;t have access to Distributor Inventory. Ask an admin to
+        grant it from Users.
       </p>
     );
   }
