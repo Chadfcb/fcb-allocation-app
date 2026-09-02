@@ -14,16 +14,26 @@ import {
 
 type UserRow = Profile & { sections: AnySectionKey[] };
 
-// The Users page only ever offers whole-category toggles (Operations /
-// Sales / Other) plus Ernie AI — per Chad: "if a user is given access to a
-// main section, they auto get the sub section... remove individual page
-// toggles." This state shape is purely a UI convenience; it gets
-// expanded into (or read back from) the real flat list of individual
-// SectionKey rows in user_section_access via GROUP_SECTIONS.
+// The Users page only ever offers whole-category toggles (see
+// GROUP_KEYS/SECTION_GROUPS in lib/permissions.ts) plus Ernie AI — per
+// Chad: "if a user is given access to a main section, they auto get the
+// sub section... remove individual page toggles." This state shape is
+// purely a UI convenience; it gets expanded into (or read back from) the
+// real flat list of individual SectionKey rows in user_section_access via
+// GROUP_SECTIONS.
+//
+// Built from GROUP_KEYS rather than a hand-written literal — a hardcoded
+// object here is exactly what broke the last build (this file still had
+// `other: false` after lib/permissions.ts dropped that category for
+// `events_calendar`/`pos_labels`, which TypeScript correctly rejected).
+// Deriving it from GROUP_KEYS means a future category added to
+// SECTION_GROUPS can never get out of sync with this shape again.
 type GroupSelectionState = Record<GroupKey, boolean> & { ernie: boolean };
 
 function emptyGroupState(): GroupSelectionState {
-  return { operations: false, sales: false, other: false, ernie: false };
+  const state = { ernie: false } as GroupSelectionState;
+  for (const group of GROUP_KEYS) state[group] = false;
+  return state;
 }
 
 // Derives which group checkboxes should show as checked for a user's
