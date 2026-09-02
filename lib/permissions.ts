@@ -105,33 +105,41 @@ export function hasAnySection(
   return keys.some((k) => sections?.includes(k));
 }
 
-// Users > Edit only offers whole-category toggles (Operations / Sales /
-// Other) plus Ernie AI — checking a category grants every page underneath
-// it in one shot, per Chad: "if a user is given access to a main section,
-// they auto get the sub section... we don't need to also give permissions
-// for sub sections." The individual SectionKey values above are unchanged
+// Users > Edit only offers whole-category toggles plus Ernie AI —
+// checking a category grants every page underneath it in one shot, per
+// Chad: "if a user is given access to a main section, they auto get the
+// sub section... we don't need to also give permissions for sub
+// sections." The individual SectionKey values above are unchanged
 // underneath (RLS, the Sidebar, and Ernie's tool gating all still key off
 // them exactly as before) — this is purely a Users-page UX simplification:
 // checking "Operations" writes all 7 of its underlying section_key rows at
 // once instead of asking an admin to check each page individually.
-export type GroupKey = "operations" | "sales" | "other";
+//
+// Events Calendar and POS Labels are each their own toggle rather than
+// being lumped into one "Other" category — per Chad: "why is there an
+// Other selection? we have no Other. There is currently Ernie,
+// Operations, Sales, POS, Events Calendar" — so the Users page offers
+// exactly those five toggles now.
+export type GroupKey = "operations" | "sales" | "events_calendar" | "pos_labels";
 
 export const GROUP_LABEL: Record<GroupKey, string> = {
   operations: "Operations",
   sales: "Sales",
-  other: "Other",
+  events_calendar: "Events Calendar",
+  pos_labels: "POS Labels",
 };
 
-export const GROUP_KEYS: GroupKey[] = ["operations", "sales", "other"];
+export const GROUP_KEYS: GroupKey[] = ["operations", "sales", "events_calendar", "pos_labels"];
 
-function sectionsForGroupLabel(label: "Operations" | "Sales" | "Other"): SectionKey[] {
+function sectionsForGroupLabel(label: "Operations" | "Sales"): SectionKey[] {
   return SECTION_GROUPS.find((g) => g.label === label)!.items.map((i) => i.key);
 }
 
 export const GROUP_SECTIONS: Record<GroupKey, SectionKey[]> = {
   operations: sectionsForGroupLabel("Operations"),
   sales: sectionsForGroupLabel("Sales"),
-  other: sectionsForGroupLabel("Other"),
+  events_calendar: ["events_calendar"],
+  pos_labels: ["pos_labels"],
 };
 
 // True if every page under this category is granted — the checkbox state
