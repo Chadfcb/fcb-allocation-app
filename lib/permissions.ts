@@ -40,47 +40,86 @@ export type AnySectionKey = SectionKey | ErnieSectionKey;
 export interface SectionInfo {
   key: SectionKey;
   label: string;
-  group: "Operations" | "Sales" | "Other";
 }
 
+// Users > Edit toggle categories (Ernie AI is a fifth toggle handled
+// separately below — it doesn't belong to any group of pages).
+//
+// SINGLE SOURCE OF TRUTH: this is the only place that decides which
+// individual pages live under which Users > Edit toggle — GROUP_KEYS,
+// GROUP_LABEL, GROUP_SECTIONS, ALL_SECTION_KEYS, and SECTION_LABEL below
+// are all derived from this one array, on purpose, after an earlier
+// version kept a separate parallel list for the toggles and it drifted
+// out of sync with this one (that's the "Other" mix-up Chad caught —
+// Events Calendar and POS Labels had been lumped into one category here
+// that didn't match the real app sections).
+//
+// Per Chad: "it also needs to add new sections to it when we add new
+// sections, because i have many more sections for us to eventually add."
+// Going forward: to add a brand-new PAGE to an EXISTING category — say
+// another Operations report — add one SectionKey to that group's `items`
+// below (plus the SectionKey union above, its RLS policy in sql/, and its
+// Sidebar link); its Users > Edit toggle automatically covers it, no
+// other list in this file needs to change. To add a whole NEW
+// category/toggle, add a new literal to the GroupKey union just below
+// AND a new `{ key, label, items }` entry here — those are the only two
+// edits a new top-level category needs.
+//
 // Order here is also the display order in the Users > Edit checklist.
-export const SECTION_GROUPS: { label: "Operations" | "Sales" | "Other"; items: SectionInfo[] }[] = [
+export type GroupKey = "operations" | "sales" | "events_calendar" | "pos_labels";
+
+export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[] }[] = [
   {
+    key: "operations",
     label: "Operations",
     items: [
-      { key: "purchase_orders", label: "Purchase Orders", group: "Operations" },
-      { key: "inventory_allocation", label: "Inventory & Allocation", group: "Operations" },
-      { key: "distributor_inventory", label: "Distributor Inventory", group: "Operations" },
-      { key: "build_orders", label: "Build Orders", group: "Operations" },
-      { key: "distributor_pricing", label: "Distributor Pricing", group: "Operations" },
-      { key: "weeks", label: "Weeks", group: "Operations" },
-      { key: "audit_log", label: "Audit Log", group: "Operations" },
+      { key: "purchase_orders", label: "Purchase Orders" },
+      { key: "inventory_allocation", label: "Inventory & Allocation" },
+      { key: "distributor_inventory", label: "Distributor Inventory" },
+      { key: "build_orders", label: "Build Orders" },
+      { key: "distributor_pricing", label: "Distributor Pricing" },
+      { key: "weeks", label: "Weeks" },
+      { key: "audit_log", label: "Audit Log" },
     ],
   },
   {
+    key: "sales",
     label: "Sales",
     items: [
-      { key: "price_list", label: "Price List", group: "Sales" },
-      { key: "margin_analysis", label: "Margin Analysis", group: "Sales" },
-      { key: "cost_per_case", label: "Cost Per Case", group: "Sales" },
-      { key: "contribution_margin", label: "Contribution Margin", group: "Sales" },
+      { key: "price_list", label: "Price List" },
+      { key: "margin_analysis", label: "Margin Analysis" },
+      { key: "cost_per_case", label: "Cost Per Case" },
+      { key: "contribution_margin", label: "Contribution Margin" },
     ],
   },
   {
-    label: "Other",
-    items: [
-      { key: "events_calendar", label: "Events Calendar", group: "Other" },
-      { key: "pos_labels", label: "POS Labels", group: "Other" },
-    ],
+    key: "events_calendar",
+    label: "Events Calendar",
+    items: [{ key: "events_calendar", label: "Events Calendar" }],
+  },
+  {
+    key: "pos_labels",
+    label: "POS Labels",
+    items: [{ key: "pos_labels", label: "POS Labels" }],
   },
 ];
+
+export const GROUP_KEYS: GroupKey[] = SECTION_GROUPS.map((g) => g.key);
+
+export const GROUP_LABEL: Record<GroupKey, string> = Object.fromEntries(
+  SECTION_GROUPS.map((g) => [g.key, g.label]),
+) as Record<GroupKey, string>;
+
+export const GROUP_SECTIONS: Record<GroupKey, SectionKey[]> = Object.fromEntries(
+  SECTION_GROUPS.map((g) => [g.key, g.items.map((i) => i.key)]),
+) as Record<GroupKey, SectionKey[]>;
 
 export const ALL_SECTION_KEYS: SectionKey[] = SECTION_GROUPS.flatMap((g) =>
   g.items.map((i) => i.key),
 );
 
 export const SECTION_LABEL: Record<SectionKey, string> = Object.fromEntries(
-  ALL_SECTION_KEYS.map((k) => [k, SECTION_GROUPS.flatMap((g) => g.items).find((i) => i.key === k)!.label]),
+  SECTION_GROUPS.flatMap((g) => g.items.map((i) => [i.key, i.label] as const)),
 ) as Record<SectionKey, string>;
 
 // True if this person can use the given section — admins always can;
@@ -105,43 +144,16 @@ export function hasAnySection(
   return keys.some((k) => sections?.includes(k));
 }
 
-// Users > Edit only offers whole-category toggles plus Ernie AI —
-// checking a category grants every page underneath it in one shot, per
-// Chad: "if a user is given access to a main section, they auto get the
-// sub section... we don't need to also give permissions for sub
-// sections." The individual SectionKey values above are unchanged
+// Users > Edit only offers whole-category toggles (see SECTION_GROUPS
+// above) plus Ernie AI — checking a category grants every page underneath
+// it in one shot, per Chad: "if a user is given access to a main section,
+// they auto get the sub section... we don't need to also give permissions
+// for sub sections." The individual SectionKey values above are unchanged
 // underneath (RLS, the Sidebar, and Ernie's tool gating all still key off
 // them exactly as before) — this is purely a Users-page UX simplification:
 // checking "Operations" writes all 7 of its underlying section_key rows at
 // once instead of asking an admin to check each page individually.
 //
-// Events Calendar and POS Labels are each their own toggle rather than
-// being lumped into one "Other" category — per Chad: "why is there an
-// Other selection? we have no Other. There is currently Ernie,
-// Operations, Sales, POS, Events Calendar" — so the Users page offers
-// exactly those five toggles now.
-export type GroupKey = "operations" | "sales" | "events_calendar" | "pos_labels";
-
-export const GROUP_LABEL: Record<GroupKey, string> = {
-  operations: "Operations",
-  sales: "Sales",
-  events_calendar: "Events Calendar",
-  pos_labels: "POS Labels",
-};
-
-export const GROUP_KEYS: GroupKey[] = ["operations", "sales", "events_calendar", "pos_labels"];
-
-function sectionsForGroupLabel(label: "Operations" | "Sales"): SectionKey[] {
-  return SECTION_GROUPS.find((g) => g.label === label)!.items.map((i) => i.key);
-}
-
-export const GROUP_SECTIONS: Record<GroupKey, SectionKey[]> = {
-  operations: sectionsForGroupLabel("Operations"),
-  sales: sectionsForGroupLabel("Sales"),
-  events_calendar: ["events_calendar"],
-  pos_labels: ["pos_labels"],
-};
-
 // True if every page under this category is granted — the checkbox state
 // for a category toggle. Admins always read as true (hasSection already
 // short-circuits per-page, so this stays consistent with that).
