@@ -4,40 +4,68 @@ import { Fragment, useEffect, useMemo, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, Role } from "@/lib/types/db";
 import {
-  SECTION_GROUPS,
-  ALL_SECTION_KEYS,
-  SECTION_LABEL,
+  GROUP_KEYS,
+  GROUP_LABEL,
+  GROUP_SECTIONS,
   ERNIE_SECTION,
   type AnySectionKey,
-  type SectionKey,
+  type GroupKey,
 } from "@/lib/permissions";
 
 type UserRow = Profile & { sections: AnySectionKey[] };
 
-function emptySectionState(): Record<AnySectionKey, boolean> {
-  const state = {} as Record<AnySectionKey, boolean>;
-  for (const key of ALL_SECTION_KEYS) state[key] = false;
-  state[ERNIE_SECTION] = false;
+// The Users page only ever offers whole-category toggles (Operations /
+// Sales / Other) plus Ernie AI — per Chad: "if a user is given access to a
+// main section, they auto get the sub section... remove individual page
+// toggles." This state shape is purely a UI convenience; it gets
+// expanded into (or read back from) the real flat list of individual
+// SectionKey rows in user_section_access via GROUP_SECTIONS.
+type GroupSelectionState = Record<GroupKey, boolean> & { ernie: boolean };
+
+function emptyGroupState(): GroupSelectionState {
+  return { operations: false, sales: false, other: false, ernie: false };
+}
+
+// Derives which group checkboxes should show as checked for a user's
+// existing flat sections array — a group reads as checked only once every
+// one of its underlying pages is granted.
+function groupStateFromSections(sections: AnySectionKey[]): GroupSelectionState {
+  const state = emptyGroupState();
+  for (const group of GROUP_KEYS) {
+    state[group] = GROUP_SECTIONS[group].every((k) => sections.includes(k));
+  }
+  state.ernie = sections.includes(ERNIE_SECTION);
   return state;
+}
+
+// Expands the checked groups back into the full flat list of individual
+// SectionKey rows (plus Ernie) that actually gets written to
+// user_section_access / sent to /api/admin/create-user.
+function expandGroupState(state: GroupSelectionState): AnySectionKey[] {
+  const keys: AnySectionKey[] = [];
+  for (const group of GROUP_KEYS) {
+    if (state[group]) keys.push(...GROUP_SECTIONS[group]);
+  }
+  if (state.ernie) keys.push(ERNIE_SECTION);
+  return keys;
 }
 
 function accessSummary(user: UserRow): string {
   if (user.role === "admin") return "All sections";
-  const pageLabels = user.sections
-    .filter((s): s is SectionKey => s !== ERNIE_SECTION)
-    .map((s) => SECTION_LABEL[s]);
-  const withErnie = user.sections.includes(ERNIE_SECTION) ? [...pageLabels, "Ernie AI"] : pageLabels;
+  const state = groupStateFromSections(user.sections);
+  const groupLabels = GROUP_KEYS.filter((g) => state[g]).map((g) => GROUP_LABEL[g]);
+  const withErnie = state.ernie ? [...groupLabels, "Ernie AI"] : groupLabels;
   return withErnie.length ? withErnie.join(", ") : "No sections yet";
 }
 
-function SectionChecklist({
+function GroupChecklist({
   role,
   state,
   onToggle,
 }: {
   role: Role;
-  state: Record<AnySectionKey, boolean>;
-  onToggle: (key: AnySectionKey, checked: boolean) => void;
+  state: GroupSelectionState;
+  onToggle: (key: GroupKey | "ernie", checked: boolean) => void;
 }) {
   if (role === "admin") {
     return (
@@ -50,42 +78,44 @@ function SectionChecklist({
 
   return (
     <div className="space-y-3">
-      {SECTION_GROUPS.map((group) => (
-        <div key={group.label}>
-          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-            {group.label}
-          </p>
-          <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
-            {group.items.map((item) => (
-              <label
-                key={item.key}
-                className="flex items-center gap-2 rounded px-2 py-1 text-sm text-neutral-200 hover:bg-neutral-900"
-              >
-                <input
-                  type="checkbox"
-                  checked={state[item.key]}
-                  onChange={(e) => onToggle(item.key, e.target.checked)}
-                  className="h-4 w-4 accent-white"
-                />
-                {item.label}
-              </label>
-            ))}
-          </div>
+      <div>
+        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+          Access
+        </p>
+        <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
+          {GROUP_KEYS.map((group) => (
+            <label
+              key={group}
+              className="flex items-center gap-2 rounded px-2 py-1 text-sm text-neutral-200 hover:bg-neutral-900"
+            >
+              <input
+                type="checkbox"
+                checked={state[group]}
+                onChange={(e) => onToggle(group, e.target.checked)}
+                className="h-4 w-4 accent-white"
+              />
+              {GROUP_LABEL[group]}
+            </label>
+          ))}
         </div>
-      ))}
+        <p className="mt-1 text-xs text-neutral-500">
+          Checking a category grants every page under it — no need to also
+          pick individual pages.
+        </p>
+      </div>
 
       <div className="rounded-md border border-cyan-900 bg-cyan-950/30 px-3 py-2">
         <label className="flex items-center gap-2 text-sm font-medium text-neutral-100">
           <input
             type="checkbox"
-            checked={state[ERNIE_SECTION]}
-            onChange={(e) => onToggle(ERNIE_SECTION, e.target.checked)}
+            checked={state.ernie}
+            onChange={(e) => onToggle("ernie", e.target.checked)}
             className="h-4 w-4 accent-white"
           />
           ✨ Ernie AI
         </label>
         <p className="mt-1 pl-6 text-xs text-neutral-400">
-          If checked, Ernie only pulls data from the sections checked
+          If checked, Ernie only pulls data from the categories checked
           above — not the whole app.
         </p>
       </div>
@@ -105,13 +135,13 @@ export default function UsersPage() {
   const [newEmail, setNewEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newRole, setNewRole] = useState<Role>("basic");
-  const [newSections, setNewSections] = useState(emptySectionState());
+  const [newSections, setNewSections] = useState(emptyGroupState());
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editRole, setEditRole] = useState<Role>("basic");
-  const [editSections, setEditSections] = useState(emptySectionState());
+  const [editSections, setEditSections] = useState(emptyGroupState());
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
@@ -157,19 +187,14 @@ export default function UsersPage() {
   function openEdit(user: UserRow) {
     setEditingId(user.id);
     setEditRole(user.role);
-    const state = emptySectionState();
-    for (const s of user.sections) state[s] = true;
-    setEditSections(state);
+    setEditSections(groupStateFromSections(user.sections));
   }
 
   async function handleSaveEdit(userId: string) {
     setSaving(true);
     try {
       await supabase.from("profiles").update({ role: editRole }).eq("id", userId);
-      const desired =
-        editRole === "admin"
-          ? []
-          : (Object.keys(editSections) as AnySectionKey[]).filter((k) => editSections[k]);
+      const desired = editRole === "admin" ? [] : expandGroupState(editSections);
       await saveSections(userId, desired);
       setEditingId(null);
       await load();
@@ -190,10 +215,7 @@ export default function UsersPage() {
     setCreating(true);
 
     try {
-      const sections =
-        newRole === "admin"
-          ? []
-          : (Object.keys(newSections) as AnySectionKey[]).filter((k) => newSections[k]);
+      const sections = newRole === "admin" ? [] : expandGroupState(newSections);
 
       const res = await fetch("/api/admin/create-user", {
         method: "POST",
@@ -223,7 +245,7 @@ export default function UsersPage() {
       setNewEmail("");
       setNewPassword("");
       setNewRole("basic");
-      setNewSections(emptySectionState());
+      setNewSections(emptyGroupState());
       await load();
     } catch {
       setCreateError(
@@ -242,8 +264,8 @@ export default function UsersPage() {
         <h1 className="text-lg font-semibold text-neutral-100">Users</h1>
         <p className="text-sm text-neutral-400">
           Admins have access to everything. Basic users get exactly the
-          sections checked below — including whether they have Ernie AI at
-          all.
+          categories checked below — checking a category grants every page
+          under it — including whether they have Ernie AI at all.
         </p>
         <p className="mt-1 text-xs text-neutral-500">
           New people show up here automatically the first time they sign in,
@@ -305,7 +327,7 @@ export default function UsersPage() {
           </button>
         </div>
 
-        <SectionChecklist
+        <GroupChecklist
           role={newRole}
           state={newSections}
           onToggle={(key, checked) => setNewSections((prev) => ({ ...prev, [key]: checked }))}
@@ -388,7 +410,7 @@ export default function UsersPage() {
                           </div>
                         </div>
 
-                        <SectionChecklist
+                        <GroupChecklist
                           role={editRole}
                           state={editSections}
                           onToggle={(key, checked) => setEditSections((prev) => ({ ...prev, [key]: checked }))}

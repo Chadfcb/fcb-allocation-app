@@ -105,6 +105,47 @@ export function hasAnySection(
   return keys.some((k) => sections?.includes(k));
 }
 
+// Users > Edit only offers whole-category toggles (Operations / Sales /
+// Other) plus Ernie AI — checking a category grants every page underneath
+// it in one shot, per Chad: "if a user is given access to a main section,
+// they auto get the sub section... we don't need to also give permissions
+// for sub sections." The individual SectionKey values above are unchanged
+// underneath (RLS, the Sidebar, and Ernie's tool gating all still key off
+// them exactly as before) — this is purely a Users-page UX simplification:
+// checking "Operations" writes all 7 of its underlying section_key rows at
+// once instead of asking an admin to check each page individually.
+export type GroupKey = "operations" | "sales" | "other";
+
+export const GROUP_LABEL: Record<GroupKey, string> = {
+  operations: "Operations",
+  sales: "Sales",
+  other: "Other",
+};
+
+export const GROUP_KEYS: GroupKey[] = ["operations", "sales", "other"];
+
+function sectionsForGroupLabel(label: "Operations" | "Sales" | "Other"): SectionKey[] {
+  return SECTION_GROUPS.find((g) => g.label === label)!.items.map((i) => i.key);
+}
+
+export const GROUP_SECTIONS: Record<GroupKey, SectionKey[]> = {
+  operations: sectionsForGroupLabel("Operations"),
+  sales: sectionsForGroupLabel("Sales"),
+  other: sectionsForGroupLabel("Other"),
+};
+
+// True if every page under this category is granted — the checkbox state
+// for a category toggle. Admins always read as true (hasSection already
+// short-circuits per-page, so this stays consistent with that).
+export function hasGroup(
+  role: Role | undefined,
+  sections: AnySectionKey[] | undefined,
+  group: GroupKey,
+): boolean {
+  if (role === "admin") return true;
+  return GROUP_SECTIONS[group].every((k) => sections?.includes(k));
+}
+
 // Fetches one user's granted section keys (Ernie included, since it's a row
 // in the same table). Returns [] for an admin — admins don't need rows,
 // hasSection()/hasAnySection() already short-circuit true for them.
