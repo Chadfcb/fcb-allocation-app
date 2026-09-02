@@ -82,7 +82,7 @@ function GroupChecklist({
         <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">
           Access
         </p>
-        <div className="grid grid-cols-2 gap-1 sm:grid-cols-3">
+        <div className="flex flex-col gap-1">
           {GROUP_KEYS.map((group) => (
             <label
               key={group}
