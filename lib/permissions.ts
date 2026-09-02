@@ -99,7 +99,7 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
   },
   {
     key: "pos_labels",
-    label: "POS Labels",
+    label: "POS",
     items: [{ key: "pos_labels", label: "POS Labels" }],
   },
 ];
