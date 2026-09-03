@@ -22,6 +22,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { firstNameFor } from "@/lib/displayName";
 import type {
   Profile,
   TaskCategory,
@@ -59,11 +60,15 @@ function hashColor(id: string): string {
   return AVATAR_PALETTE[h % AVATAR_PALETTE.length];
 }
 
+// Same fallback the rest of the app already uses (see the Dashboard's
+// "Welcome, ___" greeting, lib/displayName.ts) — a signed-in user whose
+// profile predates the account-setup flow (no full_name saved) gets a
+// friendly guessed name from their email instead of the raw address.
 function displayName(profiles: Record<string, ProfileLite>, id: string | null): string {
   if (!id) return "Unknown";
   const p = profiles[id];
   if (!p) return "Unknown";
-  return p.full_name?.trim() || p.email;
+  return p.full_name?.trim() || firstNameFor(p);
 }
 
 function relativeTime(iso: string): string {
@@ -599,6 +604,7 @@ export default function TasksPageClient() {
                   <div className="flex flex-wrap gap-1.5">
                     {Object.entries(profiles).map(([id, p]) => {
                       const selected = newTaskAssignees.includes(id);
+                      const name = p.full_name?.trim() || firstNameFor(p);
                       return (
                         <button
                           key={id}
@@ -615,9 +621,9 @@ export default function TasksPageClient() {
                             className="flex h-4 w-4 items-center justify-center rounded-full text-[8px] font-bold text-black"
                             style={{ backgroundColor: hashColor(id) }}
                           >
-                            {initials(p.full_name?.trim() || p.email)}
+                            {initials(name)}
                           </span>
-                          {(p.full_name?.trim() || p.email).split(" ")[0]}
+                          {name.split(" ")[0]}
                         </button>
                       );
                     })}
@@ -870,7 +876,7 @@ export default function TasksPageClient() {
                               }}
                               className="rounded px-2 py-1 text-left text-xs text-neutral-300 hover:bg-neutral-800"
                             >
-                              {p.full_name?.trim() || p.email}
+                              {p.full_name?.trim() || firstNameFor(p)}
                             </button>
                           ))}
                         {Object.entries(profiles).filter(
