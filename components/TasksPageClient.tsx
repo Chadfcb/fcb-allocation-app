@@ -8,16 +8,15 @@
 // Detail (notes, team chat with Directive tags, and an auto-logged
 // Activity timeline).
 //
-// Per Chad: no manual "+ Add Item" button — it was deliberately removed
-// before. The only path to creating an item is the "✨ Pull action items
-// from today's notes" button, which stays visible in the header but isn't
-// wired to a real notes tool yet (left inert on purpose — "we will work on
-// that later"). So categories start, and stay, empty until that's built.
+// The header's green button is contextual: "+ Add Category" on the
+// categories landing page (creates a category via a name prompt); "+ Add
+// Task" once inside a category (opens an inline form — title, optional
+// notes, optional due date — and creates a real row in task_items). The
+// "✨ Pull action items from today's notes" button stays visible but isn't
+// wired to a real notes tool yet — that's the one piece still deliberately
+// inert ("we will work on that later").
 //
-// Brand green (#6ABC46) marks the active filter pill, "+ Add Category" /
-// "+ Add Task" (the header button is contextual: "+ Add Category" on the
-// categories landing page, "+ Add Task" once inside a category — the
-// latter is currently inert, not wired to create a real task, per Chad),
+// Brand green (#6ABC46) marks the active filter pill, both "+ Add" buttons,
 // and a Directive tag in chat — same accent Sidebar.tsx uses for the
 // active-page highlight.
 
@@ -146,6 +145,12 @@ export default function TasksPageClient() {
   const [composerText, setComposerText] = useState("");
   const [composerDirective, setComposerDirective] = useState(false);
   const [sending, setSending] = useState(false);
+
+  const [showAddTask, setShowAddTask] = useState(false);
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [newTaskNotes, setNewTaskNotes] = useState("");
+  const [newTaskDueDate, setNewTaskDueDate] = useState("");
+  const [creatingTask, setCreatingTask] = useState(false);
 
   const loadCategories = useCallback(async () => {
     const { data } = await supabase.from("task_categories").select("*").order("sort_order");
@@ -294,15 +299,18 @@ export default function TasksPageClient() {
   function goToCategories() {
     setView("categories");
     setCurrentCategoryId(null);
+    setShowAddTask(false);
   }
   function goToCategoryItems(categoryId: string) {
     setCurrentCategoryId(categoryId);
     setFilter("open");
     setView("items");
+    setShowAddTask(false);
   }
   function goToDetail(itemId: string) {
     setSelectedItemId(itemId);
     setView("detail");
+    setShowAddTask(false);
   }
 
   async function addCategory() {
@@ -315,6 +323,32 @@ export default function TasksPageClient() {
     }
     await supabase.from("task_categories").insert({ key, name: name.trim(), created_by: userId });
     await loadCategories();
+  }
+
+  async function createTask() {
+    const title = newTaskTitle.trim();
+    if (!title || !currentCategoryId) return;
+    setCreatingTask(true);
+    const { data, error } = await supabase
+      .from("task_items")
+      .insert({
+        category_id: currentCategoryId,
+        title,
+        notes: newTaskNotes.trim() || null,
+        due_date: newTaskDueDate || null,
+        created_by: userId,
+      })
+      .select()
+      .single();
+    setCreatingTask(false);
+    if (error || !data) return;
+    await logActivity((data as TaskItem).id, "created");
+    setNewTaskTitle("");
+    setNewTaskNotes("");
+    setNewTaskDueDate("");
+    setShowAddTask(false);
+    await loadItems();
+    goToDetail((data as TaskItem).id);
   }
 
   async function deleteCategory(cat: TaskCategory) {
@@ -415,15 +449,10 @@ export default function TasksPageClient() {
               + Add Category
             </button>
           ) : (
-            // Inside a category (items or detail view): label matches the
-            // approved flow, but per Chad this isn't wired to create a real
-            // task yet — same "visible but inert" treatment as the
-            // Pull-notes button until that's explicitly asked for.
             <button
               type="button"
-              disabled
-              title="Coming soon"
-              className="mt-3 cursor-not-allowed rounded-md px-3.5 py-2 text-xs font-semibold text-black opacity-60"
+              onClick={() => setShowAddTask((v) => !v)}
+              className="mt-3 rounded-md px-3.5 py-2 text-xs font-semibold text-black hover:opacity-90"
               style={{ backgroundColor: BRAND_GREEN }}
             >
               + Add Task
@@ -506,6 +535,53 @@ export default function TasksPageClient() {
             >
               ← Tasks
             </button>
+
+            {showAddTask && (
+              <div className="mb-5 flex flex-col gap-2 rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3.5">
+                <input
+                  type="text"
+                  value={newTaskTitle}
+                  onChange={(e) => setNewTaskTitle(e.target.value)}
+                  placeholder="Task title"
+                  className="rounded border border-neutral-700 bg-neutral-950 px-2.5 py-1.5 text-sm text-neutral-100 placeholder:text-neutral-600"
+                  autoFocus
+                />
+                <textarea
+                  value={newTaskNotes}
+                  onChange={(e) => setNewTaskNotes(e.target.value)}
+                  placeholder="Notes (optional)"
+                  rows={2}
+                  className="rounded border border-neutral-700 bg-neutral-950 px-2.5 py-1.5 text-sm text-neutral-100 placeholder:text-neutral-600"
+                />
+                <div className="flex items-center gap-2">
+                  <label className="text-xs text-neutral-400">Due date (optional):</label>
+                  <input
+                    type="date"
+                    value={newTaskDueDate}
+                    onChange={(e) => setNewTaskDueDate(e.target.value)}
+                    className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-200"
+                  />
+                </div>
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddTask(false)}
+                    className="rounded-md border border-neutral-700 px-3 py-1.5 text-xs text-neutral-400 hover:bg-neutral-950"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={createTask}
+                    disabled={creatingTask || !newTaskTitle.trim()}
+                    className="rounded-md px-3 py-1.5 text-xs font-semibold text-black disabled:opacity-50"
+                    style={{ backgroundColor: BRAND_GREEN }}
+                  >
+                    {creatingTask ? "Creating…" : "Create Task"}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {(() => {
               const overdueItems = items.filter(
