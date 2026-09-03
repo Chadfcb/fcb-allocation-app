@@ -14,7 +14,9 @@
 // wired to a real notes tool yet (left inert on purpose — "we will work on
 // that later"). So categories start, and stay, empty until that's built.
 //
-// Brand green (#6ABC46) marks the active filter pill, "+ Add category",
+// Brand green (#6ABC46) marks the active filter pill, "+ Add Task" (label
+// only — it still creates a category, per Chad's explicit instruction to
+// rename the button and nothing else),
 // and a Directive tag in chat — same accent Sidebar.tsx uses for the
 // active-page highlight.
 
@@ -408,7 +410,7 @@ export default function TasksPageClient() {
             className="mt-3 rounded-md px-3.5 py-2 text-xs font-semibold text-black hover:opacity-90"
             style={{ backgroundColor: BRAND_GREEN }}
           >
-            + Add category
+            + Add Task
           </button>
         </div>
         <button
