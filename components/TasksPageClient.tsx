@@ -150,7 +150,10 @@ export default function TasksPageClient() {
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [newTaskNotes, setNewTaskNotes] = useState("");
   const [newTaskDueDate, setNewTaskDueDate] = useState("");
+  const [newTaskAssignees, setNewTaskAssignees] = useState<string[]>([]);
   const [creatingTask, setCreatingTask] = useState(false);
+
+  const [showAssigneePicker, setShowAssigneePicker] = useState(false);
 
   const loadCategories = useCallback(async () => {
     const { data } = await supabase.from("task_categories").select("*").order("sort_order");
@@ -261,6 +264,7 @@ export default function TasksPageClient() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional draft reset when the selected item changes
     setNotesDraft(selectedItem?.notes ?? "");
     setNotesDirty(false);
+    setShowAssigneePicker(false);
   }, [selectedItem?.id, selectedItem?.notes]);
 
   async function logActivity(
@@ -342,13 +346,41 @@ export default function TasksPageClient() {
       .single();
     setCreatingTask(false);
     if (error || !data) return;
-    await logActivity((data as TaskItem).id, "created");
+    const newItemId = (data as TaskItem).id;
+    await logActivity(newItemId, "created");
+    if (newTaskAssignees.length > 0) {
+      await supabase
+        .from("task_item_assignees")
+        .insert(newTaskAssignees.map((userId2) => ({ item_id: newItemId, user_id: userId2 })));
+      await loadAssignees();
+    }
     setNewTaskTitle("");
     setNewTaskNotes("");
     setNewTaskDueDate("");
+    setNewTaskAssignees([]);
     setShowAddTask(false);
     await loadItems();
-    goToDetail((data as TaskItem).id);
+    goToDetail(newItemId);
+  }
+
+  function toggleNewTaskAssignee(userId2: string) {
+    setNewTaskAssignees((prev) =>
+      prev.includes(userId2) ? prev.filter((id) => id !== userId2) : [...prev, userId2],
+    );
+  }
+
+  async function addAssignee(itemId: string, assigneeId: string) {
+    await supabase.from("task_item_assignees").insert({ item_id: itemId, user_id: assigneeId });
+    await loadAssignees();
+  }
+
+  async function removeAssignee(itemId: string, assigneeId: string) {
+    await supabase
+      .from("task_item_assignees")
+      .delete()
+      .eq("item_id", itemId)
+      .eq("user_id", assigneeId);
+    await loadAssignees();
   }
 
   async function deleteCategory(cat: TaskCategory) {
@@ -562,6 +594,35 @@ export default function TasksPageClient() {
                     className="rounded border border-neutral-700 bg-neutral-950 px-2 py-1 text-xs text-neutral-200"
                   />
                 </div>
+                <div>
+                  <p className="mb-1.5 text-xs text-neutral-400">Assign to (optional):</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {Object.entries(profiles).map(([id, p]) => {
+                      const selected = newTaskAssignees.includes(id);
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          onClick={() => toggleNewTaskAssignee(id)}
+                          className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs"
+                          style={
+                            selected
+                              ? { borderColor: BRAND_GREEN, color: BRAND_GREEN, backgroundColor: "rgba(106,188,70,0.08)" }
+                              : { borderColor: "#2a2a2a", color: "#9a9a97" }
+                          }
+                        >
+                          <span
+                            className="flex h-4 w-4 items-center justify-center rounded-full text-[8px] font-bold text-black"
+                            style={{ backgroundColor: hashColor(id) }}
+                          >
+                            {initials(p.full_name?.trim() || p.email)}
+                          </span>
+                          {(p.full_name?.trim() || p.email).split(" ")[0]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
                 <div className="flex justify-end gap-2">
                   <button
                     type="button"
@@ -772,6 +833,52 @@ export default function TasksPageClient() {
                       <span className="rounded px-1.5 py-0.5 text-[11px] font-bold" style={{ backgroundColor: "#4a3a1f", color: ORANGE }}>
                         Due today
                       </span>
+                    )}
+                  </div>
+                  <div className="relative mt-2 flex items-center gap-1.5">
+                    <b className="text-xs text-neutral-300">Assigned:</b>
+                    {assigneesFor(selectedItem.id).map((pid) => (
+                      <button
+                        key={pid}
+                        type="button"
+                        title={`Remove ${displayName(profiles, pid)}`}
+                        onClick={() => removeAssignee(selectedItem.id, pid)}
+                        className="flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold text-black hover:opacity-70"
+                        style={{ backgroundColor: hashColor(pid) }}
+                      >
+                        {initials(displayName(profiles, pid))}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setShowAssigneePicker((v) => !v)}
+                      className="flex h-6 w-6 items-center justify-center rounded-full border border-dashed border-neutral-600 text-xs text-neutral-500 hover:border-neutral-400 hover:text-neutral-300"
+                    >
+                      +
+                    </button>
+                    {showAssigneePicker && (
+                      <div className="absolute left-0 top-7 z-10 flex w-56 flex-col gap-1 rounded-lg border border-neutral-700 bg-neutral-900 p-2 shadow-lg">
+                        {Object.entries(profiles)
+                          .filter(([id]) => !assigneesFor(selectedItem.id).includes(id))
+                          .map(([id, p]) => (
+                            <button
+                              key={id}
+                              type="button"
+                              onClick={() => {
+                                addAssignee(selectedItem.id, id);
+                                setShowAssigneePicker(false);
+                              }}
+                              className="rounded px-2 py-1 text-left text-xs text-neutral-300 hover:bg-neutral-800"
+                            >
+                              {p.full_name?.trim() || p.email}
+                            </button>
+                          ))}
+                        {Object.entries(profiles).filter(
+                          ([id]) => !assigneesFor(selectedItem.id).includes(id),
+                        ).length === 0 && (
+                          <p className="px-2 py-1 text-xs text-neutral-600">Everyone&apos;s assigned.</p>
+                        )}
+                      </div>
                     )}
                   </div>
                 </div>
