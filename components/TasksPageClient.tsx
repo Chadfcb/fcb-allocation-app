@@ -14,9 +14,10 @@
 // wired to a real notes tool yet (left inert on purpose — "we will work on
 // that later"). So categories start, and stay, empty until that's built.
 //
-// Brand green (#6ABC46) marks the active filter pill, "+ Add Task" (label
-// only — it still creates a category, per Chad's explicit instruction to
-// rename the button and nothing else),
+// Brand green (#6ABC46) marks the active filter pill, "+ Add Category" /
+// "+ Add Task" (the header button is contextual: "+ Add Category" on the
+// categories landing page, "+ Add Task" once inside a category — the
+// latter is currently inert, not wired to create a real task, per Chad),
 // and a Directive tag in chat — same accent Sidebar.tsx uses for the
 // active-page highlight.
 
@@ -404,14 +405,30 @@ export default function TasksPageClient() {
             thread so whoever&apos;s driving it can give direction and whoever&apos;s doing the
             work can post updates back, right in place. Anyone can start one and assign it.
           </p>
-          <button
-            type="button"
-            onClick={addCategory}
-            className="mt-3 rounded-md px-3.5 py-2 text-xs font-semibold text-black hover:opacity-90"
-            style={{ backgroundColor: BRAND_GREEN }}
-          >
-            + Add Task
-          </button>
+          {view === "categories" ? (
+            <button
+              type="button"
+              onClick={addCategory}
+              className="mt-3 rounded-md px-3.5 py-2 text-xs font-semibold text-black hover:opacity-90"
+              style={{ backgroundColor: BRAND_GREEN }}
+            >
+              + Add Category
+            </button>
+          ) : (
+            // Inside a category (items or detail view): label matches the
+            // approved flow, but per Chad this isn't wired to create a real
+            // task yet — same "visible but inert" treatment as the
+            // Pull-notes button until that's explicitly asked for.
+            <button
+              type="button"
+              disabled
+              title="Coming soon"
+              className="mt-3 cursor-not-allowed rounded-md px-3.5 py-2 text-xs font-semibold text-black opacity-60"
+              style={{ backgroundColor: BRAND_GREEN }}
+            >
+              + Add Task
+            </button>
+          )}
         </div>
         <button
           type="button"
