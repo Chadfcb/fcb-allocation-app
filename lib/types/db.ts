@@ -600,36 +600,79 @@ export interface PosLabelFile {
 }
 
 // =========================================================
-// Projects — the company-wide action/directive tracker. Deliberately open
-// to every signed-in user, not gated by Team Access (see sql/projects.sql
-// and components/ProjectsPageClient.tsx) — anyone can create an item or
-// post to its chat thread, so leadership has visibility into everything
-// currently happening across the company.
+// Tasks (formerly "Projects") — the company-wide action/directive tracker.
+// Deliberately open to every signed-in user, not gated by Team Access (see
+// sql/tasks.sql and components/TasksPageClient.tsx) — anyone can create a
+// category or item, assign it, or post to its chat thread, so leadership
+// has visibility into everything currently happening across the company.
+//
+// Three-tier structure: Categories (Sales/Operations/Marketing/Admin/
+// Others, seeded, more addable) -> that category's Items (open/resolved,
+// with an optional due date) -> an item's Detail (notes, assignees, chat
+// thread, and an auto-logged Activity timeline).
 // =========================================================
-export type ProjectItemStatus = "open" | "resolved";
+export interface TaskCategory {
+  id: string;
+  key: string;
+  name: string;
+  color: string | null;
+  sort_order: number;
+  created_by: string | null;
+  created_at: string;
+}
+
+export type TaskItemStatus = "open" | "resolved";
 
 // 'manual' is the only source wired up today (someone typed the item in).
-// 'meeting_notes' / 'ai_import' are reserved for a future real notes-tool
-// integration — not simulated or built here.
-export type ProjectItemSource = "manual" | "meeting_notes" | "ai_import";
+// 'ai_import' is reserved for the "Pull action items from today's notes"
+// button, which is visible in the UI but not wired to a real notes tool
+// yet — not simulated here.
+export type TaskItemSource = "manual" | "ai_import";
 
-export interface ProjectItem {
+export interface TaskItem {
   id: string;
+  category_id: string | null;
   title: string;
   notes: string | null;
-  status: ProjectItemStatus;
-  source: ProjectItemSource;
+  status: TaskItemStatus;
+  source: TaskItemSource;
+  due_date: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
   resolved_at: string | null;
 }
 
-export interface ProjectMessage {
+export interface TaskItemAssignee {
+  item_id: string;
+  user_id: string;
+  added_at: string;
+}
+
+export interface TaskMessage {
   id: string;
   item_id: string;
   author_id: string | null;
   body: string;
   is_directive: boolean;
+  created_at: string;
+}
+
+export type TaskActivityAction =
+  | "created"
+  | "due_date_set"
+  | "due_date_cleared"
+  | "directive_posted"
+  | "reply_posted"
+  | "resolved"
+  | "reopened"
+  | "category_changed";
+
+export interface TaskItemActivity {
+  id: string;
+  item_id: string;
+  actor_id: string | null;
+  action: TaskActivityAction;
+  detail: string | null;
   created_at: string;
 }

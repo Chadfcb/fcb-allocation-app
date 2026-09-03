@@ -162,7 +162,7 @@ export default function Sidebar({
   // (FCB's brand green, #6ABC46, sampled from the hop cone in the company
   // logo) for whichever page is currently open, applied identically to
   // every nav link — Dashboard, Ernie AI, every Operations/Sales item, the
-  // POS > Labels brand/size tree, Events Calendar, Users, and Projects.
+  // POS > Labels brand/size tree, Events Calendar, Users, and Tasks.
   // border-l-2 is always reserved (transparent when inactive) so the text
   // doesn't shift left/right as a link becomes active.
   const linkClass = (href: string) =>
@@ -226,14 +226,15 @@ export default function Sidebar({
           </Link>
         )}
 
-        {/* Projects — the company-wide action/directive tracker. Deliberately
-            NOT gated by a Team Access section like everything else below:
-            per Chad, "anyone can assign... gives leadership the ability to
-            see everything currently happening inside the company," so it's
-            open to every signed-in user unconditionally, same spirit as
-            Ernie AI being available to everyone but tracked separately. */}
-        <Link href="/projects" className={`mt-1 ${linkClass("/projects")}`}>
-          Projects
+        {/* Tasks (formerly "Projects") — the company-wide action/directive
+            tracker. Deliberately NOT gated by a Team Access section like
+            everything else below: per Chad, "anyone can assign... gives
+            leadership the ability to see everything currently happening
+            inside the company," so it's open to every signed-in user
+            unconditionally, same spirit as Ernie AI being available to
+            everyone but tracked separately. */}
+        <Link href="/tasks" className={`mt-1 ${linkClass("/tasks")}`}>
+          Tasks
         </Link>
 
         {visibleOperations.length > 0 && (
