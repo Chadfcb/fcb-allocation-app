@@ -40,7 +40,7 @@ const ORANGE = "#d99a3d";
 const RED = "#e05c5c";
 const AVATAR_PALETTE = ["#d9a23d", "#4a9fd9", "#c96ad4", "#e05c5c", "#6ABC46", "#5ad9c9"];
 
-type View = "categories" | "subcategories" | "items" | "detail";
+type View = "categories" | "subcategories" | "items" | "detail" | "calendar";
 type Filter = "open" | "resolved";
 type ProfileLite = Pick<Profile, "full_name" | "email">;
 
@@ -90,6 +90,39 @@ function todayIso(): string {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
   return d.toISOString().slice(0, 10);
+}
+
+function pad2(n: number): string {
+  return n < 10 ? `0${n}` : `${n}`;
+}
+
+// Builds a "YYYY-MM-DD" string from local date parts (not toISOString, which
+// converts through UTC and can land on the wrong day depending on timezone).
+// month is 0-indexed like the Date constructor and JS normalizes over/under
+// -flow (e.g. day 0 or month 12) automatically, which the calendar grid below
+// relies on for spilling into the previous/next month.
+function isoFromParts(year: number, month: number, day: number): string {
+  const d = new Date(year, month, day);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+type CalendarCell = { iso: string; day: number; inMonth: boolean };
+
+function buildCalendarGrid(year: number, month: number): CalendarCell[] {
+  const firstDow = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const trailing = (7 - ((firstDow + daysInMonth) % 7)) % 7;
+  const cells: CalendarCell[] = [];
+  for (let i = firstDow; i > 0; i--) {
+    cells.push({ iso: isoFromParts(year, month, 1 - i), day: new Date(year, month, 1 - i).getDate(), inMonth: false });
+  }
+  for (let day = 1; day <= daysInMonth; day++) {
+    cells.push({ iso: isoFromParts(year, month, day), day, inMonth: true });
+  }
+  for (let day = 1; day <= trailing; day++) {
+    cells.push({ iso: isoFromParts(year, month + 1, day), day, inMonth: false });
+  }
+  return cells;
 }
 
 function dueStatus(item: TaskItem): "overdue" | "today" | "upcoming" | null {
@@ -150,7 +183,12 @@ export default function TasksPageClient() {
   const [currentCategoryId, setCurrentCategoryId] = useState<string | null>(null);
   const [currentSubcategoryId, setCurrentSubcategoryId] = useState<string | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [detailReturn, setDetailReturn] = useState<"items" | "calendar">("items");
   const [filter, setFilter] = useState<Filter>("open");
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const d = new Date();
+    return { year: d.getFullYear(), month: d.getMonth() };
+  });
 
   const [notesDraft, setNotesDraft] = useState("");
   const [notesDirty, setNotesDirty] = useState(false);
@@ -326,6 +364,28 @@ export default function TasksPageClient() {
       (i) => i.subcategory_id === subcategoryId && (dueStatus(i) === "overdue" || dueStatus(i) === "today"),
     ).length;
   }
+  function categoryForItem(item: TaskItem): TaskCategory | null {
+    const sub = subcategories.find((s) => s.id === item.subcategory_id);
+    if (!sub) return null;
+    return categories.find((c) => c.id === sub.category_id) ?? null;
+  }
+  function itemsForDate(iso: string) {
+    return items.filter((i) => i.due_date === iso);
+  }
+  function shiftMonth(delta: number) {
+    setCalendarMonth((prev) => {
+      let month = prev.month + delta;
+      let year = prev.year;
+      if (month < 0) {
+        month = 11;
+        year -= 1;
+      } else if (month > 11) {
+        month = 0;
+        year += 1;
+      }
+      return { year, month };
+    });
+  }
   function assigneesFor(itemId: string) {
     return assignees.filter((a) => a.item_id === itemId).map((a) => a.user_id);
   }
@@ -355,8 +415,9 @@ export default function TasksPageClient() {
     setView("items");
     setShowAddTask(false);
   }
-  function goToDetail(itemId: string) {
+  function goToDetail(itemId: string, returnTo: "items" | "calendar" = "items") {
     setSelectedItemId(itemId);
+    setDetailReturn(returnTo);
     setView("detail");
     setShowAddTask(false);
   }
@@ -588,6 +649,28 @@ export default function TasksPageClient() {
             thread so whoever&apos;s driving it can give direction and whoever&apos;s doing the
             work can post updates back, right in place. Anyone can start one and assign it.
           </p>
+          {(view === "categories" || view === "calendar") && (
+            <div className="mt-3 inline-flex gap-1.5 rounded-full border border-neutral-700 bg-neutral-900 p-1">
+              <button
+                type="button"
+                onClick={goToCategories}
+                className={`rounded-full px-4 py-1.5 text-xs font-semibold ${
+                  view === "categories" ? "bg-neutral-100 text-neutral-900" : "text-neutral-400 hover:text-neutral-100"
+                }`}
+              >
+                Categories
+              </button>
+              <button
+                type="button"
+                onClick={() => setView("calendar")}
+                className={`rounded-full px-4 py-1.5 text-xs font-semibold ${
+                  view === "calendar" ? "bg-neutral-100 text-neutral-900" : "text-neutral-400 hover:text-neutral-100"
+                }`}
+              >
+                Calendar
+              </button>
+            </div>
+          )}
           {view === "categories" && (
             <button
               type="button"
@@ -994,15 +1077,137 @@ export default function TasksPageClient() {
           </div>
         )}
 
+        {view === "calendar" && (
+          <div className="py-2">
+            {(() => {
+              const overdue = items.filter((i) => dueStatus(i) === "overdue");
+              if (overdue.length === 0) return null;
+              return (
+                <div className="mb-5 rounded-lg border border-red-950 bg-red-950/30 px-4 py-3.5">
+                  <p className="mb-2 text-xs font-bold tracking-wide text-red-300">
+                    ⚠ NEEDS ATTENTION — overdue, still open
+                  </p>
+                  {overdue.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => goToDetail(item.id, "calendar")}
+                      className="flex w-full items-center justify-between gap-3 border-t border-red-900/30 py-1.5 text-left first:border-t-0"
+                    >
+                      <span className="text-sm text-neutral-300">{item.title}</span>
+                      <span className="whitespace-nowrap text-xs font-semibold" style={{ color: RED }}>
+                        Past due · {item.due_date && formatDueDate(item.due_date)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
+
+            <div className="mb-4 flex items-center justify-center gap-4">
+              <button
+                type="button"
+                onClick={() => shiftMonth(-1)}
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-neutral-500"
+              >
+                ‹
+              </button>
+              <span className="min-w-[160px] text-center text-[15px] font-bold text-neutral-100">
+                {new Date(calendarMonth.year, calendarMonth.month, 1).toLocaleDateString(undefined, {
+                  month: "long",
+                  year: "numeric",
+                })}
+              </span>
+              <button
+                type="button"
+                onClick={() => shiftMonth(1)}
+                className="flex h-7 w-7 items-center justify-center rounded-md border border-neutral-700 bg-neutral-900 text-neutral-300 hover:border-neutral-500"
+              >
+                ›
+              </button>
+            </div>
+
+            <div className="grid grid-cols-7 gap-px overflow-hidden rounded-lg border border-neutral-800 bg-neutral-800">
+              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+                <div
+                  key={d}
+                  className="bg-neutral-900 px-2 py-2 text-center text-[10.5px] font-bold tracking-wide text-neutral-500"
+                >
+                  {d.toUpperCase()}
+                </div>
+              ))}
+              {buildCalendarGrid(calendarMonth.year, calendarMonth.month).map((cell) => {
+                const dayItems = itemsForDate(cell.iso);
+                const isToday = cell.iso === todayIso();
+                return (
+                  <div
+                    key={cell.iso}
+                    className={`flex min-h-[96px] flex-col gap-1 px-1.5 pb-2 pt-1.5 ${
+                      cell.inMonth ? "bg-neutral-950" : "bg-neutral-950/40"
+                    }`}
+                    style={isToday ? { backgroundColor: "rgba(106,188,70,0.06)" } : undefined}
+                  >
+                    <span
+                      className={
+                        isToday
+                          ? "flex h-[18px] w-[18px] items-center justify-center rounded-full text-[11px] font-extrabold text-black"
+                          : `px-0.5 text-[11px] font-semibold ${cell.inMonth ? "text-neutral-400" : "text-neutral-700"}`
+                      }
+                      style={isToday ? { backgroundColor: BRAND_GREEN } : undefined}
+                    >
+                      {cell.day}
+                    </span>
+                    {dayItems.map((item) => {
+                      const cat = categoryForItem(item);
+                      const overdueChip = dueStatus(item) === "overdue";
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          title={item.title}
+                          onClick={() => goToDetail(item.id, "calendar")}
+                          className="truncate rounded px-1.5 py-0.5 text-left text-[10px] font-semibold text-black"
+                          style={{
+                            backgroundColor: cat?.color ?? "#8a8a86",
+                            outline: overdueChip ? `1.5px solid ${RED}` : undefined,
+                            outlineOffset: overdueChip ? "-1.5px" : undefined,
+                          }}
+                        >
+                          {item.title}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-5 flex flex-wrap gap-4 text-[11.5px] text-neutral-400">
+              {categories.map((cat) => (
+                <span key={cat.id} className="flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: cat.color ?? "#8a8a86" }} />
+                  {cat.name}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
         {view === "detail" && selectedItem && (
           <div className="flex h-full gap-4 py-2">
             <div className="flex w-72 shrink-0 flex-col overflow-y-auto border-r border-neutral-800 pr-4">
               <button
                 type="button"
-                onClick={() => currentSubcategory && goToItems(currentSubcategory.id)}
+                onClick={() => {
+                  if (detailReturn === "calendar") {
+                    setView("calendar");
+                    return;
+                  }
+                  if (currentSubcategory) goToItems(currentSubcategory.id);
+                }}
                 className="mb-4 flex items-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800"
               >
-                ← {currentSubcategory?.name ?? "Tasks"}
+                ← {detailReturn === "calendar" ? "Calendar" : (currentSubcategory?.name ?? "Tasks")}
               </button>
               <p className="mb-2 text-[11px] tracking-wide text-neutral-500">ACTIVITY LOG</p>
               {activity.length === 0 && <p className="text-xs text-neutral-600">No activity yet.</p>}
