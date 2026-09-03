@@ -598,3 +598,38 @@ export interface PosLabelFile {
   uploaded_by: string | null;
   uploaded_at: string;
 }
+
+// =========================================================
+// Projects — the company-wide action/directive tracker. Deliberately open
+// to every signed-in user, not gated by Team Access (see sql/projects.sql
+// and components/ProjectsPageClient.tsx) — anyone can create an item or
+// post to its chat thread, so leadership has visibility into everything
+// currently happening across the company.
+// =========================================================
+export type ProjectItemStatus = "open" | "resolved";
+
+// 'manual' is the only source wired up today (someone typed the item in).
+// 'meeting_notes' / 'ai_import' are reserved for a future real notes-tool
+// integration — not simulated or built here.
+export type ProjectItemSource = "manual" | "meeting_notes" | "ai_import";
+
+export interface ProjectItem {
+  id: string;
+  title: string;
+  notes: string | null;
+  status: ProjectItemStatus;
+  source: ProjectItemSource;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+}
+
+export interface ProjectMessage {
+  id: string;
+  item_id: string;
+  author_id: string | null;
+  body: string;
+  is_directive: boolean;
+  created_at: string;
+}

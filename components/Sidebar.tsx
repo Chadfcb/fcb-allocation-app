@@ -158,11 +158,18 @@ export default function Sidebar({
     return hasSection(role, sections, section);
   }
 
+  // Site-wide active-page highlight: a green left border + green text
+  // (FCB's brand green, #6ABC46, sampled from the hop cone in the company
+  // logo) for whichever page is currently open, applied identically to
+  // every nav link — Dashboard, Ernie AI, every Operations/Sales item, the
+  // POS > Labels brand/size tree, Events Calendar, Users, and Projects.
+  // border-l-2 is always reserved (transparent when inactive) so the text
+  // doesn't shift left/right as a link becomes active.
   const linkClass = (href: string) =>
-    `rounded px-2 py-1.5 ${
+    `rounded border-l-2 px-2 py-1.5 ${
       isActive(href)
-        ? "bg-neutral-900 font-semibold text-white"
-        : "text-neutral-400 hover:bg-neutral-900 hover:text-white"
+        ? "border-[#6ABC46] bg-neutral-900 font-semibold text-[#6ABC46]"
+        : "border-transparent text-neutral-400 hover:bg-neutral-900 hover:text-white"
     }`;
 
   if (hidden) {
@@ -218,6 +225,16 @@ export default function Sidebar({
             Ernie AI
           </Link>
         )}
+
+        {/* Projects — the company-wide action/directive tracker. Deliberately
+            NOT gated by a Team Access section like everything else below:
+            per Chad, "anyone can assign... gives leadership the ability to
+            see everything currently happening inside the company," so it's
+            open to every signed-in user unconditionally, same spirit as
+            Ernie AI being available to everyone but tracked separately. */}
+        <Link href="/projects" className={`mt-1 ${linkClass("/projects")}`}>
+          Projects
+        </Link>
 
         {visibleOperations.length > 0 && (
           <>
