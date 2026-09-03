@@ -126,6 +126,8 @@ function activityText(entry: TaskItemActivity, profiles: Record<string, ProfileL
       return `Reopened by ${actor}`;
     case "category_changed":
       return `Moved to ${entry.detail} by ${actor}`;
+    case "renamed":
+      return `Renamed to "${entry.detail}" by ${actor}`;
     default:
       return entry.action;
   }
@@ -385,6 +387,41 @@ export default function TasksPageClient() {
     await loadSubcategories();
   }
 
+  async function renameCategory(cat: TaskCategory) {
+    const name = window.prompt("Rename category:", cat.name);
+    if (!name?.trim() || name.trim() === cat.name) return;
+    const key = slugify(name);
+    if (key !== cat.key && categories.some((c) => c.key === key)) {
+      window.alert("A category with that name already exists.");
+      return;
+    }
+    await supabase.from("task_categories").update({ name: name.trim(), key }).eq("id", cat.id);
+    await loadCategories();
+  }
+
+  async function renameSubcategory(sub: TaskSubcategory) {
+    const name = window.prompt("Rename subcategory:", sub.name);
+    if (!name?.trim() || name.trim() === sub.name) return;
+    const key = slugify(name);
+    if (key !== sub.key && subcategoriesFor(sub.category_id).some((s) => s.key === key)) {
+      window.alert("A subcategory with that name already exists in this category.");
+      return;
+    }
+    await supabase
+      .from("task_subcategories")
+      .update({ name: name.trim(), key })
+      .eq("id", sub.id);
+    await loadSubcategories();
+  }
+
+  async function renameTask(item: TaskItem) {
+    const title = window.prompt("Rename task:", item.title);
+    if (!title?.trim() || title.trim() === item.title) return;
+    await supabase.from("task_items").update({ title: title.trim() }).eq("id", item.id);
+    await logActivity(item.id, "renamed", title.trim());
+    await loadItems();
+  }
+
   async function createTask() {
     const title = newTaskTitle.trim();
     if (!title || !currentSubcategoryId) return;
@@ -605,17 +642,30 @@ export default function TasksPageClient() {
                   className="group relative flex min-h-[110px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-4 hover:border-neutral-600"
                   onClick={() => goToSubcategories(cat.id)}
                 >
-                  <button
-                    type="button"
-                    title={`Delete ${cat.name}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteCategory(cat);
-                    }}
-                    className="absolute -left-2 -top-2 hidden h-5 w-5 items-center justify-center rounded-full border border-neutral-700 bg-neutral-800 text-xs text-neutral-400 hover:border-red-900 hover:bg-red-950 hover:text-red-400 group-hover:flex"
-                  >
-                    ✕
-                  </button>
+                  <div className="absolute -left-2 -top-2 hidden gap-1 group-hover:flex">
+                    <button
+                      type="button"
+                      title={`Rename ${cat.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        renameCategory(cat);
+                      }}
+                      className="flex h-5 w-5 items-center justify-center rounded-full border border-neutral-700 bg-neutral-800 text-[10px] text-neutral-400 hover:border-neutral-500 hover:text-neutral-100"
+                    >
+                      ✎
+                    </button>
+                    <button
+                      type="button"
+                      title={`Delete ${cat.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteCategory(cat);
+                      }}
+                      className="flex h-5 w-5 items-center justify-center rounded-full border border-neutral-700 bg-neutral-800 text-xs text-neutral-400 hover:border-red-900 hover:bg-red-950 hover:text-red-400"
+                    >
+                      ✕
+                    </button>
+                  </div>
                   <span className="text-[15px] font-semibold text-neutral-100">{cat.name}</span>
                   {urgent > 0 && (
                     <span className="flex items-center gap-1.5 text-xs text-neutral-400">
@@ -671,17 +721,30 @@ export default function TasksPageClient() {
                     className="group relative flex min-h-[110px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-4 hover:border-neutral-600"
                     onClick={() => goToItems(sub.id)}
                   >
-                    <button
-                      type="button"
-                      title={`Delete ${sub.name}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteSubcategory(sub);
-                      }}
-                      className="absolute -left-2 -top-2 hidden h-5 w-5 items-center justify-center rounded-full border border-neutral-700 bg-neutral-800 text-xs text-neutral-400 hover:border-red-900 hover:bg-red-950 hover:text-red-400 group-hover:flex"
-                    >
-                      ✕
-                    </button>
+                    <div className="absolute -left-2 -top-2 hidden gap-1 group-hover:flex">
+                      <button
+                        type="button"
+                        title={`Rename ${sub.name}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          renameSubcategory(sub);
+                        }}
+                        className="flex h-5 w-5 items-center justify-center rounded-full border border-neutral-700 bg-neutral-800 text-[10px] text-neutral-400 hover:border-neutral-500 hover:text-neutral-100"
+                      >
+                        ✎
+                      </button>
+                      <button
+                        type="button"
+                        title={`Delete ${sub.name}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteSubcategory(sub);
+                        }}
+                        className="flex h-5 w-5 items-center justify-center rounded-full border border-neutral-700 bg-neutral-800 text-xs text-neutral-400 hover:border-red-900 hover:bg-red-950 hover:text-red-400"
+                      >
+                        ✕
+                      </button>
+                    </div>
                     <span className="text-[15px] font-semibold text-neutral-100">{sub.name}</span>
                     {urgent > 0 && (
                       <span className="flex items-center gap-1.5 text-xs text-neutral-400">
@@ -966,6 +1029,14 @@ export default function TasksPageClient() {
                 <div>
                   <div className="flex flex-wrap items-center gap-2.5">
                     <h2 className="text-lg font-bold text-neutral-100">{selectedItem.title}</h2>
+                    <button
+                      type="button"
+                      title="Rename task"
+                      onClick={() => renameTask(selectedItem)}
+                      className="text-xs text-neutral-500 hover:text-neutral-200"
+                    >
+                      ✎
+                    </button>
                     <span
                       className="rounded px-2 py-0.5 text-xs font-semibold"
                       style={

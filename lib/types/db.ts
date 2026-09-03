@@ -678,7 +678,8 @@ export type TaskActivityAction =
   | "reply_posted"
   | "resolved"
   | "reopened"
-  | "category_changed";
+  | "category_changed"
+  | "renamed";
 
 export interface TaskItemActivity {
   id: string;
