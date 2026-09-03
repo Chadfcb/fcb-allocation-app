@@ -607,15 +607,27 @@ export interface PosLabelFile {
 // has visibility into everything currently happening across the company.
 //
 // Three-tier structure: Categories (Sales/Operations/Marketing/Admin/
-// Others, seeded, more addable) -> that category's Items (open/resolved,
-// with an optional due date) -> an item's Detail (notes, assignees, chat
-// thread, and an auto-logged Activity timeline).
+// Others, seeded, more addable) -> that category's Subcategories (e.g.
+// under Operations: PO, Fermentation, Brews — user-defined, more addable)
+// -> that subcategory's Tasks (open/resolved, with an optional due date)
+// -> a task's Detail (notes, assignees, chat thread, and an auto-logged
+// Activity timeline).
 // =========================================================
 export interface TaskCategory {
   id: string;
   key: string;
   name: string;
   color: string | null;
+  sort_order: number;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface TaskSubcategory {
+  id: string;
+  category_id: string;
+  key: string;
+  name: string;
   sort_order: number;
   created_by: string | null;
   created_at: string;
@@ -631,7 +643,7 @@ export type TaskItemSource = "manual" | "ai_import";
 
 export interface TaskItem {
   id: string;
-  category_id: string | null;
+  subcategory_id: string | null;
   title: string;
   notes: string | null;
   status: TaskItemStatus;

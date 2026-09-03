@@ -1,24 +1,26 @@
 "use client";
 
-// Tasks (formerly "Projects") — the company-wide action/directive tracker,
-// built to match the approved preview exactly: Categories (Sales/
-// Operations/Marketing/Admin/Others, seeded, more addable) -> that
-// category's Items (Open/Resolved, with an optional due date and a
-// "NEEDS ATTENTION" box for anything overdue/due today) -> an item's
-// Detail (notes, team chat with Directive tags, and an auto-logged
+// Tasks (formerly "Projects") — the company-wide action/directive tracker.
+// Four tiers: Categories (Sales/Operations/Marketing/Admin/Others, seeded,
+// more addable) -> that category's Subcategories (e.g. under Operations:
+// PO, Fermentation, Brews — user-defined, more addable) -> that
+// subcategory's Tasks (Open/Resolved, with an optional due date and a
+// "NEEDS ATTENTION" box for anything overdue/due today) -> a task's Detail
+// (notes, assignees, team chat with Directive tags, and an auto-logged
 // Activity timeline).
 //
-// The header's green button is contextual: "+ Add Category" on the
-// categories landing page (creates a category via a name prompt); "+ Add
-// Task" once inside a category (opens an inline form — title, optional
-// notes, optional due date — and creates a real row in task_items). The
-// "✨ Pull action items from today's notes" button stays visible but isn't
-// wired to a real notes tool yet — that's the one piece still deliberately
-// inert ("we will work on that later").
+// The header's green button is contextual to the current tier:
+// "+ Add Category" on the categories landing page, "+ Add Subcategory"
+// once inside a category, "+ Add Task" once inside a subcategory (opens
+// an inline form — title, optional notes, optional due date, optional
+// assignees — and creates a real row in task_items). The "✨ Pull action
+// items from today's notes" button stays visible but isn't wired to a
+// real notes tool yet — that's the one piece still deliberately inert
+// ("we will work on that later").
 //
-// Brand green (#6ABC46) marks the active filter pill, both "+ Add" buttons,
-// and a Directive tag in chat — same accent Sidebar.tsx uses for the
-// active-page highlight.
+// Brand green (#6ABC46) marks the active filter pill, every "+ Add"
+// button, and a Directive tag in chat — same accent Sidebar.tsx uses for
+// the active-page highlight.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -30,6 +32,7 @@ import type {
   TaskItemActivity,
   TaskItemAssignee,
   TaskMessage,
+  TaskSubcategory,
 } from "@/lib/types/db";
 
 const BRAND_GREEN = "#6ABC46";
@@ -37,7 +40,7 @@ const ORANGE = "#d99a3d";
 const RED = "#e05c5c";
 const AVATAR_PALETTE = ["#d9a23d", "#4a9fd9", "#c96ad4", "#e05c5c", "#6ABC46", "#5ad9c9"];
 
-type View = "categories" | "items" | "detail";
+type View = "categories" | "subcategories" | "items" | "detail";
 type Filter = "open" | "resolved";
 type ProfileLite = Pick<Profile, "full_name" | "email">;
 
@@ -133,6 +136,7 @@ export default function TasksPageClient() {
 
   const [userId, setUserId] = useState<string | null>(null);
   const [categories, setCategories] = useState<TaskCategory[]>([]);
+  const [subcategories, setSubcategories] = useState<TaskSubcategory[]>([]);
   const [items, setItems] = useState<TaskItem[]>([]);
   const [assignees, setAssignees] = useState<TaskItemAssignee[]>([]);
   const [messages, setMessages] = useState<TaskMessage[]>([]);
@@ -142,6 +146,7 @@ export default function TasksPageClient() {
 
   const [view, setView] = useState<View>("categories");
   const [currentCategoryId, setCurrentCategoryId] = useState<string | null>(null);
+  const [currentSubcategoryId, setCurrentSubcategoryId] = useState<string | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("open");
 
@@ -163,6 +168,11 @@ export default function TasksPageClient() {
   const loadCategories = useCallback(async () => {
     const { data } = await supabase.from("task_categories").select("*").order("sort_order");
     setCategories((data as TaskCategory[]) ?? []);
+  }, [supabase]);
+
+  const loadSubcategories = useCallback(async () => {
+    const { data } = await supabase.from("task_subcategories").select("*").order("sort_order");
+    setSubcategories((data as TaskSubcategory[]) ?? []);
   }, [supabase]);
 
   const loadItems = useCallback(async () => {
@@ -217,6 +227,7 @@ export default function TasksPageClient() {
     })();
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional fetch-on-mount
     loadCategories();
+    loadSubcategories();
     loadItems();
     loadAssignees();
     loadMessages();
@@ -225,6 +236,7 @@ export default function TasksPageClient() {
     const channel = supabase
       .channel("tasks-live")
       .on("postgres_changes", { event: "*", schema: "public", table: "task_categories" }, loadCategories)
+      .on("postgres_changes", { event: "*", schema: "public", table: "task_subcategories" }, loadSubcategories)
       .on("postgres_changes", { event: "*", schema: "public", table: "task_items" }, loadItems)
       .on("postgres_changes", { event: "*", schema: "public", table: "task_item_assignees" }, loadAssignees)
       .on("postgres_changes", { event: "*", schema: "public", table: "task_messages" }, loadMessages)
@@ -233,7 +245,7 @@ export default function TasksPageClient() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [supabase, loadCategories, loadItems, loadAssignees, loadMessages, loadProfiles]);
+  }, [supabase, loadCategories, loadSubcategories, loadItems, loadAssignees, loadMessages, loadProfiles]);
 
   useEffect(() => {
     if (!selectedItemId) {
@@ -264,6 +276,7 @@ export default function TasksPageClient() {
 
   const selectedItem = items.find((i) => i.id === selectedItemId) ?? null;
   const currentCategory = categories.find((c) => c.id === currentCategoryId) ?? null;
+  const currentSubcategory = subcategories.find((s) => s.id === currentSubcategoryId) ?? null;
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional draft reset when the selected item changes
@@ -283,15 +296,32 @@ export default function TasksPageClient() {
       .insert({ item_id: itemId, actor_id: userId, action, detail });
   }
 
-  function openCountFor(categoryId: string) {
-    return items.filter((i) => i.category_id === categoryId && i.status === "open").length;
+  function subcategoriesFor(categoryId: string) {
+    return subcategories.filter((s) => s.category_id === categoryId);
   }
-  function closedCountFor(categoryId: string) {
-    return items.filter((i) => i.category_id === categoryId && i.status === "resolved").length;
+  function categoryOpenCount(categoryId: string) {
+    const subIds = subcategoriesFor(categoryId).map((s) => s.id);
+    return items.filter((i) => i.subcategory_id && subIds.includes(i.subcategory_id) && i.status === "open").length;
   }
-  function urgentCountFor(categoryId: string) {
+  function categoryClosedCount(categoryId: string) {
+    const subIds = subcategoriesFor(categoryId).map((s) => s.id);
+    return items.filter((i) => i.subcategory_id && subIds.includes(i.subcategory_id) && i.status === "resolved").length;
+  }
+  function categoryUrgentCount(categoryId: string) {
+    const subIds = subcategoriesFor(categoryId).map((s) => s.id);
     return items.filter(
-      (i) => i.category_id === categoryId && (dueStatus(i) === "overdue" || dueStatus(i) === "today"),
+      (i) => i.subcategory_id && subIds.includes(i.subcategory_id) && (dueStatus(i) === "overdue" || dueStatus(i) === "today"),
+    ).length;
+  }
+  function subOpenCount(subcategoryId: string) {
+    return items.filter((i) => i.subcategory_id === subcategoryId && i.status === "open").length;
+  }
+  function subClosedCount(subcategoryId: string) {
+    return items.filter((i) => i.subcategory_id === subcategoryId && i.status === "resolved").length;
+  }
+  function subUrgentCount(subcategoryId: string) {
+    return items.filter(
+      (i) => i.subcategory_id === subcategoryId && (dueStatus(i) === "overdue" || dueStatus(i) === "today"),
     ).length;
   }
   function assigneesFor(itemId: string) {
@@ -308,10 +338,17 @@ export default function TasksPageClient() {
   function goToCategories() {
     setView("categories");
     setCurrentCategoryId(null);
+    setCurrentSubcategoryId(null);
     setShowAddTask(false);
   }
-  function goToCategoryItems(categoryId: string) {
+  function goToSubcategories(categoryId: string) {
     setCurrentCategoryId(categoryId);
+    setCurrentSubcategoryId(null);
+    setView("subcategories");
+    setShowAddTask(false);
+  }
+  function goToItems(subcategoryId: string) {
+    setCurrentSubcategoryId(subcategoryId);
     setFilter("open");
     setView("items");
     setShowAddTask(false);
@@ -334,14 +371,28 @@ export default function TasksPageClient() {
     await loadCategories();
   }
 
+  async function addSubcategory(categoryId: string) {
+    const name = window.prompt("New subcategory name:");
+    if (!name?.trim()) return;
+    const key = slugify(name);
+    if (subcategoriesFor(categoryId).some((s) => s.key === key)) {
+      window.alert("A subcategory with that name already exists in this category.");
+      return;
+    }
+    await supabase
+      .from("task_subcategories")
+      .insert({ category_id: categoryId, key, name: name.trim(), created_by: userId });
+    await loadSubcategories();
+  }
+
   async function createTask() {
     const title = newTaskTitle.trim();
-    if (!title || !currentCategoryId) return;
+    if (!title || !currentSubcategoryId) return;
     setCreatingTask(true);
     const { data, error } = await supabase
       .from("task_items")
       .insert({
-        category_id: currentCategoryId,
+        subcategory_id: currentSubcategoryId,
         title,
         notes: newTaskNotes.trim() || null,
         due_date: newTaskDueDate || null,
@@ -389,14 +440,15 @@ export default function TasksPageClient() {
   }
 
   async function deleteCategory(cat: TaskCategory) {
-    const count = items.filter((i) => i.category_id === cat.id).length;
+    const catSubs = subcategoriesFor(cat.id);
+    const taskCount = items.filter((i) => i.subcategory_id && catSubs.some((s) => s.id === i.subcategory_id)).length;
     const msg =
-      count > 0
-        ? `Delete "${cat.name}"? ${count} item(s) in it will move to Others.`
+      catSubs.length > 0
+        ? `Delete "${cat.name}"? ${catSubs.length} subcategor${catSubs.length === 1 ? "y" : "ies"} (${taskCount} task(s)) will move to Others.`
         : `Delete "${cat.name}"?`;
     if (!window.confirm(msg)) return;
 
-    if (count > 0) {
+    if (catSubs.length > 0) {
       let others = categories.find((c) => c.key === "others");
       if (!others) {
         const { data } = await supabase
@@ -407,15 +459,38 @@ export default function TasksPageClient() {
         others = data as TaskCategory;
       }
       if (others) {
-        await supabase
-          .from("task_items")
-          .update({ category_id: others.id })
-          .eq("category_id", cat.id);
+        for (const sub of catSubs) {
+          const { error } = await supabase
+            .from("task_subcategories")
+            .update({ category_id: others.id })
+            .eq("id", sub.id);
+          if (error) {
+            // A subcategory with the same key already exists under Others —
+            // rename this one to disambiguate instead of losing it.
+            await supabase
+              .from("task_subcategories")
+              .update({ category_id: others.id, key: `${sub.key}-${cat.key}` })
+              .eq("id", sub.id);
+          }
+        }
       }
     }
     await supabase.from("task_categories").delete().eq("id", cat.id);
     await loadCategories();
-    await loadItems();
+    await loadSubcategories();
+  }
+
+  async function deleteSubcategory(sub: TaskSubcategory) {
+    const count = subOpenCount(sub.id) + subClosedCount(sub.id);
+    if (count > 0) {
+      window.alert(
+        `"${sub.name}" has ${count} task(s) in it. Move or resolve them into another subcategory before deleting this one.`,
+      );
+      return;
+    }
+    if (!window.confirm(`Delete "${sub.name}"?`)) return;
+    await supabase.from("task_subcategories").delete().eq("id", sub.id);
+    await loadSubcategories();
   }
 
   async function toggleStatus(item: TaskItem) {
@@ -476,7 +551,7 @@ export default function TasksPageClient() {
             thread so whoever&apos;s driving it can give direction and whoever&apos;s doing the
             work can post updates back, right in place. Anyone can start one and assign it.
           </p>
-          {view === "categories" ? (
+          {view === "categories" && (
             <button
               type="button"
               onClick={addCategory}
@@ -485,7 +560,18 @@ export default function TasksPageClient() {
             >
               + Add Category
             </button>
-          ) : (
+          )}
+          {view === "subcategories" && currentCategory && (
+            <button
+              type="button"
+              onClick={() => addSubcategory(currentCategory.id)}
+              className="mt-3 rounded-md px-3.5 py-2 text-xs font-semibold text-black hover:opacity-90"
+              style={{ backgroundColor: BRAND_GREEN }}
+            >
+              + Add Subcategory
+            </button>
+          )}
+          {view === "items" && (
             <button
               type="button"
               onClick={() => setShowAddTask((v) => !v)}
@@ -510,14 +596,14 @@ export default function TasksPageClient() {
         {view === "categories" && (
           <div className="grid max-w-[900px] grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4 py-6">
             {categories.map((cat) => {
-              const open = openCountFor(cat.id);
-              const closed = closedCountFor(cat.id);
-              const urgent = urgentCountFor(cat.id);
+              const open = categoryOpenCount(cat.id);
+              const closed = categoryClosedCount(cat.id);
+              const urgent = categoryUrgentCount(cat.id);
               return (
                 <div
                   key={cat.id}
                   className="group relative flex min-h-[110px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-4 hover:border-neutral-600"
-                  onClick={() => goToCategoryItems(cat.id)}
+                  onClick={() => goToSubcategories(cat.id)}
                 >
                   <button
                     type="button"
@@ -563,7 +649,7 @@ export default function TasksPageClient() {
           </div>
         )}
 
-        {view === "items" && currentCategory && (
+        {view === "subcategories" && currentCategory && (
           <div className="py-2">
             <button
               type="button"
@@ -572,6 +658,79 @@ export default function TasksPageClient() {
             >
               ← Tasks
             </button>
+            <h2 className="mb-4 text-lg font-bold text-neutral-100">{currentCategory.name}</h2>
+
+            <div className="grid max-w-[900px] grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4">
+              {subcategoriesFor(currentCategory.id).map((sub) => {
+                const open = subOpenCount(sub.id);
+                const closed = subClosedCount(sub.id);
+                const urgent = subUrgentCount(sub.id);
+                return (
+                  <div
+                    key={sub.id}
+                    className="group relative flex min-h-[110px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-4 hover:border-neutral-600"
+                    onClick={() => goToItems(sub.id)}
+                  >
+                    <button
+                      type="button"
+                      title={`Delete ${sub.name}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteSubcategory(sub);
+                      }}
+                      className="absolute -left-2 -top-2 hidden h-5 w-5 items-center justify-center rounded-full border border-neutral-700 bg-neutral-800 text-xs text-neutral-400 hover:border-red-900 hover:bg-red-950 hover:text-red-400 group-hover:flex"
+                    >
+                      ✕
+                    </button>
+                    <span className="text-[15px] font-semibold text-neutral-100">{sub.name}</span>
+                    {urgent > 0 && (
+                      <span className="flex items-center gap-1.5 text-xs text-neutral-400">
+                        Overdue items
+                        <span
+                          className="flex h-5 min-w-[20px] items-center justify-center rounded-full px-1.5 text-[11px] font-bold text-white"
+                          style={{ backgroundColor: RED }}
+                        >
+                          {urgent}
+                        </span>
+                      </span>
+                    )}
+                    <span className="flex items-center gap-1.5 text-xs text-neutral-400">
+                      Open items
+                      <span
+                        className="flex h-5 min-w-[20px] items-center justify-center rounded-full px-1.5 text-[11px] font-bold"
+                        style={{ backgroundColor: ORANGE, color: "#1a1200" }}
+                      >
+                        {open}
+                      </span>
+                    </span>
+                    <span className="flex items-center gap-1.5 text-xs text-neutral-400">
+                      Closed items
+                      <span className="flex h-5 min-w-[20px] items-center justify-center rounded-full bg-neutral-600 px-1.5 text-[11px] font-bold text-neutral-100">
+                        {closed}
+                      </span>
+                    </span>
+                  </div>
+                );
+              })}
+              {subcategoriesFor(currentCategory.id).length === 0 && (
+                <p className="col-span-full py-6 text-sm text-neutral-600">
+                  No subcategories yet — add one above.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {view === "items" && currentSubcategory && (
+          <div className="py-2">
+            <button
+              type="button"
+              onClick={() => currentCategory && goToSubcategories(currentCategory.id)}
+              className="mb-4 flex items-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800"
+            >
+              ← {currentCategory?.name ?? "Tasks"}
+            </button>
+            <h2 className="mb-4 text-lg font-bold text-neutral-100">{currentSubcategory.name}</h2>
 
             {showAddTask && (
               <div className="mb-5 flex flex-col gap-2 rounded-lg border border-neutral-800 bg-neutral-900 px-4 py-3.5">
@@ -652,10 +811,10 @@ export default function TasksPageClient() {
 
             {(() => {
               const overdueItems = items.filter(
-                (i) => i.category_id === currentCategory.id && dueStatus(i) === "overdue",
+                (i) => i.subcategory_id === currentSubcategory.id && dueStatus(i) === "overdue",
               );
               const todayItems = items.filter(
-                (i) => i.category_id === currentCategory.id && dueStatus(i) === "today",
+                (i) => i.subcategory_id === currentSubcategory.id && dueStatus(i) === "today",
               );
               if (overdueItems.length === 0 && todayItems.length === 0) return null;
               return (
@@ -704,7 +863,7 @@ export default function TasksPageClient() {
 
             <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3">
               {items
-                .filter((i) => i.category_id === currentCategory.id && i.status === filter)
+                .filter((i) => i.subcategory_id === currentSubcategory.id && i.status === filter)
                 .map((item) => {
                   const status = dueStatus(item);
                   const last = lastMessageFor(item.id);
@@ -765,7 +924,7 @@ export default function TasksPageClient() {
                     </div>
                   );
                 })}
-              {items.filter((i) => i.category_id === currentCategory.id && i.status === filter).length === 0 && (
+              {items.filter((i) => i.subcategory_id === currentSubcategory.id && i.status === filter).length === 0 && (
                 <p className="col-span-full py-8 text-center text-sm text-neutral-600">No items here yet.</p>
               )}
             </div>
@@ -777,10 +936,10 @@ export default function TasksPageClient() {
             <div className="flex w-72 shrink-0 flex-col overflow-y-auto border-r border-neutral-800 pr-4">
               <button
                 type="button"
-                onClick={() => currentCategory && goToCategoryItems(currentCategory.id)}
+                onClick={() => currentSubcategory && goToItems(currentSubcategory.id)}
                 className="mb-4 flex items-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800"
               >
-                ← {currentCategory?.name ?? "Tasks"}
+                ← {currentSubcategory?.name ?? "Tasks"}
               </button>
               <p className="mb-2 text-[11px] tracking-wide text-neutral-500">ACTIVITY LOG</p>
               {activity.length === 0 && <p className="text-xs text-neutral-600">No activity yet.</p>}
