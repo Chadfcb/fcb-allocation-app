@@ -568,7 +568,7 @@ export default function TasksPageClient() {
             <button
               type="button"
               onClick={goToCategories}
-              className="mb-3 flex items-center gap-1.5 text-[12.5px] text-neutral-400 hover:text-neutral-200"
+              className="mb-4 flex items-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800"
             >
               ← Tasks
             </button>
@@ -778,7 +778,7 @@ export default function TasksPageClient() {
               <button
                 type="button"
                 onClick={() => currentCategory && goToCategoryItems(currentCategory.id)}
-                className="mb-3 flex items-center gap-1.5 text-[12.5px] text-neutral-400 hover:text-neutral-200"
+                className="mb-4 flex items-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800"
               >
                 ← {currentCategory?.name ?? "Tasks"}
               </button>
