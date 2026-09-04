@@ -7,10 +7,13 @@
 --
 -- Structure mirrors events/event_materials exactly (see supabase/
 -- schema.sql), just under new table names so the two calendars' events
--- never mix. Distributor color-coding, the POS Materials Library
--- (pos_library), and the "event-materials" storage bucket are all SHARED
--- with Events Calendar (per Chad — no new library/bucket needed); only
--- chain_events/chain_event_materials themselves are new/separate.
+-- never mix. The POS Materials Library (pos_library) and the
+-- "event-materials" storage bucket are SHARED with Events Calendar (per
+-- Chad — no new library/bucket needed); only chain_events/
+-- chain_event_materials themselves are new/separate. Deliberately has NO
+-- distributor association — per Chad, 2026-09-05: "remove the
+-- distributors from the chain calendar" (it originally did, matching
+-- Events Calendar; now matches Social Media Calendar instead).
 --
 -- Access: gated by the existing "events_calendar" section, same as Events
 -- Calendar and the Chain Calendar placeholder page already were — nothing
@@ -25,7 +28,6 @@ create table if not exists chain_events (
   type text not null default 'other'
     check (type in ('demo', 'reset', 'ad', 'display', 'other')),
   location text,
-  distributor_id uuid references distributors(id) on delete set null,
   rep text,
   notes text,
   created_by uuid references profiles(id),
@@ -34,6 +36,12 @@ create table if not exists chain_events (
   updated_at timestamptz not null default now()
 );
 create index if not exists chain_events_start_date_idx on chain_events (start_date);
+
+-- Idempotent safety net: this table was originally created WITH a
+-- distributor_id column (see the earlier version of this file) — drop it
+-- now that Chain Calendar no longer has a distributor association. No-op
+-- on a fresh run where the column was never created.
+alter table chain_events drop column if exists distributor_id;
 
 -- POS materials attached to one specific chain event — same pattern as
 -- event_materials, and stored in the SAME "event-materials" bucket (paths

@@ -5,8 +5,10 @@
 // account activity (demos, resets, ads, displays) instead of FCB's own
 // off-site events — kept as separate tables (chain_events/
 // chain_event_materials) so the two calendars' events never mix, while
-// still sharing the same POS Materials Library, storage bucket, and
-// Distributor list as Events Calendar (per Chad, 2026-09-04).
+// still sharing the same POS Materials Library and storage bucket as
+// Events Calendar (per Chad, 2026-09-04) — but deliberately NOT the
+// Distributor list, since this calendar no longer has a distributor
+// association (per Chad, 2026-09-05).
 //
 // Everything else generic (date parsing, file icons, month/day names,
 // storage filename sanitizing) is reused directly from lib/events.ts —

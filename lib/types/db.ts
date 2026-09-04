@@ -583,9 +583,12 @@ export interface PosLibraryFile {
 // Chain Calendar (added 2026-09-04) — same shape/abilities as
 // CalendarEvent/EventMaterial above, but a separate calendar for chain/
 // retail account activity rather than FCB's own off-site events, so the
-// two never mix. Shares the same Distributor list, POS Materials Library
-// (pos_library), and "event-materials" storage bucket as Events Calendar —
-// only the events/materials tables themselves are separate.
+// two never mix. Shares the same POS Materials Library (pos_library) and
+// "event-materials" storage bucket as Events Calendar, but deliberately
+// has NO distributor association — per Chad, 2026-09-05: "remove the
+// distributors from the chain calendar" (it originally did, matching
+// Events Calendar; now matches Social Media Calendar instead). Only the
+// events/materials tables themselves are separate.
 export type ChainEventType = "demo" | "reset" | "ad" | "display" | "other";
 
 // Named ChainEvent (not Event) for the same reason as CalendarEvent above —
@@ -598,7 +601,6 @@ export interface ChainEvent {
   time_label: string | null;
   type: ChainEventType;
   location: string | null;
-  distributor_id: string | null;
   rep: string | null;
   notes: string | null;
   created_by: string | null;
