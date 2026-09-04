@@ -49,6 +49,8 @@ const SALES_LINKS: { href: string; label: string; section: SectionKey }[] = [
 // to add more calendar types under this same category later.
 const CALENDARS_LINKS: { href: string; label: string; section: SectionKey }[] = [
   { href: "/events", label: "Events Calendar", section: "events_calendar" },
+  { href: "/chain-calendar", label: "Chain Calendar", section: "events_calendar" },
+  { href: "/social-media-calendar", label: "Social Media Calendar", section: "events_calendar" },
 ];
 
 const OPERATIONS_STORAGE_KEY = "fcb-sidebar-operations-expanded";
