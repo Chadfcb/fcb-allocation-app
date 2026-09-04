@@ -68,6 +68,25 @@ function accessSummary(user: UserRow): string {
   return withErnie.length ? withErnie.join(", ") : "No sections yet";
 }
 
+// Formats profiles.last_active_at for the Users table — added 2026-09-05
+// alongside that column (see sql/profiles_last_active.sql) so Chad has a
+// real "used the app today" signal instead of Supabase's own "last sign
+// in," which only updates on a fresh login rather than every visit.
+function formatLastActive(lastActiveAt: string | null): string {
+  if (!lastActiveAt) return "Never";
+  const date = new Date(lastActiveAt);
+  const now = new Date();
+  const isToday = date.toDateString() === now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday = date.toDateString() === yesterday.toDateString();
+
+  const time = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (isToday) return `Today, ${time}`;
+  if (isYesterday) return `Yesterday, ${time}`;
+  return date.toLocaleDateString();
+}
+
 function GroupChecklist({
   role,
   state,
@@ -357,6 +376,7 @@ export default function UsersPage() {
             <tr>
               <th className="px-3 py-2 text-left">Email</th>
               <th className="px-3 py-2 text-left">Joined</th>
+              <th className="px-3 py-2 text-left">Last Active</th>
               <th className="px-3 py-2 text-left">Role</th>
               <th className="px-3 py-2 text-left">Access</th>
               <th className="px-3 py-2 text-left"></th>
@@ -369,6 +389,9 @@ export default function UsersPage() {
                   <td className="px-3 py-2 text-neutral-200">{user.email}</td>
                   <td className="px-3 py-2 text-neutral-500">
                     {new Date(user.created_at).toLocaleDateString()}
+                  </td>
+                  <td className="px-3 py-2 text-neutral-500">
+                    {formatLastActive(user.last_active_at)}
                   </td>
                   <td className="px-3 py-2">
                     <span
@@ -396,7 +419,7 @@ export default function UsersPage() {
                 </tr>
                 {editingId === user.id && (
                   <tr>
-                    <td colSpan={5} className="bg-black/40 px-4 py-4">
+                    <td colSpan={6} className="bg-black/40 px-4 py-4">
                       <div className="max-w-xl space-y-3 rounded-md border border-neutral-800 bg-neutral-950 p-4">
                         <div>
                           <label className="mb-1 block text-xs font-medium text-neutral-400">

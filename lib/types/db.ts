@@ -13,6 +13,14 @@ export interface Profile {
   // through it.
   must_change_password: boolean;
   created_at: string;
+  // Last time this person actually loaded a page in the app (updated from
+  // getProfile(), throttled to roughly once every 5 minutes so it isn't
+  // written on every single navigation). Added 2026-09-05, per Chad —
+  // Supabase's own "last sign in" only updates on a fresh login, not on
+  // every visit, since sessions stay logged in via a silently-refreshed
+  // token; this column is the real "used the app today" signal. Null for
+  // someone who hasn't loaded a page since this was added.
+  last_active_at: string | null;
 }
 
 export interface Distributor {
