@@ -252,10 +252,10 @@ export default function EventsPageClient() {
   }
 
   // ── Add/Edit modal ─────────────────────────────────────────────────────
-  function openAddModal() {
+  function openAddModal(startDate?: string) {
     setEditingId(null);
     setFormTitle("");
-    setFormStart(isoDate(today));
+    setFormStart(startDate ?? isoDate(today));
     setFormEnd("");
     setFormTime("");
     setFormType("festival");
@@ -616,7 +616,7 @@ export default function EventsPageClient() {
               </div>
               <button
                 type="button"
-                onClick={openAddModal}
+                onClick={() => openAddModal()}
                 className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-black hover:bg-neutral-200"
               >
                 + Add Event
@@ -660,7 +660,9 @@ export default function EventsPageClient() {
                 {grid.map((day) => (
                   <div
                     key={day.key}
-                    className={`min-h-[92px] p-1.5 ${
+                    onClick={() => openAddModal(day.key)}
+                    title="Click to add an event on this day"
+                    className={`min-h-[92px] cursor-pointer p-1.5 hover:bg-neutral-900/60 ${
                       day.inCurrentMonth
                         ? "bg-neutral-950"
                         : "bg-neutral-950/40 opacity-40"
@@ -682,7 +684,10 @@ export default function EventsPageClient() {
                         <button
                           key={ev.id}
                           type="button"
-                          onClick={() => selectEvent(ev.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            selectEvent(ev.id);
+                          }}
                           title={ev.title}
                           className="mb-0.5 block w-full truncate rounded px-1 py-0.5 text-left text-[11px] font-medium"
                           style={{ background: `${color}28`, color }}
@@ -694,7 +699,10 @@ export default function EventsPageClient() {
                     {day.events.length > 3 && (
                       <button
                         type="button"
-                        onClick={() => selectEvent(day.events[0].id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          selectEvent(day.events[0].id);
+                        }}
                         className="text-[11px] text-neutral-500 hover:text-neutral-300"
                       >
                         +{day.events.length - 3} more
