@@ -95,8 +95,16 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
   },
   {
     key: "events_calendar",
-    label: "Events Calendar",
-    items: [{ key: "events_calendar", label: "Events Calendar" }],
+    // Category label shown in Users > Edit access — changed 2026-09-05
+    // per Chad: "change the category from Events Calendar to Calendar in
+    // the users section." Note the underlying key/SectionKey value stays
+    // "events_calendar" (renaming that would mean a data migration across
+    // user_section_access) — only the displayed label changed, and now
+    // covers Events Calendar, Chain Calendar, and Social Media Calendar
+    // together anyway, so "Calendar" reads better than the old
+    // Events-Calendar-specific name.
+    label: "Calendar",
+    items: [{ key: "events_calendar", label: "Calendar" }],
   },
   {
     key: "pos_labels",
