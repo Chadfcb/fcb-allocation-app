@@ -191,10 +191,12 @@ export default function Sidebar({
   const showPosTree = can("pos_labels");
   const showEvents = can("events_calendar");
   const showErnie = can(ERNIE_SECTION);
+  const showTasks = can("tasks");
 
   const nothingVisible =
     role !== "admin" &&
     !showErnie &&
+    !showTasks &&
     visibleOperations.length === 0 &&
     visibleSales.length === 0 &&
     !showPosTree &&
@@ -227,15 +229,15 @@ export default function Sidebar({
         )}
 
         {/* Tasks (formerly "Projects") — the company-wide action/directive
-            tracker. Deliberately NOT gated by a Team Access section like
-            everything else below: per Chad, "anyone can assign... gives
-            leadership the ability to see everything currently happening
-            inside the company," so it's open to every signed-in user
-            unconditionally, same spirit as Ernie AI being available to
-            everyone but tracked separately. */}
-        <Link href="/tasks" className={`mt-1 ${linkClass("/tasks")}`}>
-          Tasks
-        </Link>
+            tracker. Gated by the "tasks" section (added 2026-09-04), same as
+            every other link here — anyone with it checked gets full,
+            unrestricted use of Tasks itself (create/assign/resolve/delete),
+            this only controls who can get into the page at all. */}
+        {showTasks && (
+          <Link href="/tasks" className={`mt-1 ${linkClass("/tasks")}`}>
+            Tasks
+          </Link>
+        )}
 
         {visibleOperations.length > 0 && (
           <>

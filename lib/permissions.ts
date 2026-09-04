@@ -27,7 +27,8 @@ export type SectionKey =
   | "cost_per_case"
   | "contribution_margin"
   | "events_calendar"
-  | "pos_labels";
+  | "pos_labels"
+  | "tasks";
 
 // Ernie AI is deliberately its own grantable section, separate from every
 // page section above — an admin may want someone to have, say, Purchase
@@ -66,7 +67,7 @@ export interface SectionInfo {
 // edits a new top-level category needs.
 //
 // Order here is also the display order in the Users > Edit checklist.
-export type GroupKey = "operations" | "sales" | "events_calendar" | "pos_labels";
+export type GroupKey = "operations" | "sales" | "events_calendar" | "pos_labels" | "tasks";
 
 export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[] }[] = [
   {
@@ -101,6 +102,11 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
     key: "pos_labels",
     label: "POS",
     items: [{ key: "pos_labels", label: "POS Labels" }],
+  },
+  {
+    key: "tasks",
+    label: "Tasks",
+    items: [{ key: "tasks", label: "Tasks" }],
   },
 ];
 

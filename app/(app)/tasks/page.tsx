@@ -1,9 +1,21 @@
+import { redirect } from "next/navigation";
+import { getProfile } from "@/lib/getProfile";
+import { hasSection } from "@/lib/permissions";
 import TasksPageClient from "@/components/TasksPageClient";
 
 // Tasks (formerly "Projects") — the company-wide action/directive tracker.
-// No redirect/section guard: it's intentionally open to every signed-in
-// user (see sql/tasks.sql and TasksPageClient for why), so this route just
-// renders straight through.
-export default function TasksPage() {
+// Gated by the "tasks" section (see lib/permissions.ts), same as every
+// other page — added 2026-09-04 per Chad's standing rule that any new
+// sidebar section needs a real Users > Edit access toggle. Previously this
+// was deliberately left open to every signed-in user; anyone who now has
+// the "tasks" section checked still gets full, unrestricted use of it
+// (create/assign/resolve/delete) — the only thing this guard changes is
+// who can get into the page at all.
+export default async function TasksPage() {
+  const profile = await getProfile();
+  if (!hasSection(profile?.role, profile?.sections, "tasks")) {
+    redirect("/inventory");
+  }
+
   return <TasksPageClient />;
 }
