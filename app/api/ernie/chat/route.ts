@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getErnieTools, buildErnieSystemPrompt, runErnieTool, describeErnieToolCall } from "@/lib/ernie/tools";
 import { hasSection, getUserSections, ERNIE_SECTION } from "@/lib/permissions";
+import { buildFileContentBlocks, type ErnieFileRow } from "@/lib/ernie/files";
 
 // Ernie's chat backend. Open to every signed-in user, read-only: this route
 // calls Claude's Messages API directly (Ernie's underlying model — never
@@ -17,13 +18,17 @@ import { hasSection, getUserSections, ERNIE_SECTION } from "@/lib/permissions";
 //
 // The database (ernie_conversations / ernie_messages) is the source of
 // truth for conversation history — the client only ever sends the ONE new
-// message it wants to ask, plus which conversation it belongs to (omitted
-// to start a new one). This route loads that conversation's prior messages
-// itself, runs the same tool-use back-and-forth with Claude's API as
-// before, and persists both the new user message and Ernie's reply before
-// responding. That's what lets a conversation survive navigating away from
-// /ernie and back, a page refresh, or opening it from a different device —
-// previously the full history only ever lived in the browser tab's memory.
+// message it wants to ask, which conversation it belongs to (omitted to
+// start a new one), and the ids of any files attached to this message
+// (fileIds — already uploaded straight to Storage by the client; see
+// ErnieChatClient's handleFiles()). This route loads that conversation's
+// prior messages itself, resolves any attached files into real Anthropic
+// content blocks (lib/ernie/files.ts), runs the same tool-use back-and-forth
+// with Claude's API as before, and persists both the new user message and
+// Ernie's reply before responding. That's what lets a conversation survive
+// navigating away from /ernie and back, a page refresh, or opening it from
+// a different device — previously the full history only ever lived in the
+// browser tab's memory.
 //
 // Streams progress as Server-Sent Events rather than a single JSON
 // response, so the client can show a live "Checking inventory &
@@ -87,10 +92,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const body = (await req.json()) as { conversationId?: string; message?: string };
-  const newMessageText = body.message?.trim();
+  const body = (await req.json()) as { conversationId?: string; message?: string; fileIds?: string[] };
+  const newMessageText = body.message?.trim() ?? "";
+  const fileIds = Array.isArray(body.fileIds)
+    ? body.fileIds.filter((id): id is string => typeof id === "string" && id.length > 0)
+    : [];
 
-  if (!newMessageText) {
+  if (!newMessageText && fileIds.length === 0) {
     return NextResponse.json({ error: "No message provided" }, { status: 400 });
   }
 
@@ -163,16 +171,39 @@ export async function POST(req: NextRequest) {
           conversation_id: conversationId,
           role: "user",
           content: newMessageText,
+          file_ids: fileIds,
         });
         if (insertUserErr) throw insertUserErr;
 
-        const allMessages: ChatMessage[] = [...priorMessages, { role: "user", text: newMessageText }];
+        // Look up whichever files this message attached (RLS on ernie_files
+        // scopes this to the caller's own files) and turn each into the
+        // Anthropic content block(s) Claude can actually read — an image or
+        // PDF goes in natively, a spreadsheet/CSV/text file gets rendered to
+        // text first. See lib/ernie/files.ts for what each file kind becomes.
+        let fileRows: ErnieFileRow[] = [];
+        if (fileIds.length > 0) {
+          const { data: filesData, error: filesErr } = await supabase
+            .from("ernie_files")
+            .select("id, file_name, mime_type, size_bytes, storage_path")
+            .in("id", fileIds);
+          if (filesErr) throw filesErr;
+          fileRows = filesData ?? [];
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shape varies (text/image/document)
+        const newMessageContentBlocks: any[] = [];
+        for (const file of fileRows) {
+          newMessageContentBlocks.push(...(await buildFileContentBlocks(supabase, file)));
+        }
+        if (newMessageText) {
+          newMessageContentBlocks.push({ type: "text", text: newMessageText });
+        }
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic message content shape varies (string vs. content blocks) across the tool-use loop
-        const anthropicMessages: any[] = allMessages.map((m) => ({
-          role: m.role,
-          content: m.text,
-        }));
+        const anthropicMessages: any[] = [
+          ...priorMessages.map((m) => ({ role: m.role, content: m.text })),
+          { role: "user", content: newMessageContentBlocks },
+        ];
 
         let finalText = "";
 
