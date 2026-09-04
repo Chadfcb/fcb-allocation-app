@@ -80,6 +80,13 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
       { key: "build_orders", label: "Build Orders" },
       { key: "distributor_pricing", label: "Distributor Pricing" },
       { key: "weeks", label: "Weeks" },
+      // Moved here from the "POS" category, just below Weeks — per Chad,
+      // 2026-09-05: "Labels needs to be a sub category of Operations...
+      // remove it from POS." The underlying SectionKey value is still
+      // "pos_labels" (unchanged in the database/RLS/Sidebar), only which
+      // top-level Users > Edit toggle grants it has changed — checking
+      // Operations now also grants this page.
+      { key: "pos_labels", label: "Labels" },
       { key: "audit_log", label: "Audit Log" },
     ],
   },
@@ -108,8 +115,13 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
   },
   {
     key: "pos_labels",
+    // Left empty for now, per Chad, 2026-09-05: "remove it from POS and
+    // leave POS empty for now" — Labels moved to Operations above. A
+    // group with no items is hidden from the Users > Edit checklist and
+    // access summary (see app/(app)/admin/users/page.tsx) rather than
+    // showing a checkbox that would always read as checked.
     label: "POS",
-    items: [{ key: "pos_labels", label: "POS Labels" }],
+    items: [],
   },
   {
     key: "tasks",

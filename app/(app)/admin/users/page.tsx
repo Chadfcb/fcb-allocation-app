@@ -63,7 +63,13 @@ function expandGroupState(state: GroupSelectionState): AnySectionKey[] {
 function accessSummary(user: UserRow): string {
   if (user.role === "admin") return "All sections";
   const state = groupStateFromSections(user.sections);
-  const groupLabels = GROUP_KEYS.filter((g) => state[g]).map((g) => GROUP_LABEL[g]);
+  // Skip any group with no items (e.g. POS, emptied out 2026-09-05) — with
+  // zero underlying sections, `.every()` on an empty list reads as
+  // vacuously true, which would otherwise make an empty category show up
+  // as "granted" for every single user.
+  const groupLabels = GROUP_KEYS.filter(
+    (g) => GROUP_SECTIONS[g].length > 0 && state[g],
+  ).map((g) => GROUP_LABEL[g]);
   const withErnie = state.ernie ? [...groupLabels, "Ernie AI"] : groupLabels;
   return withErnie.length ? withErnie.join(", ") : "No sections yet";
 }
@@ -112,20 +118,22 @@ function GroupChecklist({
           Access
         </p>
         <div className="flex flex-col gap-1">
-          {GROUP_KEYS.map((group) => (
-            <label
-              key={group}
-              className="flex items-center gap-2 rounded px-2 py-1 text-sm text-neutral-200 hover:bg-neutral-900"
-            >
-              <input
-                type="checkbox"
-                checked={state[group]}
-                onChange={(e) => onToggle(group, e.target.checked)}
-                className="h-4 w-4 accent-white"
-              />
-              {GROUP_LABEL[group]}
-            </label>
-          ))}
+          {GROUP_KEYS.filter((group) => GROUP_SECTIONS[group].length > 0).map(
+            (group) => (
+              <label
+                key={group}
+                className="flex items-center gap-2 rounded px-2 py-1 text-sm text-neutral-200 hover:bg-neutral-900"
+              >
+                <input
+                  type="checkbox"
+                  checked={state[group]}
+                  onChange={(e) => onToggle(group, e.target.checked)}
+                  className="h-4 w-4 accent-white"
+                />
+                {GROUP_LABEL[group]}
+              </label>
+            ),
+          )}
         </div>
         <p className="mt-1 text-xs text-neutral-500">
           Checking a category grants every page under it — no need to also
