@@ -3,12 +3,14 @@
 // Social Media Calendar — a third calendar, alongside Events Calendar and
 // Chain Calendar, for planning social media content (posts, campaigns,
 // stories, promotions). Added 2026-09-04 as an explicit copy of
-// ChainCalendarPageClient.tsx (same fields, same distributor color-coding,
-// same POS Materials/Library concept) with its own event types and its own
-// social_media_events/social_media_event_materials tables, so none of the
-// three calendars' events mix — while still sharing the same Distributor
-// list, POS Materials Library, and storage bucket as the other two (per
-// Chad).
+// ChainCalendarPageClient.tsx (same fields, same POS Materials/Library
+// concept) with its own event types and its own social_media_events/
+// social_media_event_materials tables, so none of the three calendars'
+// events mix — while still sharing the same POS Materials Library and
+// storage bucket as the other two (per Chad). Deliberately has NO
+// distributor association — per Chad, 2026-09-04: "this calendar does not
+// need that and is not associated with distributors" (Events Calendar and
+// Chain Calendar both still have it; this is the one exception).
 //
 // Standing data, not tied to a week. Gated by the "events_calendar" access
 // section, same as the Calendars sidebar category it lives under — the
@@ -21,7 +23,6 @@ import type {
   SocialMediaEvent,
   SocialMediaEventMaterial,
   SocialMediaEventType,
-  Distributor,
   PosLibraryFile,
 } from "@/lib/types/db";
 import {
@@ -44,20 +45,16 @@ import {
   type SocialMediaCalendarDay,
 } from "@/lib/socialMediaEvents";
 
-function distributorColor(
-  distributors: Distributor[],
-  id: string | null,
-): string {
-  const d = id ? distributors.find((x) => x.id === id) : undefined;
-  return d?.color || "#768390";
-}
+// Every event chip/badge uses this one fixed accent color, since there's
+// no per-distributor color-coding on this calendar (unlike Events Calendar
+// / Chain Calendar).
+const SOCIAL_MEDIA_EVENT_COLOR = "#d99a3d";
 
 export default function SocialMediaCalendarPageClient() {
   const supabase = useMemo(() => createClient(), []);
   const today = useMemo(() => new Date(), []);
 
   const [events, setEvents] = useState<SocialMediaEvent[]>([]);
-  const [distributors, setDistributors] = useState<Distributor[]>([]);
   const [materialsByEvent, setMaterialsByEvent] = useState<
     Record<string, SocialMediaEventMaterial[]>
   >({});
@@ -68,7 +65,6 @@ export default function SocialMediaCalendarPageClient() {
   const [view, setView] = useState<"calendar" | "library">("calendar");
   const [calYear, setCalYear] = useState(today.getFullYear());
   const [calMonth, setCalMonth] = useState(today.getMonth());
-  const [distFilter, setDistFilter] = useState<string>("");
 
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [detailTab, setDetailTab] = useState<"details" | "materials">(
@@ -83,7 +79,6 @@ export default function SocialMediaCalendarPageClient() {
   const [formTime, setFormTime] = useState("");
   const [formType, setFormType] = useState<SocialMediaEventType>("other");
   const [formLocation, setFormLocation] = useState("");
-  const [formDistributorId, setFormDistributorId] = useState("");
   const [formRep, setFormRep] = useState("");
   const [formNotes, setFormNotes] = useState("");
   const [saving, setSaving] = useState(false);
@@ -104,17 +99,7 @@ export default function SocialMediaCalendarPageClient() {
     } = await supabase.auth.getUser();
     setUserId(user?.id ?? null);
 
-    const [distRes, eventsRes, materialsRes, libraryRes] = await Promise.all([
-      // Unlike Inventory & Allocation, Social Media Calendar intentionally does
-      // NOT filter to active distributors only -- a distributor can be
-      // marked inactive there (e.g. Saccani) while still having historical
-      // or ongoing events on this calendar that should keep showing their
-      // real color instead of falling back to unassigned/grey.
-      supabase
-        .from("distributors")
-        .select("*")
-        .order("sort_order", { ascending: true, nullsFirst: false })
-        .order("name"),
+    const [eventsRes, materialsRes, libraryRes] = await Promise.all([
       supabase
         .from("social_media_events")
         .select("*")
@@ -129,7 +114,6 @@ export default function SocialMediaCalendarPageClient() {
         .order("uploaded_at", { ascending: false }),
     ]);
 
-    setDistributors((distRes.data as Distributor[]) ?? []);
     setEvents((eventsRes.data as SocialMediaEvent[]) ?? []);
 
     const map: Record<string, SocialMediaEventMaterial[]> = {};
@@ -213,14 +197,9 @@ export default function SocialMediaCalendarPageClient() {
     signedUrls,
   ]);
 
-  const filteredEvents = useMemo(
-    () =>
-      events.filter((ev) => !distFilter || ev.distributor_id === distFilter),
-    [events, distFilter],
-  );
   const grid: SocialMediaCalendarDay[] = useMemo(
-    () => buildSocialMediaMonthGrid(calYear, calMonth, filteredEvents),
-    [calYear, calMonth, filteredEvents],
+    () => buildSocialMediaMonthGrid(calYear, calMonth, events),
+    [calYear, calMonth, events],
   );
   const selectedEvent = useMemo(
     () => events.find((e) => e.id === selectedEventId) ?? null,
@@ -265,7 +244,6 @@ export default function SocialMediaCalendarPageClient() {
     setFormTime("");
     setFormType("other");
     setFormLocation("");
-    setFormDistributorId("");
     setFormRep("");
     setFormNotes("");
     setFormError(null);
@@ -279,7 +257,6 @@ export default function SocialMediaCalendarPageClient() {
     setFormTime(ev.time_label ?? "");
     setFormType(ev.type);
     setFormLocation(ev.location ?? "");
-    setFormDistributorId(ev.distributor_id ?? "");
     setFormRep(ev.rep ?? "");
     setFormNotes(ev.notes ?? "");
     setFormError(null);
@@ -310,7 +287,6 @@ export default function SocialMediaCalendarPageClient() {
       time_label: formTime.trim() || null,
       type: formType,
       location: formLocation.trim() || null,
-      distributor_id: formDistributorId || null,
       rep: formRep.trim() || null,
       notes: formNotes.trim() || null,
       updated_by: userId,
@@ -546,12 +522,6 @@ export default function SocialMediaCalendarPageClient() {
         ? "border-neutral-600 bg-neutral-900 text-neutral-100"
         : "border-neutral-800 text-neutral-400 hover:bg-neutral-900"
     }`;
-  const chipClass = (active: boolean) =>
-    `flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
-      active
-        ? "border-neutral-600 bg-neutral-900 text-neutral-100"
-        : "border-neutral-800 text-neutral-400 hover:bg-neutral-900"
-    }`;
   const detailTabClass = (active: boolean) =>
     `flex-1 border-b-2 px-3 py-2 ${
       active
@@ -627,31 +597,6 @@ export default function SocialMediaCalendarPageClient() {
               </button>
             </div>
 
-            <div className="flex flex-wrap gap-1.5">
-              <button
-                type="button"
-                onClick={() => setDistFilter("")}
-                className={chipClass(distFilter === "")}
-              >
-                <span className="h-2 w-2 rounded-full bg-neutral-500" />
-                All Events
-              </button>
-              {distributors.map((d) => (
-                <button
-                  key={d.id}
-                  type="button"
-                  onClick={() => setDistFilter(d.id)}
-                  className={chipClass(distFilter === d.id)}
-                >
-                  <span
-                    className="h-2 w-2 rounded-full"
-                    style={{ background: d.color ?? "#768390" }}
-                  />
-                  {d.name}
-                </button>
-              ))}
-            </div>
-
             <div className="overflow-hidden rounded-lg border border-neutral-800">
               <div className="grid grid-cols-7 bg-neutral-900 text-center text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
                 {DAY_NAMES_SHORT.map((d) => (
@@ -677,24 +622,21 @@ export default function SocialMediaCalendarPageClient() {
                     >
                       {day.date.getDate()}
                     </div>
-                    {day.events.slice(0, 3).map((ev) => {
-                      const color = distributorColor(
-                        distributors,
-                        ev.distributor_id,
-                      );
-                      return (
-                        <button
-                          key={ev.id}
-                          type="button"
-                          onClick={() => selectEvent(ev.id)}
-                          title={ev.title}
-                          className="mb-0.5 block w-full truncate rounded px-1 py-0.5 text-left text-[11px] font-medium"
-                          style={{ background: `${color}28`, color }}
-                        >
-                          {ev.title}
-                        </button>
-                      );
-                    })}
+                    {day.events.slice(0, 3).map((ev) => (
+                      <button
+                        key={ev.id}
+                        type="button"
+                        onClick={() => selectEvent(ev.id)}
+                        title={ev.title}
+                        className="mb-0.5 block w-full truncate rounded px-1 py-0.5 text-left text-[11px] font-medium"
+                        style={{
+                          background: `${SOCIAL_MEDIA_EVENT_COLOR}28`,
+                          color: SOCIAL_MEDIA_EVENT_COLOR,
+                        }}
+                      >
+                        {ev.title}
+                      </button>
+                    ))}
                     {day.events.length > 3 && (
                       <button
                         type="button"
@@ -748,7 +690,6 @@ export default function SocialMediaCalendarPageClient() {
                 {detailTab === "details" ? (
                   <SocialMediaEventDetails
                     event={selectedEvent}
-                    distributors={distributors}
                   />
                 ) : (
                   <div className="flex flex-col gap-3">
@@ -1035,36 +976,17 @@ export default function SocialMediaCalendarPageClient() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                    Distributor
-                  </label>
-                  <select
-                    value={formDistributorId}
-                    onChange={(e) => setFormDistributorId(e.target.value)}
-                    className="w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100"
-                  >
-                    <option value="">— None —</option>
-                    {distributors.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
-                    Rep / Staff
-                  </label>
-                  <input
-                    type="text"
-                    value={formRep}
-                    onChange={(e) => setFormRep(e.target.value)}
-                    placeholder="e.g. Bill, Art…"
-                    className="w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100"
-                  />
-                </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                  Rep / Staff
+                </label>
+                <input
+                  type="text"
+                  value={formRep}
+                  onChange={(e) => setFormRep(e.target.value)}
+                  placeholder="e.g. Bill, Art…"
+                  className="w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100"
+                />
               </div>
 
               <div>
@@ -1144,12 +1066,7 @@ export default function SocialMediaCalendarPageClient() {
                   >
                     <span
                       className="h-2 w-2 shrink-0 rounded-full"
-                      style={{
-                        background: distributorColor(
-                          distributors,
-                          ev.distributor_id,
-                        ),
-                      }}
+                      style={{ background: SOCIAL_MEDIA_EVENT_COLOR }}
                     />
                     <span className="min-w-0 flex-1 truncate text-neutral-200">
                       {ev.title}
@@ -1188,16 +1105,11 @@ export default function SocialMediaCalendarPageClient() {
 
 function SocialMediaEventDetails({
   event,
-  distributors,
 }: {
   event: SocialMediaEvent;
-  distributors: Distributor[];
 }) {
   const start = parseIsoDate(event.start_date);
   const end = event.end_date ? parseIsoDate(event.end_date) : null;
-  const distributor = event.distributor_id
-    ? distributors.find((d) => d.id === event.distributor_id)
-    : undefined;
 
   return (
     <div className="flex flex-col gap-3">
@@ -1214,23 +1126,6 @@ function SocialMediaEventDetails({
               ? ` – ${MONTH_NAMES[end.getMonth()]} ${end.getDate()}`
               : ""}
           </div>
-        </div>
-      )}
-      {distributor && (
-        <div>
-          <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
-            Distributor
-          </div>
-          <span
-            className="inline-block rounded px-2 py-0.5 text-xs font-bold uppercase tracking-wide"
-            style={{
-              background: `${distributor.color}22`,
-              color: distributor.color ?? undefined,
-              border: `1px solid ${distributor.color}44`,
-            }}
-          >
-            {distributor.name}
-          </span>
         </div>
       )}
       {event.time_label && (

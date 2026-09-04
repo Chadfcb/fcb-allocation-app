@@ -7,8 +7,9 @@
 // off-site events or chain/retail account activity — kept as separate
 // tables (social_media_events/social_media_event_materials) so none of the
 // three calendars' events mix, while still sharing the same POS Materials
-// Library, storage bucket, and Distributor list as the other two (per
-// Chad, 2026-09-04).
+// Library and storage bucket as the other two (per Chad, 2026-09-04) —
+// but deliberately NOT the Distributor list, since this calendar has no
+// distributor association (per Chad, 2026-09-04).
 //
 // Everything else generic (date parsing, file icons, month/day names,
 // storage filename sanitizing) is reused directly from lib/events.ts —

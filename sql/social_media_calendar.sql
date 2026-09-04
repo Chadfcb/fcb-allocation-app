@@ -7,11 +7,14 @@
 -- Structure mirrors events/event_materials and chain_events/
 -- chain_event_materials exactly (see supabase/schema.sql and
 -- sql/chain_calendar.sql), just under new table names so none of the
--- three calendars' events ever mix. Distributor color-coding, the POS
--- Materials Library (pos_library), and the "event-materials" storage
--- bucket are all SHARED across all three calendars (per Chad) — only
--- social_media_events/social_media_event_materials themselves are
--- new/separate.
+-- three calendars' events ever mix. The POS Materials Library
+-- (pos_library) and the "event-materials" storage bucket are SHARED
+-- across all three calendars (per Chad) — but this calendar deliberately
+-- has NO distributor association, per Chad, 2026-09-04: "this calendar
+-- does not need that and is not associated with distributors" (Events
+-- Calendar and Chain Calendar both still have it; this is the one
+-- exception). Only social_media_events/social_media_event_materials
+-- themselves are new/separate.
 --
 -- Access: gated by the existing "events_calendar" section, same as Events
 -- Calendar, Chain Calendar, and the Social Media Calendar placeholder page
@@ -26,7 +29,6 @@ create table if not exists social_media_events (
   type text not null default 'other'
     check (type in ('post', 'campaign', 'story', 'promotion', 'other')),
   location text,
-  distributor_id uuid references distributors(id) on delete set null,
   rep text,
   notes text,
   created_by uuid references profiles(id),
@@ -35,6 +37,11 @@ create table if not exists social_media_events (
   updated_at timestamptz not null default now()
 );
 create index if not exists social_media_events_start_date_idx on social_media_events (start_date);
+
+-- Idempotent safety net: if an earlier version of this file (which
+-- included a distributor_id column) was already run in Supabase before
+-- this correction, drop that column now. No-op on a fresh run.
+alter table social_media_events drop column if exists distributor_id;
 
 -- POS materials attached to one specific social media event — same
 -- pattern as event_materials/chain_event_materials, stored in the SAME

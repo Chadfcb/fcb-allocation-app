@@ -622,9 +622,11 @@ export interface ChainEventMaterial {
 // ChainEvent/ChainEventMaterial above, but its own calendar for planning
 // social media content (posts, campaigns, stories, promotions) rather than
 // chain/retail account activity or FCB's own off-site events. Shares the
-// same Distributor list, POS Materials Library (pos_library), and
-// "event-materials" storage bucket as the other two calendars — only the
-// events/materials tables themselves are separate.
+// same POS Materials Library (pos_library) and "event-materials" storage
+// bucket as the other two calendars, but deliberately has NO distributor
+// association — per Chad, 2026-09-04: "this calendar does not need that
+// and is not associated with distributors" (Events Calendar and Chain
+// Calendar both still have it; this is the one exception).
 export type SocialMediaEventType = "post" | "campaign" | "story" | "promotion" | "other";
 
 export interface SocialMediaEvent {
@@ -635,7 +637,6 @@ export interface SocialMediaEvent {
   time_label: string | null;
   type: SocialMediaEventType;
   location: string | null;
-  distributor_id: string | null;
   rep: string | null;
   notes: string | null;
   created_by: string | null;
