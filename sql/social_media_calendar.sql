@@ -30,6 +30,7 @@ create table if not exists social_media_events (
     check (type in ('post', 'campaign', 'story', 'promotion', 'other')),
   location text,
   rep text,
+  color text,
   notes text,
   created_by uuid references profiles(id),
   updated_by uuid references profiles(id),
@@ -42,6 +43,10 @@ create index if not exists social_media_events_start_date_idx on social_media_ev
 -- included a distributor_id column) was already run in Supabase before
 -- this correction, drop that column now. No-op on a fresh run.
 alter table social_media_events drop column if exists distributor_id;
+
+-- Idempotent: adds the per-event color column for rows created before the
+-- color picker existed. No-op if the column is already there (fresh run).
+alter table social_media_events add column if not exists color text;
 
 -- POS materials attached to one specific social media event — same
 -- pattern as event_materials/chain_event_materials, stored in the SAME

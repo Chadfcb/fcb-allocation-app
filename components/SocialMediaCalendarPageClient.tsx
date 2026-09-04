@@ -45,10 +45,29 @@ import {
   type SocialMediaCalendarDay,
 } from "@/lib/socialMediaEvents";
 
-// Every event chip/badge uses this one fixed accent color, since there's
-// no per-distributor color-coding on this calendar (unlike Events Calendar
-// / Chain Calendar).
+// Default accent color for an event that hasn't had a color picked yet
+// (older rows saved before the color picker existed, or a new event where
+// Chad just hasn't touched the swatch). Once a color is picked and saved
+// on the event (event.color), that takes over everywhere the event is
+// drawn — day-cell chips, the Attach-to-Library dot, etc.
 const SOCIAL_MEDIA_EVENT_COLOR = "#d99a3d";
+
+// Swatch palette offered in the Add/Edit modal — added 2026-09-05 per
+// Chad: "we need the ability to select colors for the calendar item
+// names." A fixed preset list (not a full color picker), matching the
+// style of the avatar palette used elsewhere in the app.
+const SOCIAL_MEDIA_EVENT_COLOR_PALETTE = [
+  "#d99a3d",
+  "#4d9de0",
+  "#e05c5c",
+  "#6abc46",
+  "#c96ad4",
+  "#5ad9c9",
+  "#e8b23d",
+  "#5c7ce0",
+  "#d9578f",
+  "#9ca3af",
+];
 
 export default function SocialMediaCalendarPageClient() {
   const supabase = useMemo(() => createClient(), []);
@@ -80,6 +99,9 @@ export default function SocialMediaCalendarPageClient() {
   const [formType, setFormType] = useState<SocialMediaEventType>("other");
   const [formLocation, setFormLocation] = useState("");
   const [formRep, setFormRep] = useState("");
+  const [formColor, setFormColor] = useState(
+    SOCIAL_MEDIA_EVENT_COLOR_PALETTE[0],
+  );
   const [formNotes, setFormNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -245,6 +267,7 @@ export default function SocialMediaCalendarPageClient() {
     setFormType("other");
     setFormLocation("");
     setFormRep("");
+    setFormColor(SOCIAL_MEDIA_EVENT_COLOR_PALETTE[0]);
     setFormNotes("");
     setFormError(null);
     setModalOpen(true);
@@ -258,6 +281,7 @@ export default function SocialMediaCalendarPageClient() {
     setFormType(ev.type);
     setFormLocation(ev.location ?? "");
     setFormRep(ev.rep ?? "");
+    setFormColor(ev.color ?? SOCIAL_MEDIA_EVENT_COLOR_PALETTE[0]);
     setFormNotes(ev.notes ?? "");
     setFormError(null);
     setModalOpen(true);
@@ -288,6 +312,7 @@ export default function SocialMediaCalendarPageClient() {
       type: formType,
       location: formLocation.trim() || null,
       rep: formRep.trim() || null,
+      color: formColor,
       notes: formNotes.trim() || null,
       updated_by: userId,
       updated_at: new Date().toISOString(),
@@ -635,8 +660,8 @@ export default function SocialMediaCalendarPageClient() {
                         title={ev.title}
                         className="mb-0.5 block w-full truncate rounded px-1 py-0.5 text-left text-[11px] font-medium"
                         style={{
-                          background: `${SOCIAL_MEDIA_EVENT_COLOR}28`,
-                          color: SOCIAL_MEDIA_EVENT_COLOR,
+                          background: `${ev.color || SOCIAL_MEDIA_EVENT_COLOR}28`,
+                          color: ev.color || SOCIAL_MEDIA_EVENT_COLOR,
                         }}
                       >
                         {ev.title}
@@ -999,6 +1024,28 @@ export default function SocialMediaCalendarPageClient() {
 
               <div>
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                  Color
+                </label>
+                <div className="flex flex-wrap gap-2">
+                  {SOCIAL_MEDIA_EVENT_COLOR_PALETTE.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setFormColor(c)}
+                      title={c}
+                      className={`h-7 w-7 rounded-full ${
+                        formColor === c
+                          ? "ring-2 ring-white ring-offset-2 ring-offset-neutral-950"
+                          : ""
+                      }`}
+                      style={{ background: c }}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-neutral-500">
                   Notes
                 </label>
                 <textarea
@@ -1074,7 +1121,7 @@ export default function SocialMediaCalendarPageClient() {
                   >
                     <span
                       className="h-2 w-2 shrink-0 rounded-full"
-                      style={{ background: SOCIAL_MEDIA_EVENT_COLOR }}
+                      style={{ background: ev.color || SOCIAL_MEDIA_EVENT_COLOR }}
                     />
                     <span className="min-w-0 flex-1 truncate text-neutral-200">
                       {ev.title}

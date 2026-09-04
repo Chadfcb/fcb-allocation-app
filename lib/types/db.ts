@@ -602,6 +602,11 @@ export interface ChainEvent {
   type: ChainEventType;
   location: string | null;
   rep: string | null;
+  // Per-event accent color, picked from a swatch palette in the Add/Edit
+  // modal (added 2026-09-05, per Chad: "we need the ability to select
+  // colors for the calendar item names"). Null falls back to a default
+  // fixed color in the UI.
+  color: string | null;
   notes: string | null;
   created_by: string | null;
   updated_by: string | null;
@@ -640,6 +645,11 @@ export interface SocialMediaEvent {
   type: SocialMediaEventType;
   location: string | null;
   rep: string | null;
+  // Per-event accent color, picked from a swatch palette in the Add/Edit
+  // modal (added 2026-09-05, per Chad: "we need the ability to select
+  // colors for the calendar item names"). Null falls back to a default
+  // fixed color in the UI.
+  color: string | null;
   notes: string | null;
   created_by: string | null;
   updated_by: string | null;

@@ -29,6 +29,7 @@ create table if not exists chain_events (
     check (type in ('demo', 'reset', 'ad', 'display', 'other')),
   location text,
   rep text,
+  color text,
   notes text,
   created_by uuid references profiles(id),
   updated_by uuid references profiles(id),
@@ -36,6 +37,10 @@ create table if not exists chain_events (
   updated_at timestamptz not null default now()
 );
 create index if not exists chain_events_start_date_idx on chain_events (start_date);
+
+-- Idempotent: adds the per-event color column for rows created before the
+-- color picker existed. No-op if the column is already there (fresh run).
+alter table chain_events add column if not exists color text;
 
 -- Idempotent safety net: this table was originally created WITH a
 -- distributor_id column (see the earlier version of this file) — drop it
