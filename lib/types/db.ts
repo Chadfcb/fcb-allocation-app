@@ -618,6 +618,43 @@ export interface ChainEventMaterial {
   uploaded_at: string;
 }
 
+// Social Media Calendar (added 2026-09-04) — same shape/abilities as
+// ChainEvent/ChainEventMaterial above, but its own calendar for planning
+// social media content (posts, campaigns, stories, promotions) rather than
+// chain/retail account activity or FCB's own off-site events. Shares the
+// same Distributor list, POS Materials Library (pos_library), and
+// "event-materials" storage bucket as the other two calendars — only the
+// events/materials tables themselves are separate.
+export type SocialMediaEventType = "post" | "campaign" | "story" | "promotion" | "other";
+
+export interface SocialMediaEvent {
+  id: string;
+  title: string;
+  start_date: string;
+  end_date: string | null;
+  time_label: string | null;
+  type: SocialMediaEventType;
+  location: string | null;
+  distributor_id: string | null;
+  rep: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SocialMediaEventMaterial {
+  id: string;
+  event_id: string;
+  file_name: string;
+  storage_path: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  uploaded_by: string | null;
+  uploaded_at: string;
+}
+
 // POS > Labels: a per-brand, per-size file library for can/bottle label
 // artwork. Admin-only, standing data (not week-scoped), same shape as
 // PosLibraryFile above but scoped by brand + size instead of being one

@@ -1,26 +1,23 @@
 import { redirect } from "next/navigation";
 import { getProfile } from "@/lib/getProfile";
 import { hasSection } from "@/lib/permissions";
+import SocialMediaCalendarPageClient from "@/components/SocialMediaCalendarPageClient";
 
-// Social Media Calendar — placeholder, added 2026-09-04 as a sub-item under
-// the Calendars sidebar category alongside Events Calendar and Chain
-// Calendar. No real feature yet ("blank for now until we bring them in" —
-// Chad). Gated by the same "events_calendar" section as Events Calendar for
-// now, since Calendars doesn't have its own access toggle yet — see
-// PROJECT-STATUS_1.md's "Calendars" section for the plan to fold all three
-// into one "Calendars" toggle once this is a real feature.
+// Social Media Calendar — a sub-item under the Calendars sidebar category
+// alongside Events Calendar and Chain Calendar. Built out for real
+// 2026-09-04 with the same abilities as the other two (calendar view,
+// add/edit/delete events, distributor color-coding, POS Materials/Library)
+// but its own social_media_events/social_media_event_materials tables —
+// see SocialMediaCalendarPageClient.tsx. Gated by the same
+// "events_calendar" section as the others for now, since Calendars doesn't
+// have its own access toggle yet — see PROJECT-STATUS_1.md's "Calendars"
+// section for the plan to fold all three sub-items into one "Calendars"
+// toggle later.
 export default async function SocialMediaCalendarPage() {
   const profile = await getProfile();
   if (!hasSection(profile?.role, profile?.sections, "events_calendar")) {
     redirect("/inventory");
   }
 
-  return (
-    <div className="space-y-2">
-      <h1 className="text-lg font-semibold text-neutral-100">Social Media Calendar</h1>
-      <p className="text-sm text-neutral-400">
-        Coming soon — this page isn&apos;t built out yet.
-      </p>
-    </div>
-  );
+  return <SocialMediaCalendarPageClient />;
 }
