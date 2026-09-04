@@ -8,9 +8,11 @@
 // stop, same as always — they aren't grantable sections.
 //
 // Three independent bits of UI state:
-// - Whether Operations/Sales are expanded — remembered per-browser via
-//   localStorage, so collapsing one stays collapsed next time you load the
-//   app.
+// - Whether Operations/Sales/Calendars are expanded — remembered per-browser
+//   via localStorage, so collapsing one stays collapsed next time you load
+//   the app. Calendars (added 2026-09-04) holds just Events Calendar today,
+//   structured as an expandable parent rather than a flat link since more
+//   calendar types are expected to land under it later.
 // - Whether the whole sidebar is hidden — NOT persisted; it always starts
 //   visible on a fresh page load, per Chad's request.
 // - Nothing about WHICH links show is persisted — that comes fresh from
@@ -42,8 +44,16 @@ const SALES_LINKS: { href: string; label: string; section: SectionKey }[] = [
   { href: "/sales/contribution-margin", label: "Contribution Margin", section: "contribution_margin" },
 ];
 
+// Calendars — currently just Events Calendar, structured as an expandable
+// parent (like Operations/Sales) rather than a flat link, since Chad plans
+// to add more calendar types under this same category later.
+const CALENDARS_LINKS: { href: string; label: string; section: SectionKey }[] = [
+  { href: "/events", label: "Events Calendar", section: "events_calendar" },
+];
+
 const OPERATIONS_STORAGE_KEY = "fcb-sidebar-operations-expanded";
 const SALES_STORAGE_KEY = "fcb-sidebar-sales-expanded";
+const CALENDARS_STORAGE_KEY = "fcb-sidebar-calendars-expanded";
 
 // POS > Labels > <brand> > <size> — a 3-level nested tree (unlike
 // Operations/Sales, which are just one level of flat links), so its
@@ -96,6 +106,7 @@ export default function Sidebar({
   const [hidden, setHidden] = useState(false);
   const [operationsExpanded, setOperationsExpanded] = useState(true);
   const [salesExpanded, setSalesExpanded] = useState(true);
+  const [calendarsExpanded, setCalendarsExpanded] = useState(true);
   const [posTreeExpanded, setPosTreeExpanded] = useState<
     Record<string, boolean>
   >({ pos: true, "pos-labels": true });
@@ -112,6 +123,10 @@ export default function Sidebar({
     const storedSales = localStorage.getItem(SALES_STORAGE_KEY);
     if (storedSales !== null) {
       setSalesExpanded(storedSales === "true");
+    }
+    const storedCalendars = localStorage.getItem(CALENDARS_STORAGE_KEY);
+    if (storedCalendars !== null) {
+      setCalendarsExpanded(storedCalendars === "true");
     }
     const storedPosTree = localStorage.getItem(POS_TREE_STORAGE_KEY);
     if (storedPosTree) {
@@ -138,6 +153,14 @@ export default function Sidebar({
     setSalesExpanded((prev) => {
       const next = !prev;
       localStorage.setItem(SALES_STORAGE_KEY, String(next));
+      return next;
+    });
+  }
+
+  function toggleCalendars() {
+    setCalendarsExpanded((prev) => {
+      const next = !prev;
+      localStorage.setItem(CALENDARS_STORAGE_KEY, String(next));
       return next;
     });
   }
@@ -189,7 +212,7 @@ export default function Sidebar({
   const visibleOperations = OPERATIONS_LINKS.filter((link) => can(link.section));
   const visibleSales = SALES_LINKS.filter((link) => can(link.section));
   const showPosTree = can("pos_labels");
-  const showEvents = can("events_calendar");
+  const visibleCalendars = CALENDARS_LINKS.filter((link) => can(link.section));
   const showErnie = can(ERNIE_SECTION);
   const showTasks = can("tasks");
 
@@ -200,7 +223,7 @@ export default function Sidebar({
     visibleOperations.length === 0 &&
     visibleSales.length === 0 &&
     !showPosTree &&
-    !showEvents;
+    visibleCalendars.length === 0;
 
   return (
     <div className="flex w-56 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950 p-3">
@@ -340,10 +363,29 @@ export default function Sidebar({
           </>
         )}
 
-        {showEvents && (
-          <Link href="/events" className={`mt-1 ${linkClass("/events")}`}>
-            Events Calendar
-          </Link>
+        {visibleCalendars.length > 0 && (
+          <>
+            <button
+              type="button"
+              onClick={toggleCalendars}
+              className="mt-1 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
+            >
+              Calendars
+            </button>
+            {calendarsExpanded && (
+              <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
+                {visibleCalendars.map((link) => (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    className={linkClass(link.href)}
+                  >
+                    {link.label}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </>
         )}
 
         {role === "admin" && (
