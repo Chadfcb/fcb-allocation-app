@@ -580,6 +580,44 @@ export interface PosLibraryFile {
   uploaded_at: string;
 }
 
+// Chain Calendar (added 2026-09-04) — same shape/abilities as
+// CalendarEvent/EventMaterial above, but a separate calendar for chain/
+// retail account activity rather than FCB's own off-site events, so the
+// two never mix. Shares the same Distributor list, POS Materials Library
+// (pos_library), and "event-materials" storage bucket as Events Calendar —
+// only the events/materials tables themselves are separate.
+export type ChainEventType = "demo" | "reset" | "ad" | "display" | "other";
+
+// Named ChainEvent (not Event) for the same reason as CalendarEvent above —
+// avoids colliding with the DOM's global Event type.
+export interface ChainEvent {
+  id: string;
+  title: string;
+  start_date: string;
+  end_date: string | null;
+  time_label: string | null;
+  type: ChainEventType;
+  location: string | null;
+  distributor_id: string | null;
+  rep: string | null;
+  notes: string | null;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChainEventMaterial {
+  id: string;
+  event_id: string;
+  file_name: string;
+  storage_path: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  uploaded_by: string | null;
+  uploaded_at: string;
+}
+
 // POS > Labels: a per-brand, per-size file library for can/bottle label
 // artwork. Admin-only, standing data (not week-scoped), same shape as
 // PosLibraryFile above but scoped by brand + size instead of being one
