@@ -1,0 +1,315 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Preview — Tasks Calendar</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #000;
+    color: #d4d4d4;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px;
+  }
+  .preview-banner {
+    background: #1f3a2a;
+    color: #6ABC46;
+    text-align: center;
+    padding: 6px 0;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .app {
+    display: flex;
+    min-height: 900px;
+  }
+  /* Sidebar */
+  .sidebar {
+    width: 224px;
+    flex-shrink: 0;
+    border-right: 1px solid #262626;
+    background: #0a0a0a;
+    padding: 12px;
+  }
+  .sidebar-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .sidebar-title { font-weight: 600; color: #f5f5f5; }
+  .hide-btn {
+    border: 1px solid #404040;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 12px;
+    color: #a3a3a3;
+  }
+  .nav { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+  .nav a { text-decoration: none; }
+  .navlink {
+    border-radius: 4px;
+    border-left: 2px solid transparent;
+    padding: 6px 8px;
+    color: #a3a3a3;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .navlink.active {
+    border-left-color: #6ABC46;
+    background: #171717;
+    color: #6ABC46;
+    font-weight: 600;
+  }
+  .section-label {
+    margin-top: 8px;
+    border-radius: 4px;
+    padding: 6px 8px;
+    font-weight: 600;
+    color: #d4d4d4;
+  }
+  .sub-nav {
+    margin-left: 8px;
+    padding-left: 12px;
+    border-left: 1px solid #262626;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .new-badge {
+    margin-left: auto;
+    background: #6ABC46;
+    color: #000;
+    font-size: 9px;
+    font-weight: 700;
+    border-radius: 999px;
+    padding: 2px 6px;
+    line-height: 1;
+  }
+
+  /* Main content */
+  .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .topbar {
+    border-bottom: 1px solid #262626;
+    background: #0a0a0a;
+    display: flex;
+    justify-content: flex-end;
+    padding: 12px 16px;
+    font-size: 13px;
+    color: #a3a3a3;
+  }
+  .topbar b { color: #d4d4d4; }
+  .content { padding: 24px; max-width: 1900px; }
+
+  .header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    border-bottom: 1px solid #262626;
+    padding-bottom: 16px;
+    margin-bottom: 16px;
+  }
+  .pill {
+    border-radius: 999px;
+    border: 1px solid #404040;
+    background: #171717;
+    color: #a3a3a3;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 6px 16px;
+  }
+  .pill.active { background: #f5f5f5; border-color: #f5f5f5; color: #171717; }
+  .pull-btn {
+    border-radius: 6px;
+    border: 1px solid #404040;
+    background: #171717;
+    color: #d4d4d4;
+    font-size: 12px;
+    padding: 8px 14px;
+    opacity: 0.6;
+  }
+
+  .legend-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  .legend-pill {
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #000;
+  }
+
+  .month-nav {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .month-btn {
+    width: 28px; height: 28px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 6px;
+    border: 1px solid #404040;
+    background: #171717;
+    color: #d4d4d4;
+  }
+  .month-label { min-width: 160px; text-align: center; font-size: 15px; font-weight: 700; color: #f5f5f5; }
+
+  .cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 1px;
+    border: 1px solid #262626;
+    background: #262626;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .cal-head {
+    background: #171717;
+    padding: 8px;
+    text-align: center;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    color: #737373;
+  }
+  .cal-cell {
+    background: #0a0a0a;
+    min-height: 96px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .cal-cell.dim { background: #0a0a0a99; color: #404040; }
+  .cal-cell.today { background: rgba(106,188,70,0.06); }
+  .day-num { font-size: 11px; font-weight: 600; color: #a3a3a3; padding: 0 2px; }
+  .day-num.today {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 18px; height: 18px; border-radius: 999px;
+    background: #6ABC46; color: #000; font-weight: 800; font-size: 11px;
+  }
+  .event-chip {
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #000;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+</style>
+</head>
+<body>
+  <div class="preview-banner">PREVIEW ONLY — not yet deployed</div>
+  <div class="app">
+    <div class="sidebar">
+      <div class="sidebar-top">
+        <span class="sidebar-title">FCB Data</span>
+        <span class="hide-btn">Hide</span>
+      </div>
+      <div class="nav">
+        <div class="navlink">Dashboard</div>
+        <div class="navlink">Ernie AI</div>
+        <div class="navlink active">Tasks</div>
+        <div class="section-label">Operations</div>
+        <div class="section-label">Sales</div>
+        <div class="section-label">POS</div>
+        <div class="section-label">Calendars</div>
+        <div class="sub-nav">
+          <div class="navlink">Events Calendar</div>
+          <div class="navlink">Chain Calendar</div>
+          <div class="navlink">Social Media Calendar</div>
+        </div>
+        <div class="section-label" style="margin-top:8px;">Users</div>
+      </div>
+    </div>
+
+    <div class="main">
+      <div class="topbar">chad@fullcirclebrewing.com &nbsp;·&nbsp; <b>Admin</b></div>
+      <div class="content">
+
+        <div class="header-row">
+          <span class="pill">Categories</span>
+          <span class="pull-btn">✨ Pull action items from today's notes</span>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:16px; margin-bottom:16px;">
+          <div class="legend-row" style="margin-bottom:0;">
+            <span class="legend-pill" style="background:#6ABC46;">Sales</span>
+            <span class="legend-pill" style="background:#3fa9f5;">Operations</span>
+            <span class="legend-pill" style="background:#d99a3d;">Marketing</span>
+            <span class="legend-pill" style="background:#b34fd6;">Admin</span>
+            <span class="legend-pill" style="background:#8a8a86;">Others</span>
+          </div>
+
+          <div class="month-nav" style="margin-bottom:0; justify-self:center;">
+            <span class="month-btn">‹</span>
+            <span class="month-label">September 2026</span>
+            <span class="month-btn">›</span>
+          </div>
+
+          <div></div>
+        </div>
+
+        <div class="cal-grid">
+          <div class="cal-head">SUN</div><div class="cal-head">MON</div><div class="cal-head">TUE</div>
+          <div class="cal-head">WED</div><div class="cal-head">THU</div><div class="cal-head">FRI</div><div class="cal-head">SAT</div>
+
+          <div class="cal-cell dim"><span class="day-num">30</span></div>
+          <div class="cal-cell dim"><span class="day-num">31</span></div>
+          <div class="cal-cell"><span class="day-num">1</span></div>
+          <div class="cal-cell"><span class="day-num">2</span></div>
+          <div class="cal-cell"><span class="day-num">3</span></div>
+          <div class="cal-cell today"><span class="day-num today">4</span></div>
+          <div class="cal-cell"><span class="day-num">5</span></div>
+
+          <div class="cal-cell"><span class="day-num">6</span></div>
+          <div class="cal-cell"><span class="day-num">7</span></div>
+          <div class="cal-cell">
+            <span class="day-num">8</span>
+            <span class="event-chip" style="background:#3fa9f5;">Citrus Ugly Flavor R&amp;D, Order Adjuncts o...</span>
+            <span class="event-chip" style="background:#3fa9f5;">Order Peach, Lemonade, Wild berry, and P...</span>
+          </div>
+          <div class="cal-cell"><span class="day-num">9</span></div>
+          <div class="cal-cell"><span class="day-num">10</span></div>
+          <div class="cal-cell"><span class="day-num">11</span></div>
+          <div class="cal-cell"><span class="day-num">12</span></div>
+
+          <div class="cal-cell"><span class="day-num">13</span></div>
+          <div class="cal-cell"><span class="day-num">14</span></div>
+          <div class="cal-cell"><span class="day-num">15</span></div>
+          <div class="cal-cell"><span class="day-num">16</span></div>
+          <div class="cal-cell"><span class="day-num">17</span></div>
+          <div class="cal-cell"><span class="day-num">18</span></div>
+          <div class="cal-cell"><span class="day-num">19</span></div>
+
+          <div class="cal-cell"><span class="day-num">20</span></div>
+          <div class="cal-cell"><span class="day-num">21</span></div>
+          <div class="cal-cell"><span class="day-num">22</span></div>
+          <div class="cal-cell"><span class="day-num">23</span></div>
+          <div class="cal-cell"><span class="day-num">24</span></div>
+          <div class="cal-cell">
+            <span class="day-num">25</span>
+            <span class="event-chip" style="background:#6ABC46;">Albertsons submission due</span>
+          </div>
+          <div class="cal-cell"><span class="day-num">26</span></div>
+
+          <div class="cal-cell"><span class="day-num">27</span></div>
+          <div class="cal-cell"><span class="day-num">28</span></div>
+          <div class="cal-cell"><span class="day-num">29</span></div>
+          <div class="cal-cell"><span class="day-num">30</span></div>
+          <div class="cal-cell dim"><span class="day-num">1</span></div>
+          <div class="cal-cell dim"><span class="day-num">2</span></div>
+          <div class="cal-cell dim"><span class="day-num">3</span></div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</body>
+</html>

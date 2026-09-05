@@ -743,15 +743,17 @@ export default function TasksPageClient() {
             </button>
           )}
         </div>
-        {view !== "calendar" && (
-          <button
-            type="button"
-            onClick={() => setView("calendar")}
-            className="shrink-0 whitespace-nowrap rounded-full border border-neutral-700 bg-neutral-900 px-4 py-1.5 text-xs font-semibold text-neutral-400 hover:text-neutral-100"
-          >
-            Calendar
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => setView("calendar")}
+          className={`shrink-0 whitespace-nowrap rounded-full border px-4 py-1.5 text-xs font-semibold ${
+            view === "calendar"
+              ? "border-neutral-100 bg-neutral-100 text-neutral-900"
+              : "border-neutral-700 bg-neutral-900 text-neutral-400 hover:text-neutral-100"
+          }`}
+        >
+          Calendar
+        </button>
         <button
           type="button"
           disabled
