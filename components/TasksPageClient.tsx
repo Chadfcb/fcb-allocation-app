@@ -738,26 +738,6 @@ export default function TasksPageClient() {
               Categories
             </button>
           )}
-          {view === "subcategories" && currentCategory && (
-            <button
-              type="button"
-              onClick={() => addSubcategory(currentCategory.id)}
-              className="rounded-md px-3.5 py-2 text-xs font-semibold text-black hover:opacity-90"
-              style={{ backgroundColor: BRAND_GREEN }}
-            >
-              + Add Subcategory
-            </button>
-          )}
-          {view === "items" && (
-            <button
-              type="button"
-              onClick={() => setShowAddTask((v) => !v)}
-              className="rounded-md px-3.5 py-2 text-xs font-semibold text-black hover:opacity-90"
-              style={{ backgroundColor: BRAND_GREEN }}
-            >
-              + Add Task
-            </button>
-          )}
         </div>
         <button
           type="button"
@@ -928,11 +908,15 @@ export default function TasksPageClient() {
                   </div>
                 );
               })}
-              {subcategoriesFor(currentCategory.id).length === 0 && (
-                <p className="col-span-full py-6 text-sm text-neutral-600">
-                  No subcategories yet — add one above.
-                </p>
-              )}
+              <button
+                type="button"
+                onClick={() => addSubcategory(currentCategory.id)}
+                className="flex min-h-[110px] flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-neutral-700 bg-neutral-950 text-sm font-semibold hover:border-neutral-500"
+                style={{ color: BRAND_GREEN }}
+              >
+                <span className="text-2xl leading-none">+</span>
+                Add Subcategory
+              </button>
             </div>
           </div>
         )}
@@ -1136,6 +1120,15 @@ export default function TasksPageClient() {
               {items.filter((i) => i.subcategory_id === currentSubcategory.id && i.status === filter).length === 0 && (
                 <p className="col-span-full py-8 text-center text-sm text-neutral-600">No items here yet.</p>
               )}
+              <button
+                type="button"
+                onClick={() => setShowAddTask(true)}
+                className="flex min-h-[110px] flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-neutral-700 bg-neutral-950 text-sm font-semibold hover:border-neutral-500"
+                style={{ color: BRAND_GREEN }}
+              >
+                <span className="text-2xl leading-none">+</span>
+                Add Task
+              </button>
             </div>
           </div>
         )}
