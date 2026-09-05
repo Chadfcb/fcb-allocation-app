@@ -644,101 +644,89 @@ export default function TasksPageClient() {
     <div className="flex h-[calc(100vh-8rem)] flex-col">
       {/* One back button above the "Tasks" header, rather than buried below
           it in the scrollable content — same spot regardless of which
-          sub-view (Subcategories/Items/Detail) it's returning from. A
-          breadcrumb trail sits next to it so you can tell how many levels
-          deep into Tasks you've gone (Tasks > category > subcategory >
-          task), each earlier step clickable to jump straight back to it.
+          sub-view (Subcategories/Items/Detail) it's returning from. Only
+          shown on those sub-views — on Categories/Calendar there's nowhere
+          to go back to, so this row doesn't render at all there (no
+          reserved blank space wasted at the top of the page).
 
-          This row is now ALWAYS rendered (even on Categories/Calendar,
-          where there's nowhere to go back to) so the header area is the
-          same height on every Tasks page — the back button just goes
-          invisible instead of disappearing, so it still reserves its
-          space and nothing shifts when switching views. */}
-      {(() => {
-        const showBack = view !== "categories" && view !== "calendar";
-        return (
-          <div className="mb-3 flex flex-wrap items-center gap-3">
-            <button
-              type="button"
-              onClick={() => {
-                if (!showBack) return;
-                if (view === "subcategories") {
-                  goToCategories();
-                } else if (view === "items") {
-                  if (currentCategory) goToSubcategories(currentCategory.id);
-                } else if (view === "detail") {
-                  if (detailReturn === "calendar") {
-                    setView("calendar");
-                    return;
-                  }
-                  if (currentSubcategory) goToItems(currentSubcategory.id);
+          A breadcrumb trail sits next to it so you can tell how many
+          levels deep into Tasks you've gone. It no longer repeats a
+          leading "Tasks" crumb — the "← Tasks"/"← <name>" button right
+          next to it already says that, so the leading crumb was pure
+          repetition. */}
+      {view !== "categories" && view !== "calendar" && (
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              if (view === "subcategories") {
+                goToCategories();
+              } else if (view === "items") {
+                if (currentCategory) goToSubcategories(currentCategory.id);
+              } else if (view === "detail") {
+                if (detailReturn === "calendar") {
+                  setView("calendar");
+                  return;
                 }
-              }}
-              tabIndex={showBack ? 0 : -1}
-              aria-hidden={!showBack}
-              className={`flex w-fit shrink-0 items-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800 ${
-                showBack ? "" : "invisible"
-              }`}
-            >
-              ←{" "}
-              {view === "subcategories"
-                ? "Tasks"
-                : view === "items"
-                  ? (currentCategory?.name ?? "Tasks")
-                  : view === "detail"
-                    ? detailReturn === "calendar"
-                      ? "Calendar"
-                      : (currentSubcategory?.name ?? "Tasks")
-                    : "Tasks"}
-            </button>
+                if (currentSubcategory) goToItems(currentSubcategory.id);
+              }
+            }}
+            className="flex w-fit shrink-0 items-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800"
+          >
+            ←{" "}
+            {view === "subcategories"
+              ? "Tasks"
+              : view === "items"
+                ? (currentCategory?.name ?? "Tasks")
+                : detailReturn === "calendar"
+                  ? "Calendar"
+                  : (currentSubcategory?.name ?? "Tasks")}
+          </button>
 
-            <nav className="flex min-w-0 flex-wrap items-center gap-1.5 text-[13px] text-neutral-500">
-              {(() => {
-                const crumbs: { label: string; onClick?: () => void }[] = [
-                  { label: "Tasks", onClick: goToCategories },
-                ];
-                if (view === "subcategories" && currentCategory) {
-                  crumbs.push({ label: currentCategory.name });
-                } else if (view === "items" && currentSubcategory) {
+          <nav className="flex min-w-0 flex-wrap items-center gap-1.5 text-[13px] text-neutral-500">
+            {(() => {
+              const crumbs: { label: string; onClick?: () => void }[] = [];
+              if (view === "subcategories" && currentCategory) {
+                crumbs.push({ label: currentCategory.name });
+              } else if (view === "items" && currentSubcategory) {
+                if (currentCategory) {
+                  crumbs.push({ label: currentCategory.name, onClick: () => goToSubcategories(currentCategory.id) });
+                }
+                crumbs.push({ label: currentSubcategory.name });
+              } else if (view === "detail" && selectedItem) {
+                if (detailReturn === "calendar") {
+                  crumbs.push({ label: "Calendar", onClick: () => setView("calendar") });
+                } else {
                   if (currentCategory) {
                     crumbs.push({ label: currentCategory.name, onClick: () => goToSubcategories(currentCategory.id) });
                   }
-                  crumbs.push({ label: currentSubcategory.name });
-                } else if (view === "detail" && selectedItem) {
-                  if (detailReturn === "calendar") {
-                    crumbs.push({ label: "Calendar", onClick: () => setView("calendar") });
-                  } else {
-                    if (currentCategory) {
-                      crumbs.push({ label: currentCategory.name, onClick: () => goToSubcategories(currentCategory.id) });
-                    }
-                    if (currentSubcategory) {
-                      crumbs.push({ label: currentSubcategory.name, onClick: () => goToItems(currentSubcategory.id) });
-                    }
+                  if (currentSubcategory) {
+                    crumbs.push({ label: currentSubcategory.name, onClick: () => goToItems(currentSubcategory.id) });
                   }
-                  crumbs.push({ label: selectedItem.title });
                 }
+                crumbs.push({ label: selectedItem.title });
+              }
 
-                return crumbs.map((crumb, i) => (
-                  <span key={i} className="flex items-center gap-1.5">
-                    {i > 0 && <span className="text-neutral-700">/</span>}
-                    {crumb.onClick ? (
-                      <button
-                        type="button"
-                        onClick={crumb.onClick}
-                        className="max-w-[220px] truncate hover:text-neutral-200 hover:underline"
-                      >
-                        {crumb.label}
-                      </button>
-                    ) : (
-                      <span className="max-w-[280px] truncate font-medium text-neutral-300">{crumb.label}</span>
-                    )}
-                  </span>
-                ));
-              })()}
-            </nav>
-          </div>
-        );
-      })()}
+              return crumbs.map((crumb, i) => (
+                <span key={i} className="flex items-center gap-1.5">
+                  {i > 0 && <span className="text-neutral-700">/</span>}
+                  {crumb.onClick ? (
+                    <button
+                      type="button"
+                      onClick={crumb.onClick}
+                      className="max-w-[220px] truncate hover:text-neutral-200 hover:underline"
+                    >
+                      {crumb.label}
+                    </button>
+                  ) : (
+                    <span className="max-w-[280px] truncate font-medium text-neutral-300">{crumb.label}</span>
+                  )}
+                </span>
+              ));
+            })()}
+          </nav>
+        </div>
+      )}
       <div className="flex items-center justify-between gap-6 border-b border-neutral-800 pb-4">
         <div>
           {(view === "categories" || view === "calendar") && (
