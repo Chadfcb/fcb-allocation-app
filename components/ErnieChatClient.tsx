@@ -7,11 +7,16 @@
 // CAN produce is a new/edited copy of a file the user attached (e.g. an
 // edited spreadsheet), never a change to the app's own database.
 //
-// Deliberately not boxed into a bordered card like the rest of the app's
-// pages — Chad wanted this one floating directly over the page's own dark
-// background instead. Content is constrained to a centered max-w column
-// (Claude.ai-style) rather than stretching full width, with the input box
-// anchored at the bottom and messages flowing from the top.
+// Visual redesign (2026-09-05, per Chad — "it looks super basic and
+// unappealing"): a green-tinted dark panel using FCB's own brand colors
+// (black/white/#6ABC46, the same green used for the active item in the left
+// sidebar) plus Archivo/IBM Plex type, in place of the previous plain
+// black-and-white look. This is scoped ENTIRELY to this component via
+// next/font/google + literal Tailwind arbitrary-value classes — it
+// deliberately does not touch app/globals.css or app/layout.tsx, since
+// those apply to every other page. Approved via an iterative HTML preview
+// before being built here; nothing about the underlying behavior below
+// changed, only markup/classes.
 //
 // A plain <img> (not next/image) is used for the thinking gif so its
 // animation isn't touched by Next's image optimizer. The skeleton mascot
@@ -19,7 +24,8 @@
 // first-frame PNG once that reply is showing, swapped for the real animated
 // GIF only for the transient "Ernie is thinking…" row while a reply is
 // being generated (GIFs can't be paused via CSS, hence swapping src
-// instead).
+// instead). Both image files were reprocessed to strip a baked-in solid
+// black background so they sit directly on the new panel color.
 //
 // The app's shared (app) layout doesn't give its <main> an explicit height
 // (other pages just grow with their content and let the whole page scroll),
@@ -54,9 +60,15 @@
 // downloadable chips the same way.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Archivo, IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import { createClient } from "@/lib/supabase/client";
 import { fileIcon, formatBytes, storageFileName } from "@/lib/events";
 import { ERNIE_FILES_BUCKET, ERNIE_MAX_FILE_BYTES, ERNIE_MAX_FILES_PER_MESSAGE } from "@/lib/ernie/fileLimits";
+
+// Scoped to this component only — see the file-level comment above.
+const archivo = Archivo({ subsets: ["latin"], weight: ["600", "700", "800"], variable: "--font-archivo" });
+const plexSans = IBM_Plex_Sans({ subsets: ["latin"], weight: ["400", "500", "600"], variable: "--font-plex-sans" });
+const plexMono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-plex-mono" });
 
 interface ErnieFile {
   id: string;
@@ -87,6 +99,15 @@ interface ConversationSummary {
 
 const ACTIVE_CONVERSATION_KEY = "ernie_active_conversation_id";
 const NEW_SENTINEL = "new";
+
+// Prompt starters shown on a blank conversation — grounded in things Ernie
+// can actually answer today, not generic placeholder copy.
+const SUGGESTIONS = [
+  { label: "What's short on this week's build order?", tag: "BUILD ORDERS" },
+  { label: "Compare Saccani vs. Golden Gate pricing on Hazy IPA", tag: "DISTRIBUTOR PRICING" },
+  { label: "Read this spec sheet and flag anything unusual", tag: "FILE ATTACHMENT" },
+  { label: "What's on the calendar for FCB this week?", tag: "CALENDAR" },
+] as const;
 
 function formatRelative(iso: string) {
   const date = new Date(iso);
@@ -515,24 +536,24 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
     onDownload?: () => void;
   }) {
     return (
-      <div className="flex items-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-200">
+      <div className="flex items-center gap-1.5 rounded-md border border-[#262c1f] bg-[#181c13] px-2 py-1 text-xs text-[#eef1e9]">
         <span>{fileIcon(f.file_name)}</span>
         <span className="max-w-[160px] truncate" title={f.file_name}>
           {f.file_name}
         </span>
-        {f.size_bytes != null && <span className="text-neutral-500">{formatBytes(f.size_bytes)}</span>}
+        {f.size_bytes != null && <span className="text-[#8f9885]">{formatBytes(f.size_bytes)}</span>}
         {onDownload && (
           <button
             type="button"
             onClick={onDownload}
             disabled={downloadingId === f.id}
-            className="ml-1 text-neutral-400 hover:text-white disabled:opacity-50"
+            className="ml-1 text-[#8f9885] hover:text-[#7fce5c] disabled:opacity-50"
           >
             {downloadingId === f.id ? "…" : "Download"}
           </button>
         )}
         {onRemove && (
-          <button type="button" onClick={onRemove} className="ml-1 text-neutral-500 hover:text-red-400">
+          <button type="button" onClick={onRemove} className="ml-1 text-[#5d6456] hover:text-red-400">
             ✕
           </button>
         )}
@@ -544,186 +565,228 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
     <div
       ref={panelRef}
       style={panelHeight != null ? { height: panelHeight } : undefined}
-      className="relative mx-auto flex w-full max-w-3xl flex-col p-6"
+      className={`${archivo.variable} ${plexSans.variable} ${plexMono.variable} relative mx-auto flex w-full max-w-3xl flex-col p-6`}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       {dragActive && (
-        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-lg border-2 border-dashed border-neutral-400 bg-neutral-950/80">
-          <p className="text-sm font-medium text-neutral-200">Drop files to attach them</p>
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-[#6ABC46]/60 bg-[#0b0e09]/85">
+          <p className="font-[family-name:var(--font-plex-sans)] text-sm font-medium text-[#eef1e9]">
+            Drop files to attach them
+          </p>
         </div>
       )}
 
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-neutral-100">Ernie AI</h1>
-        <div className="relative flex items-center gap-2">
-          <button
-            type="button"
-            onClick={startNewConversation}
-            className="rounded-md border border-neutral-700 px-3 py-1.5 text-xs font-medium text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
-          >
-            New Conversation
-          </button>
-          <button
-            type="button"
-            onClick={toggleHistory}
-            className="rounded-md border border-neutral-700 px-3 py-1.5 text-xs font-medium text-neutral-300 hover:border-neutral-500 hover:text-neutral-100"
-          >
-            History
-          </button>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[#262c1f] bg-[#12150f] shadow-[0_0_0_1px_rgba(0,0,0,0.4)]">
+        {/* Thin brand-green gradient accent line along the top of the panel */}
+        <div className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[#4c8a32] via-[#6ABC46] to-[#7fce5c]" />
 
-          {historyOpen && (
-            <div className="absolute right-0 top-full z-10 mt-2 w-80 rounded-md border border-neutral-700 bg-neutral-900 shadow-lg">
-              {historyLoading ? (
-                <p className="px-3 py-3 text-sm text-neutral-400">Loading…</p>
-              ) : history.length === 0 ? (
-                <p className="px-3 py-3 text-sm text-neutral-400">No past conversations yet.</p>
-              ) : (
-                <ul className="max-h-80 overflow-y-auto py-1">
-                  {history.map((c) => (
-                    <li key={c.id}>
-                      <button
-                        type="button"
-                        onClick={() => openConversation(c.id)}
-                        className={`flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-neutral-800 ${
-                          c.id === conversationId ? "bg-neutral-800" : ""
-                        }`}
-                      >
-                        <span className="w-full truncate text-sm text-neutral-100">
-                          {c.title || "New conversation"}
-                        </span>
-                        <span className="text-xs text-neutral-500">
-                          {formatRelative(c.updated_at)}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
+        <div className="flex items-center justify-between border-b border-[#1c2117] px-5 py-4">
+          <h1 className="font-[family-name:var(--font-archivo)] text-lg font-bold tracking-tight text-[#eef1e9]">
+            Ernie AI
+          </h1>
+          <div className="relative flex items-center gap-2 font-[family-name:var(--font-plex-sans)]">
+            <button
+              type="button"
+              onClick={startNewConversation}
+              className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+            >
+              New Conversation
+            </button>
+            <button
+              type="button"
+              onClick={toggleHistory}
+              className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+            >
+              History
+            </button>
+
+            {historyOpen && (
+              <div className="absolute right-0 top-full z-10 mt-2 w-80 rounded-lg border border-[#262c1f] bg-[#12150f] shadow-xl">
+                {historyLoading ? (
+                  <p className="px-3 py-3 text-sm text-[#8f9885]">Loading…</p>
+                ) : history.length === 0 ? (
+                  <p className="px-3 py-3 text-sm text-[#8f9885]">No past conversations yet.</p>
+                ) : (
+                  <ul className="max-h-80 overflow-y-auto py-1">
+                    {history.map((c) => (
+                      <li key={c.id}>
+                        <button
+                          type="button"
+                          onClick={() => openConversation(c.id)}
+                          className={`flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-[#181c13] ${
+                            c.id === conversationId ? "bg-[#181c13]" : ""
+                          }`}
+                        >
+                          <span className="w-full truncate text-sm text-[#eef1e9]">
+                            {c.title || "New conversation"}
+                          </span>
+                          <span className="font-[family-name:var(--font-plex-mono)] text-xs text-[#5d6456]">
+                            {formatRelative(c.updated_at)}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
         </div>
-      </div>
 
-      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto">
-        {initializing ? null : messages.length === 0 && (
-          <p className="text-lg text-neutral-300">
-            Hi {firstName}, what can I help you with?
-          </p>
-        )}
-
-        {!initializing &&
-          (() => {
-            let lastAssistantIndex = -1;
-            messages.forEach((m, i) => {
-              if (m.role === "assistant") lastAssistantIndex = i;
-            });
-
-            return messages.map((m, i) =>
-              m.role === "user" ? (
-                <div key={i} className="flex flex-col items-end gap-1.5">
-                  {m.files && m.files.length > 0 && (
-                    <div className="flex max-w-[75%] flex-wrap justify-end gap-1.5">
-                      {m.files.map((f) => (
-                        <FileChip key={f.id} f={f} onDownload={() => handleDownloadFile(f)} />
-                      ))}
-                    </div>
-                  )}
-                  {m.text && (
-                    <div className="max-w-[75%] whitespace-pre-wrap rounded-lg bg-white px-3 py-2 text-sm text-black">
-                      {m.text}
-                    </div>
-                  )}
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 font-[family-name:var(--font-plex-sans)]">
+          {initializing
+            ? null
+            : messages.length === 0 && (
+                <div className="flex flex-col items-center gap-6 py-6 text-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- plain img matches the mascot used elsewhere in this component */}
+                  <img
+                    src="/ernie/thinking-static.png"
+                    alt=""
+                    className="h-[96px] w-[96px] object-contain"
+                  />
+                  <p className="font-[family-name:var(--font-archivo)] text-xl font-semibold text-[#eef1e9]">
+                    Hi {firstName}, what can I help you with?
+                  </p>
+                  <div className="grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2">
+                    {SUGGESTIONS.map((s) => (
+                      <button
+                        key={s.label}
+                        type="button"
+                        onClick={() => send(s.label)}
+                        className="rounded-xl border border-[#262c1f] bg-[#181c13] px-4 py-3 text-left transition-colors hover:border-[#6ABC46]/50 hover:bg-[#1c2117]"
+                      >
+                        <span className="block font-[family-name:var(--font-plex-mono)] text-[10px] font-medium tracking-wider text-[#6ABC46]">
+                          {s.tag}
+                        </span>
+                        <span className="mt-1 block text-sm text-[#eef1e9]">{s.label}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              ) : (
-                <div key={i} className="flex items-start gap-2">
-                  {i === lastAssistantIndex ? (
-                    // eslint-disable-next-line @next/next/no-img-element -- plain img keeps gif animation intact
-                    <img
-                      src="/ernie/thinking-static.png"
-                      alt=""
-                      className="h-[75px] w-[75px] shrink-0 object-contain"
-                    />
-                  ) : (
-                    <div className="w-[75px] shrink-0" />
-                  )}
-                  <div className="flex flex-col gap-1.5 pt-1">
-                    <div className="whitespace-pre-wrap text-sm text-neutral-100">{m.text}</div>
+              )}
+
+          {!initializing &&
+            (() => {
+              let lastAssistantIndex = -1;
+              messages.forEach((m, i) => {
+                if (m.role === "assistant") lastAssistantIndex = i;
+              });
+
+              return messages.map((m, i) =>
+                m.role === "user" ? (
+                  <div key={i} className="flex flex-col items-end gap-1.5">
                     {m.files && m.files.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
+                      <div className="flex max-w-[75%] flex-wrap justify-end gap-1.5">
                         {m.files.map((f) => (
                           <FileChip key={f.id} f={f} onDownload={() => handleDownloadFile(f)} />
                         ))}
                       </div>
                     )}
+                    {m.text && (
+                      <div className="max-w-[75%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-[#6ABC46] px-3.5 py-2.5 text-sm text-[#0b0e09]">
+                        {m.text}
+                      </div>
+                    )}
                   </div>
-                </div>
-              ),
-            );
-          })()}
+                ) : (
+                  <div key={i} className="flex items-start gap-3">
+                    {i === lastAssistantIndex ? (
+                      // eslint-disable-next-line @next/next/no-img-element -- plain img keeps gif animation intact
+                      <img
+                        src="/ernie/thinking-static.png"
+                        alt=""
+                        className="h-[52px] w-[52px] shrink-0 object-contain"
+                      />
+                    ) : (
+                      <div className="w-[52px] shrink-0" />
+                    )}
+                    <div className="flex flex-1 flex-col gap-1 pt-1">
+                      <span className="font-[family-name:var(--font-plex-mono)] text-[11px] font-medium tracking-wide text-[#8f9885]">
+                        Ernie
+                      </span>
+                      <div className="whitespace-pre-wrap border-l-2 border-[#6ABC46]/40 pl-3 text-sm text-[#eef1e9]">
+                        {m.text}
+                      </div>
+                      {m.files && m.files.length > 0 && (
+                        <div className="ml-3 flex flex-wrap gap-1.5">
+                          {m.files.map((f) => (
+                            <FileChip key={f.id} f={f} onDownload={() => handleDownloadFile(f)} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ),
+              );
+            })()}
 
-        {loading && (
-          <div className="flex items-center gap-2">
-            {/* eslint-disable-next-line @next/next/no-img-element -- plain img keeps gif animation intact, and lets the src swap between the static frame and the animated gif */}
-            <img src="/ernie/thinking.gif" alt="" className="h-[75px] w-[75px] shrink-0 object-contain" />
-            <p className="text-sm text-neutral-400">
-              {statusLabel ? `${statusLabel}…` : "Ernie is thinking…"}
-            </p>
-          </div>
-        )}
+          {loading && (
+            <div className="flex items-center gap-3">
+              {/* eslint-disable-next-line @next/next/no-img-element -- plain img keeps gif animation intact, and lets the src swap between the static frame and the animated gif */}
+              <img src="/ernie/thinking.gif" alt="" className="h-[52px] w-[52px] shrink-0 object-contain" />
+              <p className="text-sm text-[#8f9885]">
+                {statusLabel ? `${statusLabel}…` : "Ernie is thinking…"}
+              </p>
+            </div>
+          )}
 
-        {error && <p className="text-sm text-red-400">{error}</p>}
-        <div ref={scrollRef} />
-      </div>
+          {error && <p className="text-sm text-red-400">{error}</p>}
+          <div ref={scrollRef} />
+        </div>
 
-      <div className="border-t border-neutral-800 pt-3">
-        {(pendingFiles.length > 0 || uploading) && (
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {pendingFiles.map((f) => (
-              <FileChip key={f.id} f={f} onRemove={() => removePendingFile(f)} />
-            ))}
-            {uploading && <span className="px-2 py-1 text-xs text-neutral-500">Uploading…</span>}
-          </div>
-        )}
-        {uploadError && <p className="mb-2 text-xs text-red-400">{uploadError}</p>}
+        <div className="border-t border-[#1c2117] px-5 py-4 font-[family-name:var(--font-plex-sans)]">
+          {(pendingFiles.length > 0 || uploading) && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {pendingFiles.map((f) => (
+                <FileChip key={f.id} f={f} onRemove={() => removePendingFile(f)} />
+              ))}
+              {uploading && <span className="px-2 py-1 text-xs text-[#5d6456]">Uploading…</span>}
+            </div>
+          )}
+          {uploadError && <p className="mb-2 text-xs text-red-400">{uploadError}</p>}
 
-        <form onSubmit={handleSubmit} className="flex gap-2">
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              if (e.target.files?.length) handleFiles(e.target.files);
-              e.target.value = "";
-            }}
-          />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={loading || uploading}
-            title="Attach a file"
-            className="rounded-md border border-neutral-700 px-3 py-2 text-sm text-neutral-300 hover:border-neutral-500 hover:text-neutral-100 disabled:opacity-50"
-          >
-            +
-          </button>
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Ask Ernie something, or attach a file…"
-            className="flex-1 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
-          />
-          <button
-            type="submit"
-            disabled={loading || (!input.trim() && pendingFiles.length === 0)}
-            className="rounded-md bg-white px-4 py-2 text-sm font-medium text-black hover:bg-neutral-200 disabled:opacity-50"
-          >
-            Send
-          </button>
-        </form>
+          <form onSubmit={handleSubmit} className="flex items-center gap-2 rounded-full border border-[#262c1f] bg-[#181c13] py-1.5 pl-1.5 pr-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files?.length) handleFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={loading || uploading}
+              title="Attach a file"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[#8f9885] transition-colors hover:bg-[#1c2117] hover:text-[#7fce5c] disabled:opacity-50"
+            >
+              +
+            </button>
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Ask Ernie something, or attach a file…"
+              className="flex-1 bg-transparent text-sm text-[#eef1e9] placeholder:text-[#5d6456] focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={loading || (!input.trim() && pendingFiles.length === 0)}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#6ABC46] text-[#0b0e09] transition-colors hover:bg-[#7fce5c] disabled:opacity-40"
+              title="Send"
+            >
+              <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
+                <path d="M10 15.5V4.5M10 4.5L4.5 10M10 4.5L15.5 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );
