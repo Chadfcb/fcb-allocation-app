@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Ernie — user bubble preview</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #0b0e09;
+    --surface: #12150f;
+    --border: #262c1f;
+    --border-soft: #1c2117;
+    --text: #eef1e9;
+    --text-muted: #8f9885;
+    --accent: #6ABC46;
+    --accent-strong: #7fce5c;
+    --accent-deep: #4c8a32;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', Arial, sans-serif;
+    padding: 40px 20px;
+    display: flex;
+    justify-content: center;
+  }
+  .panel {
+    width: 100%;
+    max-width: 760px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--surface);
+    overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
+  }
+  .accent-line {
+    height: 3px;
+    width: 100%;
+    background: linear-gradient(to right, var(--accent-deep), var(--accent), var(--accent-strong));
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border-soft);
+    padding: 16px 20px;
+  }
+  .header h1 {
+    font-family: 'Archivo', sans-serif;
+    font-weight: 800;
+    font-size: 18px;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .header button {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+    background: #181c13;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 6px 12px;
+    cursor: default;
+  }
+  .body {
+    padding: 24px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .row { display: flex; }
+  .row.user { justify-content: flex-end; }
+  .bubble-user {
+    max-width: 75%;
+    background: #ffffff;
+    color: #000000;
+    border-radius: 16px 16px 4px 16px;
+    padding: 10px 14px;
+    font-size: 14px;
+    white-space: pre-wrap;
+  }
+  .assistant-row { display: flex; align-items: flex-start; gap: 12px; }
+  .assistant-row img { width: 52px; height: 52px; object-fit: contain; flex-shrink: 0; }
+  .assistant-block { display: flex; flex-direction: column; gap: 4px; padding-top: 4px; }
+  .assistant-meta {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: var(--text-muted);
+  }
+  .assistant-text {
+    border-left: 2px solid rgba(106,188,70,0.4);
+    padding-left: 12px;
+    font-size: 14px;
+    color: var(--text);
+  }
+  .note {
+    text-align: center;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 16px;
+  }
+</style>
+</head>
+<body>
+  <div>
+    <div class="panel">
+      <div class="accent-line"></div>
+      <div class="header">
+        <h1>Ernie AI</h1>
+        <button>New Conversation</button>
+      </div>
+      <div class="body">
+        <div class="row user">
+          <div class="bubble-user">will a paper plate melt or catch fire if i put it in my air fryer at 375 for 3 minutes</div>
+        </div>
+        <div class="assistant-row">
+          <div style="width:52px;flex-shrink:0"></div>
+          <div class="assistant-block">
+            <span class="assistant-meta">Ernie</span>
+            <span class="assistant-text">Paper plates and air fryers don't mix well, and I'd avoid it — a lightweight plate can get sucked up against the heating element.</span>
+          </div>
+        </div>
+        <div class="row user">
+          <div class="bubble-user">got it, thanks</div>
+        </div>
+      </div>
+    </div>
+    <p class="note">Preview only — white bubble, black text for your messages</p>
+  </div>
+</body>
+</html>

@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Ernie — input bar preview</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+  :root {
+    --bg: #0b0e09;
+    --surface: #12150f;
+    --border: #262c1f;
+    --border-soft: #1c2117;
+    --text: #eef1e9;
+    --text-muted: #8f9885;
+    --text-faint: #5d6456;
+    --accent: #6ABC46;
+    --accent-strong: #7fce5c;
+    --accent-deep: #4c8a32;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', Arial, sans-serif;
+  }
+  .page {
+    display: flex;
+    justify-content: center;
+    height: 100vh;
+    padding: 24px;
+  }
+  .layout {
+    display: flex;
+    gap: 16px;
+    width: 100%;
+    max-width: 1600px;
+  }
+  .panel {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--surface);
+    overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
+  }
+  .accent-line {
+    height: 3px;
+    width: 100%;
+    flex-shrink: 0;
+    background: linear-gradient(to right, var(--accent-deep), var(--accent), var(--accent-strong));
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border-soft);
+    padding: 16px 20px;
+    flex-shrink: 0;
+  }
+  .header h1 {
+    font-family: 'Archivo', sans-serif;
+    font-weight: 800;
+    font-size: 18px;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+  .header button {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+    background: #181c13;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 6px 12px;
+    cursor: default;
+  }
+  .body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .empty {
+    margin: auto;
+    text-align: center;
+  }
+  .empty p {
+    font-family: 'Archivo', sans-serif;
+    font-weight: 600;
+    font-size: 18px;
+    margin: 0;
+  }
+  .row { display: flex; }
+  .row.user { justify-content: flex-end; }
+  .bubble-user {
+    max-width: 60%;
+    background: var(--accent);
+    color: #0b0e09;
+    border-radius: 16px 16px 4px 16px;
+    padding: 10px 14px;
+    font-size: 14px;
+  }
+  .assistant-row { display: flex; align-items: flex-start; gap: 12px; }
+  .assistant-row .spacer { width: 52px; flex-shrink: 0; }
+  .assistant-block { display: flex; flex-direction: column; gap: 4px; padding-top: 4px; }
+  .assistant-meta {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: var(--text-muted);
+  }
+  .assistant-text {
+    border-left: 2px solid rgba(106,188,70,0.4);
+    padding-left: 12px;
+    font-size: 14px;
+    color: var(--text);
+    max-width: 70%;
+  }
+  .footer {
+    border-top: 1px solid var(--border-soft);
+    padding: 16px 20px;
+    flex-shrink: 0;
+  }
+  .inputbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-radius: 999px;
+    padding: 6px 8px 6px 6px;
+    background: #ffffff;
+  }
+  .inputbar .attach {
+    width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #55584f;
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+  .inputbar input {
+    flex: 1;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 14px;
+    color: #000000;
+  }
+  .inputbar input::placeholder { color: #6b6f63; }
+  .inputbar .send {
+    width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    background: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .inputbar .send svg { width: 16px; height: 16px; color: #0b0e09; }
+
+  .sidebar {
+    width: 288px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--surface);
+    overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
+  }
+  .sidebar-header {
+    border-bottom: 1px solid var(--border-soft);
+    padding: 16px;
+    flex-shrink: 0;
+  }
+  .sidebar-header h2 {
+    font-family: 'Archivo', sans-serif;
+    font-weight: 800;
+    font-size: 14px;
+    margin: 0;
+  }
+  .sidebar-list { flex: 1; overflow-y: auto; }
+  .convo {
+    padding: 10px 16px;
+    border-bottom: 1px solid transparent;
+  }
+  .convo .title { display: block; font-size: 14px; color: var(--text); }
+  .convo .time { display: block; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text-faint); margin-top: 2px; }
+
+  .badge {
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 12px;
+    color: var(--text-muted);
+    background: #181c13;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 6px 14px;
+  }
+</style>
+</head>
+<body>
+  <div class="badge">Preview only — full-size mockup, at the same proportions as your actual Ernie page</div>
+  <div class="page">
+    <div class="layout">
+      <div class="panel">
+        <div class="accent-line"></div>
+        <div class="header">
+          <h1>Ernie AI</h1>
+          <button>New Conversation</button>
+        </div>
+        <div class="body">
+          <div class="row user"><div class="bubble-user">will a paper plate melt or catch fire if i put it in my air fryer at 375 for 3 minutes</div></div>
+          <div class="assistant-row">
+            <div class="spacer"></div>
+            <div class="assistant-block">
+              <span class="assistant-meta">Ernie</span>
+              <span class="assistant-text">Paper plates and air fryers don't mix well, and I'd avoid it — a lightweight plate can get sucked up against the heating element.</span>
+            </div>
+          </div>
+          <div class="row user"><div class="bubble-user">got it, thanks — one more thing, can you check this week's build order?</div></div>
+        </div>
+        <div class="footer">
+          <div class="inputbar">
+            <div class="attach">+</div>
+            <input type="text" placeholder="Ask Ernie something, or attach a file…" />
+            <div class="send">
+              <svg viewBox="0 0 20 20" fill="none"><path d="M10 15.5V4.5M10 4.5L4.5 10M10 4.5L15.5 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="sidebar">
+        <div class="sidebar-header"><h2>Past Conversations</h2></div>
+        <div class="sidebar-list">
+          <div class="convo"><span class="title">can you tell me if there are any tasks c...</span><span class="time">8h ago</span></div>
+          <div class="convo"><span class="title">test</span><span class="time">1d ago</span></div>
+          <div class="convo"><span class="title">can you tell me what this is, and the re...</span><span class="time">4d ago</span></div>
+          <div class="convo"><span class="title">can you tell me what this is, and what ...</span><span class="time">4d ago</span></div>
+          <div class="convo"><span class="title">can you tell me what this is and whats ...</span><span class="time">4d ago</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
