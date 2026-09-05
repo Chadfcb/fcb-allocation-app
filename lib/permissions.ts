@@ -21,6 +21,7 @@ export type SectionKey =
   | "build_orders"
   | "distributor_pricing"
   | "weeks"
+  | "upcs"
   | "audit_log"
   | "price_list"
   | "margin_analysis"
@@ -67,7 +68,7 @@ export interface SectionInfo {
 // edits a new top-level category needs.
 //
 // Order here is also the display order in the Users > Edit checklist.
-export type GroupKey = "operations" | "sales" | "events_calendar" | "pos_labels" | "tasks";
+export type GroupKey = "operations" | "sales" | "events_calendar" | "pos_labels" | "tasks" | "audit_log";
 
 export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[] }[] = [
   {
@@ -87,7 +88,10 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
       // top-level Users > Edit toggle grants it has changed — checking
       // Operations now also grants this page.
       { key: "pos_labels", label: "Labels" },
-      { key: "audit_log", label: "Audit Log" },
+      // Added 2026-09-05, just above where Audit Log used to sit — per
+      // Chad, right before he asked to move Audit Log out of Operations
+      // entirely (see the new "audit_log" group below).
+      { key: "upcs", label: "UPC's" },
     ],
   },
   {
@@ -127,6 +131,17 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
     key: "tasks",
     label: "Tasks",
     items: [{ key: "tasks", label: "Tasks" }],
+  },
+  {
+    key: "audit_log",
+    // Moved out of Operations into its own top-level category — per Chad,
+    // 2026-09-05: "lets move audit log to a main category, below Users,
+    // and out of operations." The underlying SectionKey value is
+    // unchanged ("audit_log"), so existing grants and RLS keep working —
+    // only which Users > Edit toggle it lives under (and where it shows
+    // up in the Sidebar) changed.
+    label: "Audit Log",
+    items: [{ key: "audit_log", label: "Audit Log" }],
   },
 ];
 
