@@ -100,14 +100,13 @@ interface ConversationSummary {
 const ACTIVE_CONVERSATION_KEY = "ernie_active_conversation_id";
 const NEW_SENTINEL = "new";
 
-// Prompt starters shown on a blank conversation — grounded in things Ernie
-// can actually answer today, not generic placeholder copy.
-const SUGGESTIONS = [
-  { label: "What's short on this week's build order?", tag: "BUILD ORDERS" },
-  { label: "Compare Saccani vs. Golden Gate pricing on Hazy IPA", tag: "DISTRIBUTOR PRICING" },
-  { label: "Read this spec sheet and flag anything unusual", tag: "FILE ATTACHMENT" },
-  { label: "What's on the calendar for FCB this week?", tag: "CALENDAR" },
-] as const;
+// firstName can come from a full name or from the part of an email before
+// the "@" (see app/(app)/ernie/page.tsx) — the latter is often all lowercase
+// (e.g. "chad" from chad@fullcirclebrewing.com), so the greeting capitalizes
+// it rather than trusting the source casing.
+function capitalize(name: string) {
+  return name ? name.charAt(0).toUpperCase() + name.slice(1) : name;
+}
 
 function formatRelative(iso: string) {
   const date = new Date(iso);
@@ -602,30 +601,15 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
             ? null
             : messages.length === 0 && (
                 <div className="flex flex-col items-center gap-6 py-6 text-center">
-                  {/* eslint-disable-next-line @next/next/no-img-element -- plain img matches the mascot used elsewhere in this component */}
+                  {/* eslint-disable-next-line @next/next/no-img-element -- plain img keeps gif animation intact */}
                   <img
-                    src="/ernie/thinking-static.png"
+                    src="/ernie/thinking.gif"
                     alt=""
                     className="h-[96px] w-[96px] object-contain"
                   />
                   <p className="font-[family-name:var(--font-archivo)] text-xl font-semibold text-[#eef1e9]">
-                    Hi {firstName}, what can I help you with?
+                    Hi {capitalize(firstName)}, what can I help you with?
                   </p>
-                  <div className="grid w-full grid-cols-1 gap-2.5 sm:grid-cols-2">
-                    {SUGGESTIONS.map((s) => (
-                      <button
-                        key={s.label}
-                        type="button"
-                        onClick={() => send(s.label)}
-                        className="rounded-xl border border-[#262c1f] bg-[#181c13] px-4 py-3 text-left transition-colors hover:border-[#6ABC46]/50 hover:bg-[#1c2117]"
-                      >
-                        <span className="block font-[family-name:var(--font-plex-mono)] text-[10px] font-medium tracking-wider text-[#6ABC46]">
-                          {s.tag}
-                        </span>
-                        <span className="mt-1 block text-sm text-[#eef1e9]">{s.label}</span>
-                      </button>
-                    ))}
-                  </div>
                 </div>
               )}
 
