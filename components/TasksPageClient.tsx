@@ -725,11 +725,6 @@ export default function TasksPageClient() {
       <div className="flex items-start justify-between gap-6 border-b border-neutral-800 pb-4">
         <div>
           <h1 className="text-2xl font-bold text-neutral-100">Tasks</h1>
-          <p className="mt-1.5 max-w-2xl text-[13px] leading-relaxed text-neutral-400">
-            Anything that needs to get done, in one place — a running log per item, plus a chat
-            thread so whoever&apos;s driving it can give direction and whoever&apos;s doing the
-            work can post updates back, right in place. Anyone can start one and assign it.
-          </p>
           {(view === "categories" || view === "calendar") && (
             <div className="mt-3 inline-flex gap-1.5 rounded-full border border-neutral-700 bg-neutral-900 p-1">
               <button
