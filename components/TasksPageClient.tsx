@@ -641,6 +641,37 @@ export default function TasksPageClient() {
 
   return (
     <div className="flex h-[calc(100vh-8rem)] flex-col">
+      {/* One back button above the "Tasks" header, rather than buried below
+          it in the scrollable content — same spot regardless of which
+          sub-view (Subcategories/Items/Detail) it's returning from. */}
+      {view !== "categories" && view !== "calendar" && (
+        <button
+          type="button"
+          onClick={() => {
+            if (view === "subcategories") {
+              goToCategories();
+            } else if (view === "items") {
+              if (currentCategory) goToSubcategories(currentCategory.id);
+            } else if (view === "detail") {
+              if (detailReturn === "calendar") {
+                setView("calendar");
+                return;
+              }
+              if (currentSubcategory) goToItems(currentSubcategory.id);
+            }
+          }}
+          className="mb-3 flex w-fit items-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800"
+        >
+          ←{" "}
+          {view === "subcategories"
+            ? "Tasks"
+            : view === "items"
+              ? (currentCategory?.name ?? "Tasks")
+              : detailReturn === "calendar"
+                ? "Calendar"
+                : (currentSubcategory?.name ?? "Tasks")}
+        </button>
+      )}
       <div className="flex items-start justify-between gap-6 border-b border-neutral-800 pb-4">
         <div>
           <h1 className="text-2xl font-bold text-neutral-100">Tasks</h1>
@@ -784,13 +815,6 @@ export default function TasksPageClient() {
 
         {view === "subcategories" && currentCategory && (
           <div className="py-2">
-            <button
-              type="button"
-              onClick={goToCategories}
-              className="mb-4 flex items-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800"
-            >
-              ← Tasks
-            </button>
             <h2 className="mb-4 text-lg font-bold text-neutral-100">{currentCategory.name}</h2>
 
             <div className="grid max-w-[900px] grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4">
@@ -869,13 +893,6 @@ export default function TasksPageClient() {
 
         {view === "items" && currentSubcategory && (
           <div className="py-2">
-            <button
-              type="button"
-              onClick={() => currentCategory && goToSubcategories(currentCategory.id)}
-              className="mb-4 flex items-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800"
-            >
-              ← {currentCategory?.name ?? "Tasks"}
-            </button>
             <h2 className="mb-4 text-lg font-bold text-neutral-100">{currentSubcategory.name}</h2>
 
             {showAddTask && (
@@ -1196,19 +1213,6 @@ export default function TasksPageClient() {
         {view === "detail" && selectedItem && (
           <div className="flex h-full gap-4 py-2">
             <div className="flex w-72 shrink-0 flex-col overflow-y-auto border-r border-neutral-800 pr-4">
-              <button
-                type="button"
-                onClick={() => {
-                  if (detailReturn === "calendar") {
-                    setView("calendar");
-                    return;
-                  }
-                  if (currentSubcategory) goToItems(currentSubcategory.id);
-                }}
-                className="mb-4 flex items-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800"
-              >
-                ← {detailReturn === "calendar" ? "Calendar" : (currentSubcategory?.name ?? "Tasks")}
-              </button>
               <p className="mb-2 text-[11px] tracking-wide text-neutral-500">ACTIVITY LOG</p>
               {activity.length === 0 && <p className="text-xs text-neutral-600">No activity yet.</p>}
               <div className="flex flex-col gap-3">
