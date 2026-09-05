@@ -40,7 +40,13 @@ import { hasSection, ERNIE_SECTION, type AnySectionKey, type SectionKey } from "
 import { createClient } from "@/lib/supabase/client";
 
 const NEW_SIDEBAR_IDS: string[] = [
-  // e.g. "section:calendars", "/chain-calendar",
+  // First items to use this feature (added 2026-09-05, shipped today before
+  // anyone had logged in, so this doubles as the live test of it): Chain
+  // Calendar and Social Media Calendar, plus the Calendars parent section
+  // itself since it now has new children under it.
+  "section:calendars",
+  "/chain-calendar",
+  "/social-media-calendar",
 ];
 
 function NewBadge() {
