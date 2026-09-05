@@ -723,7 +723,7 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
             <button
               type="submit"
               disabled={loading || (!input.trim() && pendingFiles.length === 0)}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#6ABC46] text-[#0b0e09] transition-colors hover:bg-[#7fce5c] disabled:opacity-40"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#6ABC46] text-[#0b0e09] transition-colors hover:bg-[#7fce5c] disabled:cursor-not-allowed"
               title="Send"
             >
               <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
