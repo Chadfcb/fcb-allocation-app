@@ -449,10 +449,37 @@ export default function Sidebar({
     return descendantIds.some((childId) => showsNew(childId));
   }
 
+  // Accordion behavior for the four top-level sections — added 2026-09-05
+  // per Chad: "if i click out of a section... and go to a different
+  // section, i want the last one to collapse as well." Opening any one of
+  // Operations/Sales/POS/Calendars now closes the other three, so at most
+  // one is ever expanded at a time. Closing the section you're currently
+  // in still just closes it, same as before — this only kicks in when a
+  // section is being opened.
+  function closeOtherTopLevelSections(except: "operations" | "sales" | "calendars" | "pos") {
+    if (except !== "operations") {
+      setOperationsExpanded(false);
+      localStorage.setItem(OPERATIONS_STORAGE_KEY, "false");
+    }
+    if (except !== "sales") {
+      setSalesExpanded(false);
+      localStorage.setItem(SALES_STORAGE_KEY, "false");
+    }
+    if (except !== "calendars") {
+      setCalendarsExpanded(false);
+      localStorage.setItem(CALENDARS_STORAGE_KEY, "false");
+    }
+    if (except !== "pos") {
+      setPosExpanded(false);
+      localStorage.setItem(POS_STORAGE_KEY, "false");
+    }
+  }
+
   function toggleOperations() {
     setOperationsExpanded((prev) => {
       const next = !prev;
       localStorage.setItem(OPERATIONS_STORAGE_KEY, String(next));
+      if (next) closeOtherTopLevelSections("operations");
       return next;
     });
   }
@@ -461,6 +488,7 @@ export default function Sidebar({
     setSalesExpanded((prev) => {
       const next = !prev;
       localStorage.setItem(SALES_STORAGE_KEY, String(next));
+      if (next) closeOtherTopLevelSections("sales");
       return next;
     });
   }
@@ -469,6 +497,7 @@ export default function Sidebar({
     setCalendarsExpanded((prev) => {
       const next = !prev;
       localStorage.setItem(CALENDARS_STORAGE_KEY, String(next));
+      if (next) closeOtherTopLevelSections("calendars");
       return next;
     });
   }
@@ -477,6 +506,7 @@ export default function Sidebar({
     setPosExpanded((prev) => {
       const next = !prev;
       localStorage.setItem(POS_STORAGE_KEY, String(next));
+      if (next) closeOtherTopLevelSections("pos");
       return next;
     });
   }
