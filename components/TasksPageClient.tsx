@@ -725,26 +725,17 @@ export default function TasksPageClient() {
       <div className="flex items-start justify-between gap-6 border-b border-neutral-800 pb-4">
         <div>
           {(view === "categories" || view === "calendar") && (
-            <div className="inline-flex gap-1.5 rounded-full border border-neutral-700 bg-neutral-900 p-1">
-              <button
-                type="button"
-                onClick={goToCategories}
-                className={`rounded-full px-4 py-1.5 text-xs font-semibold ${
-                  view === "categories" ? "bg-neutral-100 text-neutral-900" : "text-neutral-400 hover:text-neutral-100"
-                }`}
-              >
-                Categories
-              </button>
-              <button
-                type="button"
-                onClick={() => setView("calendar")}
-                className={`rounded-full px-4 py-1.5 text-xs font-semibold ${
-                  view === "calendar" ? "bg-neutral-100 text-neutral-900" : "text-neutral-400 hover:text-neutral-100"
-                }`}
-              >
-                Calendar
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={goToCategories}
+              className={`rounded-full border px-4 py-1.5 text-xs font-semibold ${
+                view === "categories"
+                  ? "border-neutral-100 bg-neutral-100 text-neutral-900"
+                  : "border-neutral-700 bg-neutral-900 text-neutral-400 hover:text-neutral-100"
+              }`}
+            >
+              Categories
+            </button>
           )}
           {view === "categories" && (
             <button
@@ -777,6 +768,17 @@ export default function TasksPageClient() {
             </button>
           )}
         </div>
+        <button
+          type="button"
+          onClick={() => setView("calendar")}
+          className={`shrink-0 whitespace-nowrap rounded-full border px-4 py-1.5 text-xs font-semibold ${
+            view === "calendar"
+              ? "border-neutral-100 bg-neutral-100 text-neutral-900"
+              : "border-neutral-700 bg-neutral-900 text-neutral-400 hover:text-neutral-100"
+          }`}
+        >
+          Calendar
+        </button>
         <button
           type="button"
           disabled
