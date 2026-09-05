@@ -565,7 +565,7 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
     <div
       ref={panelRef}
       style={panelHeight != null ? { height: panelHeight } : undefined}
-      className={`${archivo.variable} ${plexSans.variable} ${plexMono.variable} relative mx-auto flex w-full max-w-6xl flex-col p-6`}
+      className={`${archivo.variable} ${plexSans.variable} ${plexMono.variable} relative mx-auto flex w-full max-w-[1600px] flex-col p-6`}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
