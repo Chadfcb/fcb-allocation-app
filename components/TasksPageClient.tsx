@@ -724,9 +724,8 @@ export default function TasksPageClient() {
       )}
       <div className="flex items-start justify-between gap-6 border-b border-neutral-800 pb-4">
         <div>
-          <h1 className="text-2xl font-bold text-neutral-100">Tasks</h1>
           {(view === "categories" || view === "calendar") && (
-            <div className="mt-3 inline-flex gap-1.5 rounded-full border border-neutral-700 bg-neutral-900 p-1">
+            <div className="inline-flex gap-1.5 rounded-full border border-neutral-700 bg-neutral-900 p-1">
               <button
                 type="button"
                 onClick={goToCategories}
