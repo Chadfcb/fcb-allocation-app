@@ -64,9 +64,7 @@ const NEW_SIDEBAR_IDS: string[] = [
   // Oobli and Ugly Fresca — new brands added under Labels (2026-09-05),
   // per Chad: "remember, these will be new to everyone."
   "section:pos-labels-oobli",
-  "/pos/labels/oobli/19-2oz",
   "/pos/labels/oobli/16oz",
-  "/pos/labels/oobli/12oz",
   "section:pos-labels-ugly-fresca",
   "/pos/labels/ugly-fresca/19-2oz",
   "/pos/labels/ugly-fresca/16oz",
@@ -90,9 +88,7 @@ const NEW_SIDEBAR_IDS: string[] = [
   "/upcs/sonoma-cider/16oz",
   "/upcs/sonoma-cider/12oz",
   "section:upc-oobli",
-  "/upcs/oobli/19-2oz",
   "/upcs/oobli/16oz",
-  "/upcs/oobli/12oz",
   "section:upc-ugly-fresca",
   "/upcs/ugly-fresca/19-2oz",
   "/upcs/ugly-fresca/16oz",
@@ -205,13 +201,10 @@ const POS_LABEL_BRANDS: {
   // they're brand new to everyone (see NEW_SIDEBAR_IDS at the top of this
   // file).
   {
+    // Oobli only ships in 16oz, per Chad 2026-09-05 — no 19.2oz/12oz sizes.
     treeKey: "pos-labels-oobli",
     label: "Oobli",
-    sizes: [
-      { href: "/pos/labels/oobli/19-2oz", label: "19.2 oz Labels" },
-      { href: "/pos/labels/oobli/16oz", label: "16 oz Labels" },
-      { href: "/pos/labels/oobli/12oz", label: "12 oz Labels" },
-    ],
+    sizes: [{ href: "/pos/labels/oobli/16oz", label: "16 oz Labels" }],
   },
   {
     treeKey: "pos-labels-ugly-fresca",
@@ -266,13 +259,10 @@ const UPC_BRANDS: {
     ],
   },
   {
+    // Oobli only ships in 16oz, per Chad 2026-09-05 — no 19.2oz/12oz sizes.
     treeKey: "upc-oobli",
     label: "Oobli",
-    sizes: [
-      { href: "/upcs/oobli/19-2oz", label: "19.2 oz UPC's" },
-      { href: "/upcs/oobli/16oz", label: "16 oz UPC's" },
-      { href: "/upcs/oobli/12oz", label: "12 oz UPC's" },
-    ],
+    sizes: [{ href: "/upcs/oobli/16oz", label: "16 oz UPC's" }],
   },
   {
     treeKey: "upc-ugly-fresca",
