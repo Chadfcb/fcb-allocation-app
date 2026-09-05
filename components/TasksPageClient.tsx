@@ -1139,6 +1139,18 @@ export default function TasksPageClient() {
 
         {view === "calendar" && (
           <div className="py-2">
+            <div className="mb-4 flex flex-wrap gap-2">
+              {categories.map((cat) => (
+                <span
+                  key={cat.id}
+                  className="rounded px-2 py-1 text-[11.5px] font-semibold text-black"
+                  style={{ backgroundColor: cat.color ?? "#8a8a86" }}
+                >
+                  {cat.name}
+                </span>
+              ))}
+            </div>
+
             {(() => {
               const overdue = items.filter((i) => dueStatus(i) === "overdue");
               if (overdue.length === 0) return null;
@@ -1242,14 +1254,6 @@ export default function TasksPageClient() {
               })}
             </div>
 
-            <div className="mt-5 flex flex-wrap gap-4 text-[11.5px] text-neutral-400">
-              {categories.map((cat) => (
-                <span key={cat.id} className="flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: cat.color ?? "#8a8a86" }} />
-                  {cat.name}
-                </span>
-              ))}
-            </div>
           </div>
         )}
 
