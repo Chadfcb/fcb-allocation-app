@@ -136,7 +136,6 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
   const [initializing, setInitializing] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<ConversationSummary[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
@@ -236,8 +235,32 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
     };
   }, []);
 
-  async function refreshHistoryIfOpen() {
-    if (!historyOpen) return;
+  // Load the sidebar's conversation list once on mount — it's always
+  // visible now (no more click-to-open History dropdown), so it needs its
+  // own data as soon as the page loads rather than waiting to be opened.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setHistoryLoading(true);
+      try {
+        const res = await fetch("/api/ernie/conversations");
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          setHistory(data.conversations ?? []);
+        }
+      } finally {
+        if (!cancelled) setHistoryLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Conversation list for the right-hand sidebar — loaded once on mount and
+  // refreshed after every reply, rather than only when a dropdown is opened,
+  // since the sidebar is on-screen at all times now.
+  async function refreshHistory() {
     try {
       const res = await fetch("/api/ernie/conversations");
       if (res.ok) {
@@ -452,7 +475,7 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
               setConversationId(event.conversationId);
               sessionStorage.setItem(ACTIVE_CONVERSATION_KEY, event.conversationId);
             }
-            refreshHistoryIfOpen();
+            refreshHistory();
           } else if (event.type === "error") {
             settled = true;
             setError(event.error ?? "Something went wrong asking Ernie that.");
@@ -480,33 +503,11 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
     setMessages([]);
     setConversationId(null);
     setError(null);
-    setHistoryOpen(false);
     sessionStorage.setItem(ACTIVE_CONVERSATION_KEY, NEW_SENTINEL);
   }
 
-  async function toggleHistory() {
-    const opening = !historyOpen;
-    setHistoryOpen(opening);
-    if (!opening) return;
-
-    setHistoryLoading(true);
-    try {
-      const res = await fetch("/api/ernie/conversations");
-      if (res.ok) {
-        const data = await res.json();
-        setHistory(data.conversations ?? []);
-      }
-    } finally {
-      setHistoryLoading(false);
-    }
-  }
-
   async function openConversation(id: string) {
-    if (id === conversationId) {
-      setHistoryOpen(false);
-      return;
-    }
-    setHistoryOpen(false);
+    if (id === conversationId) return;
     setError(null);
     setInitializing(true);
     try {
@@ -565,7 +566,7 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
     <div
       ref={panelRef}
       style={panelHeight != null ? { height: panelHeight } : undefined}
-      className={`${archivo.variable} ${plexSans.variable} ${plexMono.variable} relative mx-auto flex w-full max-w-[1600px] flex-col p-6`}
+      className={`${archivo.variable} ${plexSans.variable} ${plexMono.variable} relative mx-auto flex w-full max-w-[1600px] gap-4 p-6`}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -587,53 +588,13 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
           <h1 className="font-[family-name:var(--font-archivo)] text-lg font-bold tracking-tight text-[#eef1e9]">
             Ernie AI
           </h1>
-          <div className="relative flex items-center gap-2 font-[family-name:var(--font-plex-sans)]">
-            <button
-              type="button"
-              onClick={startNewConversation}
-              className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
-            >
-              New Conversation
-            </button>
-            <button
-              type="button"
-              onClick={toggleHistory}
-              className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
-            >
-              History
-            </button>
-
-            {historyOpen && (
-              <div className="absolute right-0 top-full z-10 mt-2 w-80 rounded-lg border border-[#262c1f] bg-[#12150f] shadow-xl">
-                {historyLoading ? (
-                  <p className="px-3 py-3 text-sm text-[#8f9885]">Loading…</p>
-                ) : history.length === 0 ? (
-                  <p className="px-3 py-3 text-sm text-[#8f9885]">No past conversations yet.</p>
-                ) : (
-                  <ul className="max-h-80 overflow-y-auto py-1">
-                    {history.map((c) => (
-                      <li key={c.id}>
-                        <button
-                          type="button"
-                          onClick={() => openConversation(c.id)}
-                          className={`flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-[#181c13] ${
-                            c.id === conversationId ? "bg-[#181c13]" : ""
-                          }`}
-                        >
-                          <span className="w-full truncate text-sm text-[#eef1e9]">
-                            {c.title || "New conversation"}
-                          </span>
-                          <span className="font-[family-name:var(--font-plex-mono)] text-xs text-[#5d6456]">
-                            {formatRelative(c.updated_at)}
-                          </span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-          </div>
+          <button
+            type="button"
+            onClick={startNewConversation}
+            className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+          >
+            New Conversation
+          </button>
         </div>
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 font-[family-name:var(--font-plex-sans)]">
@@ -786,6 +747,45 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
               </svg>
             </button>
           </form>
+        </div>
+      </div>
+
+      {/* Conversation list — replaces the old History dropdown with an
+          always-visible sidebar, per Chad's request. */}
+      <div className="flex w-72 shrink-0 flex-col overflow-hidden rounded-2xl border border-[#262c1f] bg-[#12150f] shadow-[0_0_0_1px_rgba(0,0,0,0.4)]">
+        <div className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[#4c8a32] via-[#6ABC46] to-[#7fce5c]" />
+        <div className="border-b border-[#1c2117] px-4 py-4">
+          <h2 className="font-[family-name:var(--font-archivo)] text-sm font-bold tracking-tight text-[#eef1e9]">
+            Conversations
+          </h2>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto font-[family-name:var(--font-plex-sans)]">
+          {historyLoading ? (
+            <p className="px-4 py-3 text-sm text-[#8f9885]">Loading…</p>
+          ) : history.length === 0 ? (
+            <p className="px-4 py-3 text-sm text-[#8f9885]">No past conversations yet.</p>
+          ) : (
+            <ul className="py-1">
+              {history.map((c) => (
+                <li key={c.id}>
+                  <button
+                    type="button"
+                    onClick={() => openConversation(c.id)}
+                    className={`flex w-full flex-col items-start gap-0.5 px-4 py-2.5 text-left transition-colors hover:bg-[#181c13] ${
+                      c.id === conversationId ? "bg-[#181c13]" : ""
+                    }`}
+                  >
+                    <span className="w-full truncate text-sm text-[#eef1e9]">
+                      {c.title || "New conversation"}
+                    </span>
+                    <span className="font-[family-name:var(--font-plex-mono)] text-xs text-[#5d6456]">
+                      {formatRelative(c.updated_at)}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
     </div>
