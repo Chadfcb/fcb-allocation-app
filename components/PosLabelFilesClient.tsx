@@ -79,9 +79,11 @@ export default function PosLabelFilesClient({
   // the Events Calendar library.
   useEffect(() => {
     const paths = new Set(
-      files.filter((f) => isImageFile(f.file_name)).map((f) => f.storage_path),
+      files
+        .filter((f) => isImageFile(f.file_name) && f.storage_path)
+        .map((f) => f.storage_path as string),
     );
-    if (previewFile) paths.add(previewFile.storage_path);
+    if (previewFile?.storage_path) paths.add(previewFile.storage_path);
     const missing = Array.from(paths).filter((p) => !signedUrls[p]);
     if (!missing.length) return;
     (async () => {
@@ -147,9 +149,11 @@ export default function PosLabelFilesClient({
     if (!userId) return;
     if (!window.confirm(`Delete "${f.file_name}"? This can't be undone.`))
       return;
-    await supabase.storage
-      .from(POS_LABEL_FILES_BUCKET)
-      .remove([f.storage_path]);
+    if (f.storage_path) {
+      await supabase.storage
+        .from(POS_LABEL_FILES_BUCKET)
+        .remove([f.storage_path]);
+    }
     await supabase.from("pos_label_files").delete().eq("id", f.id);
     await logChange(supabase, {
       weekId: null,
@@ -165,6 +169,11 @@ export default function PosLabelFilesClient({
   }
 
   async function handleDownload(f: PosLabelFile) {
+    if (!f.storage_path) {
+      // External link (file too large to store directly) — just open it.
+      if (f.external_url) window.open(f.external_url, "_blank", "noopener,noreferrer");
+      return;
+    }
     setDownloadingPath(f.storage_path);
     try {
       const url = await ensureSignedUrl(f.storage_path);
@@ -189,7 +198,7 @@ export default function PosLabelFilesClient({
 
   async function openPreview(f: PosLabelFile) {
     setPreviewFile(f);
-    await ensureSignedUrl(f.storage_path);
+    if (f.storage_path) await ensureSignedUrl(f.storage_path);
   }
 
   if (loading) return <p className="text-sm text-neutral-400">Loading…</p>;
@@ -242,7 +251,9 @@ export default function PosLabelFilesClient({
                 onClick={() => openPreview(f)}
                 className="flex h-28 items-center justify-center overflow-hidden bg-neutral-900 text-3xl"
               >
-                {isImageFile(f.file_name) && signedUrls[f.storage_path] ? (
+                {isImageFile(f.file_name) &&
+                f.storage_path &&
+                signedUrls[f.storage_path] ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={signedUrls[f.storage_path]}
@@ -261,7 +272,9 @@ export default function PosLabelFilesClient({
                   {f.file_name}
                 </div>
                 <div className="text-[10px] uppercase tracking-wide text-neutral-500">
-                  {formatBytes(f.size_bytes)}
+                  {f.storage_path
+                    ? formatBytes(f.size_bytes)
+                    : "Too large — Drive link"}
                 </div>
               </div>
               <div className="flex border-t border-neutral-800 text-[11px] font-semibold uppercase tracking-wide">
@@ -275,10 +288,16 @@ export default function PosLabelFilesClient({
                 <button
                   type="button"
                   onClick={() => handleDownload(f)}
-                  disabled={downloadingPath === f.storage_path}
+                  disabled={
+                    !!f.storage_path && downloadingPath === f.storage_path
+                  }
                   className="flex-1 border-r border-neutral-800 py-1.5 text-neutral-400 hover:bg-neutral-900 hover:text-white disabled:opacity-50"
                 >
-                  {downloadingPath === f.storage_path ? "…" : "Download"}
+                  {f.storage_path
+                    ? downloadingPath === f.storage_path
+                      ? "…"
+                      : "Download"
+                    : "Drive Link"}
                 </button>
                 <button
                   type="button"
@@ -315,7 +334,7 @@ export default function PosLabelFilesClient({
                   onClick={() => handleDownload(previewFile)}
                   className="rounded-md border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-900"
                 >
-                  Download
+                  {previewFile.storage_path ? "Download" : "Open Drive Link"}
                 </button>
                 <button
                   type="button"
@@ -327,7 +346,18 @@ export default function PosLabelFilesClient({
               </div>
             </div>
             <div className="flex flex-1 items-center justify-center overflow-auto bg-neutral-900 p-4">
-              {isImageFile(previewFile.file_name) ? (
+              {!previewFile.storage_path ? (
+                <div className="flex flex-col items-center gap-3 py-10 text-center">
+                  <span className="text-5xl">
+                    {fileIcon(previewFile.file_name)}
+                  </span>
+                  <p className="text-sm text-neutral-400">
+                    This file is too large to store directly — it lives on
+                    Google Drive instead. Use &quot;Open Drive Link&quot;
+                    above to view or download it.
+                  </p>
+                </div>
+              ) : isImageFile(previewFile.file_name) ? (
                 signedUrls[previewFile.storage_path] ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img

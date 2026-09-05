@@ -689,7 +689,12 @@ export interface PosLabelFile {
   brand: PosLabelBrand;
   size: PosLabelSize;
   file_name: string;
-  storage_path: string;
+  // Null when this entry is an external link instead of an uploaded file
+  // (e.g. artwork too large for Storage on the free plan) — see external_url.
+  storage_path: string | null;
+  // Set only for entries too large to upload directly (over the Storage
+  // plan's size cap); points to the file elsewhere (e.g. Google Drive).
+  external_url: string | null;
   mime_type: string | null;
   size_bytes: number | null;
   uploaded_by: string | null;

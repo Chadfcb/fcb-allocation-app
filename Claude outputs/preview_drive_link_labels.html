@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Preview: Drive-link labels for oversized files</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0a0a0a; color: #e5e5e5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 14px; }
+  .banner { background: #d99a3d; color: #1a1a1a; text-align: center; font-weight: 700; padding: 8px; font-size: 13px; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 28px 24px; }
+  h1 { font-size: 18px; color: #f5f5f5; margin: 0 0 4px 0; }
+  .sub { color: #737373; font-size: 13px; margin: 0 0 24px 0; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .card { display: flex; flex-direction: column; overflow: hidden; border-radius: 8px; border: 1px solid #262626; background: #0d0d0d; }
+  .thumb { height: 90px; display: flex; align-items: center; justify-content: center; background: #171717; font-size: 30px; }
+  .meta { padding: 8px; }
+  .name { font-size: 11px; color: #d4d4d4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .size { font-size: 9px; text-transform: uppercase; letter-spacing: .03em; color: #737373; margin-top: 2px; }
+  .size.driveflag { color: #d99a3d; }
+  .row { display: flex; border-top: 1px solid #262626; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
+  .row button { flex: 1; border: none; background: none; color: #a3a3a3; padding: 6px 0; border-right: 1px solid #262626; }
+  .row button:last-child { border-right: none; }
+  .note { font-size: 13px; color: #a3a3a3; line-height: 1.6; margin-top: 22px; }
+  code { background: #171717; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+  <div class="banner">PREVIEW ONLY — not yet deployed. Nothing here is live.</div>
+  <div class="wrap">
+    <h1>FCB &mdash; 16 oz Labels (mockup)</h1>
+    <p class="sub">Shows how the two oversized files will look next to the ones already uploaded.</p>
+
+    <div class="grid">
+      <div class="card">
+        <div class="thumb">🖼️</div>
+        <div class="meta">
+          <div class="name">Mango Bomb Hazy IPA 16oz.psd</div>
+          <div class="size">26.4 MB</div>
+        </div>
+        <div class="row">
+          <button>Preview</button>
+          <button>Download</button>
+          <button>✕</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="thumb">📄</div>
+        <div class="meta">
+          <div class="name">Nectarine Pie of Tiger 16oz.psd</div>
+          <div class="size driveflag">Too large — Drive link</div>
+        </div>
+        <div class="row">
+          <button>Preview</button>
+          <button>Drive Link</button>
+          <button>✕</button>
+        </div>
+      </div>
+    </div>
+
+    <p class="note">
+      Clicking <code>Drive Link</code> (or opening Preview) on the Nectarine Pie card opens your Google Drive copy of the file in a new tab, instead of trying to download it directly from the app — since that one's too big for the free storage plan.
+      Everything else about it works the same as a normal label file: it shows up in the list, has a name and delete button, same as any other entry.
+    </p>
+    <p class="note">
+      This same treatment applies to the Mango Bomb 19.2oz file too (also oversized). Once you're on board with this, I'll add both entries and they'll show up exactly like this.
+    </p>
+  </div>
+</body>
+</html>
