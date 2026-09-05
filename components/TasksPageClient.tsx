@@ -643,34 +643,84 @@ export default function TasksPageClient() {
     <div className="flex h-[calc(100vh-8rem)] flex-col">
       {/* One back button above the "Tasks" header, rather than buried below
           it in the scrollable content — same spot regardless of which
-          sub-view (Subcategories/Items/Detail) it's returning from. */}
+          sub-view (Subcategories/Items/Detail) it's returning from. A
+          breadcrumb trail sits next to it so you can tell how many levels
+          deep into Tasks you've gone (Tasks > category > subcategory >
+          task), each earlier step clickable to jump straight back to it. */}
       {view !== "categories" && view !== "calendar" && (
-        <button
-          type="button"
-          onClick={() => {
-            if (view === "subcategories") {
-              goToCategories();
-            } else if (view === "items") {
-              if (currentCategory) goToSubcategories(currentCategory.id);
-            } else if (view === "detail") {
-              if (detailReturn === "calendar") {
-                setView("calendar");
-                return;
+        <div className="mb-3 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              if (view === "subcategories") {
+                goToCategories();
+              } else if (view === "items") {
+                if (currentCategory) goToSubcategories(currentCategory.id);
+              } else if (view === "detail") {
+                if (detailReturn === "calendar") {
+                  setView("calendar");
+                  return;
+                }
+                if (currentSubcategory) goToItems(currentSubcategory.id);
               }
-              if (currentSubcategory) goToItems(currentSubcategory.id);
-            }
-          }}
-          className="mb-3 flex w-fit items-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800"
-        >
-          ←{" "}
-          {view === "subcategories"
-            ? "Tasks"
-            : view === "items"
-              ? (currentCategory?.name ?? "Tasks")
-              : detailReturn === "calendar"
-                ? "Calendar"
-                : (currentSubcategory?.name ?? "Tasks")}
-        </button>
+            }}
+            className="flex w-fit shrink-0 items-center gap-1.5 rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-semibold text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800"
+          >
+            ←{" "}
+            {view === "subcategories"
+              ? "Tasks"
+              : view === "items"
+                ? (currentCategory?.name ?? "Tasks")
+                : detailReturn === "calendar"
+                  ? "Calendar"
+                  : (currentSubcategory?.name ?? "Tasks")}
+          </button>
+
+          <nav className="flex min-w-0 flex-wrap items-center gap-1.5 text-[13px] text-neutral-500">
+            {(() => {
+              const crumbs: { label: string; onClick?: () => void }[] = [
+                { label: "Tasks", onClick: goToCategories },
+              ];
+              if (view === "subcategories" && currentCategory) {
+                crumbs.push({ label: currentCategory.name });
+              } else if (view === "items" && currentSubcategory) {
+                if (currentCategory) {
+                  crumbs.push({ label: currentCategory.name, onClick: () => goToSubcategories(currentCategory.id) });
+                }
+                crumbs.push({ label: currentSubcategory.name });
+              } else if (view === "detail" && selectedItem) {
+                if (detailReturn === "calendar") {
+                  crumbs.push({ label: "Calendar", onClick: () => setView("calendar") });
+                } else {
+                  if (currentCategory) {
+                    crumbs.push({ label: currentCategory.name, onClick: () => goToSubcategories(currentCategory.id) });
+                  }
+                  if (currentSubcategory) {
+                    crumbs.push({ label: currentSubcategory.name, onClick: () => goToItems(currentSubcategory.id) });
+                  }
+                }
+                crumbs.push({ label: selectedItem.title });
+              }
+
+              return crumbs.map((crumb, i) => (
+                <span key={i} className="flex items-center gap-1.5">
+                  {i > 0 && <span className="text-neutral-700">/</span>}
+                  {crumb.onClick ? (
+                    <button
+                      type="button"
+                      onClick={crumb.onClick}
+                      className="max-w-[220px] truncate hover:text-neutral-200 hover:underline"
+                    >
+                      {crumb.label}
+                    </button>
+                  ) : (
+                    <span className="max-w-[280px] truncate font-medium text-neutral-300">{crumb.label}</span>
+                  )}
+                </span>
+              ));
+            })()}
+          </nav>
+        </div>
       )}
       <div className="flex items-start justify-between gap-6 border-b border-neutral-800 pb-4">
         <div>
