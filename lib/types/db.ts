@@ -816,3 +816,70 @@ export interface TaskItemActivity {
   detail: string | null;
   created_at: string;
 }
+
+// =========================================================
+// Sales > Chain Authorizations — which items each retail chain has
+// authorized to carry. Simple two-level structure (Chain -> Items),
+// imported 2026-09-05 from a spreadsheet that had each chain's item list
+// in its own pair of columns; brought in as one freeform text line per
+// item (SKU number included where the original had one, since the sheet
+// was inconsistent about that). Chain and item are both freely
+// addable/removable on the page.
+// =========================================================
+export interface ChainAuthChain {
+  id: string;
+  name: string;
+  sort_order: number | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface ChainAuthItem {
+  id: string;
+  chain_id: string;
+  item_text: string;
+  sort_order: number | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+// =========================================================
+// Sales > Chain Mandates — three-level structure (Chain -> Product ->
+// Store), imported 2026-09-05 from a per-store mandate spreadsheet
+// (SAFEWAY/VONS/WALMART). Unlike Chain Authorizations, the source data was
+// already one row per store, so that level is kept rather than flattened,
+// per Chad. Chain, product, and store are all freely addable/removable.
+// =========================================================
+export interface ChainMandateChain {
+  id: string;
+  name: string;
+  sort_order: number | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface ChainMandateProduct {
+  id: string;
+  chain_id: string;
+  product_name: string;
+  package: string | null;
+  upc: string | null;
+  sort_order: number | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface ChainMandateStore {
+  id: string;
+  product_id: string;
+  store_number: string | null;
+  tier: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  status: string | null;
+  sort_order: number | null;
+  created_by: string | null;
+  created_at: string;
+}

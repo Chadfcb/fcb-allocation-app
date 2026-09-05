@@ -29,7 +29,9 @@ export type SectionKey =
   | "contribution_margin"
   | "events_calendar"
   | "pos_labels"
-  | "tasks";
+  | "tasks"
+  | "chain_authorizations"
+  | "chain_mandates";
 
 // Ernie AI is deliberately its own grantable section, separate from every
 // page section above — an admin may want someone to have, say, Purchase
@@ -102,6 +104,14 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
       { key: "margin_analysis", label: "Margin Analysis" },
       { key: "cost_per_case", label: "Cost Per Case" },
       { key: "contribution_margin", label: "Contribution Margin" },
+      // Added 2026-09-05, per Chad — imported from a chain
+      // authorizations/mandates spreadsheet. Per Chad: "only the main
+      // category is gated for access... if someone is given access to
+      // Sales, they have access to all sub categories" — these are NOT
+      // their own Users > Edit toggle, they just ride along with Sales,
+      // same as every other item in this group.
+      { key: "chain_authorizations", label: "Chain Authorizations" },
+      { key: "chain_mandates", label: "Chain Mandates" },
     ],
   },
   {

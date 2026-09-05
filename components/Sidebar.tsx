@@ -97,6 +97,10 @@ const NEW_SIDEBAR_IDS: string[] = [
   "/upcs/ugly-fresca/19-2oz",
   "/upcs/ugly-fresca/16oz",
   "/upcs/ugly-fresca/12oz",
+  // Chain Authorizations / Chain Mandates — new Sales sub-links, added
+  // 2026-09-05, per Chad.
+  "/sales/chain-authorizations",
+  "/sales/chain-mandates",
 ];
 
 function NewBadge() {
@@ -130,6 +134,12 @@ const SALES_LINKS: { href: string; label: string; section: SectionKey }[] = [
   { href: "/sales/margin-analysis", label: "Margin Analysis", section: "margin_analysis" },
   { href: "/sales/cost-per-case", label: "Cost Per Case", section: "cost_per_case" },
   { href: "/sales/contribution-margin", label: "Contribution Margin", section: "contribution_margin" },
+  // Added 2026-09-05, per Chad, imported from a chain authorizations/
+  // mandates spreadsheet. Not their own Users > Edit toggle — they ride
+  // along with Sales access, same as every other link in this list (see
+  // lib/permissions.ts SECTION_GROUPS).
+  { href: "/sales/chain-authorizations", label: "Chain Authorizations", section: "chain_authorizations" },
+  { href: "/sales/chain-mandates", label: "Chain Mandates", section: "chain_mandates" },
 ];
 
 // Calendars — currently just Events Calendar, structured as an expandable
