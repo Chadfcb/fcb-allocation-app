@@ -1,8 +1,9 @@
-// Shared constants for POS > Labels — the label-artwork file library, split
-// into 9 fixed brand/size combinations (3 brands x 3 sizes). File-display
-// helpers (icons, image detection, byte formatting, safe storage names) are
-// generic and already live in lib/events.ts; reused from there rather than
-// duplicated here.
+// Shared constants for POS > Labels — the label-artwork file library, now
+// split into 15 brand/size combinations (5 brands x 3 sizes, since Oobli
+// and Ugly Fresca were added 2026-09-05). File-display helpers (icons,
+// image detection, byte formatting, safe storage names) are generic and
+// already live in lib/events.ts; reused from there rather than duplicated
+// here.
 
 import type { PosLabelBrand, PosLabelSize } from "@/lib/types/db";
 
@@ -15,12 +16,16 @@ export const POS_LABEL_BRAND_OPTIONS: {
   { value: "fcb", label: "FCB" },
   { value: "speakeasy", label: "Speakeasy" },
   { value: "sonoma-cider", label: "Sonoma Cider" },
+  { value: "oobli", label: "Oobli" },
+  { value: "ugly-fresca", label: "Ugly Fresca" },
 ];
 
 export const POS_LABEL_BRAND_LABELS: Record<PosLabelBrand, string> = {
   fcb: "FCB",
   speakeasy: "Speakeasy",
   "sonoma-cider": "Sonoma Cider",
+  oobli: "Oobli",
+  "ugly-fresca": "Ugly Fresca",
 };
 
 export const POS_LABEL_SIZE_OPTIONS: { value: PosLabelSize; label: string }[] =

@@ -680,7 +680,8 @@ export interface SocialMediaEventMaterial {
 // artwork. Admin-only, standing data (not week-scoped), same shape as
 // PosLibraryFile above but scoped by brand + size instead of being one
 // shared pool.
-export type PosLabelBrand = "fcb" | "speakeasy" | "sonoma-cider";
+// "oobli" and "ugly-fresca" added 2026-09-05 as new brands under Labels.
+export type PosLabelBrand = "fcb" | "speakeasy" | "sonoma-cider" | "oobli" | "ugly-fresca";
 export type PosLabelSize = "19.2oz" | "16oz" | "12oz";
 
 export interface PosLabelFile {
@@ -693,6 +694,20 @@ export interface PosLabelFile {
   size_bytes: number | null;
   uploaded_by: string | null;
   uploaded_at: string;
+}
+
+// UPC's (added 2026-09-05) — a reference table of product name -> UPC
+// barcode, editable right on the page (add/edit/delete), per Chad. Set up
+// exactly like Labels above, per Chad, 2026-09-05: "i want it set up
+// exactly like the labels is" — same brand + size nesting (PosLabelBrand /
+// PosLabelSize), not just brand.
+export interface UpcEntry {
+  id: string;
+  brand: PosLabelBrand;
+  size: PosLabelSize;
+  product_name: string;
+  upc: string;
+  created_at: string;
 }
 
 // =========================================================

@@ -58,33 +58,10 @@ const NEW_SIDEBAR_IDS: string[] = [
   "/pos/labels/ugly-fresca/19-2oz",
   "/pos/labels/ugly-fresca/16oz",
   "/pos/labels/ugly-fresca/12oz",
-  // UPC's — new expandable brand+size tree added under Operations
-  // (2026-09-05), set up exactly like Labels. Every page under it is brand
-  // new, so the parent, every brand, and every size leaf are flagged.
-  // (Audit Log moved the same day too, but that's a relocation of
-  // something that already existed, not new content, so it isn't
-  // flagged.)
-  "section:upcs",
-  "section:upc-fcb",
-  "/upcs/fcb/19-2oz",
-  "/upcs/fcb/16oz",
-  "/upcs/fcb/12oz",
-  "section:upc-speakeasy",
-  "/upcs/speakeasy/19-2oz",
-  "/upcs/speakeasy/16oz",
-  "/upcs/speakeasy/12oz",
-  "section:upc-sonoma-cider",
-  "/upcs/sonoma-cider/19-2oz",
-  "/upcs/sonoma-cider/16oz",
-  "/upcs/sonoma-cider/12oz",
-  "section:upc-oobli",
-  "/upcs/oobli/19-2oz",
-  "/upcs/oobli/16oz",
-  "/upcs/oobli/12oz",
-  "section:upc-ugly-fresca",
-  "/upcs/ugly-fresca/19-2oz",
-  "/upcs/ugly-fresca/16oz",
-  "/upcs/ugly-fresca/12oz",
+  // UPC's — new sub-link added under Operations, same date. (Audit Log
+  // moved the same day too, but that's a relocation of something that
+  // already existed, not new content, so it isn't flagged.)
+  "/upcs",
 ];
 
 function NewBadge() {
@@ -105,9 +82,8 @@ const OPERATIONS_LINKS: { href: string; label: string; section: SectionKey }[] =
   // Audit Log used to be last here — moved out to its own top-level nav
   // entry below Users (see the standalone Link further down), per Chad,
   // 2026-09-05: "lets move audit log to a main category, below Users, and
-  // out of operations." UPC's (new, same date) is no longer a flat link
-  // here either — like Labels, it's now its own expandable brand tree
-  // (see UPC_BRANDS / showUpcTree below) rendered right after Labels.
+  // out of operations." UPC's (new, same date) takes the spot it left.
+  { href: "/upcs", label: "UPC's", section: "upcs" },
 ];
 
 // Sales sub-links get added here one at a time as each piece of the old FCB
@@ -204,67 +180,6 @@ const POS_LABEL_BRANDS: {
   },
 ];
 
-// UPC's > <brand> > <size> — added 2026-09-05, per Chad: "UPC has sub
-// categories, Same Sub categories as Labels," then, after seeing a
-// brand-only first pass: "no, incorrect, i want it set up exactly like
-// the labels is." So this now mirrors POS_LABEL_BRANDS exactly — same
-// brands, same three sizes each, same two-level tree, just a Product/UPC
-// table on each size's page instead of a file library. Reuses the same
-// posTreeExpanded collapse-state map as Labels (it's just a generic
-// id -> expanded record); this tree's own ids are prefixed "upc-" so they
-// don't collide with Labels' "pos-labels-*" keys.
-const UPC_BRANDS: {
-  treeKey: string;
-  label: string;
-  sizes: { href: string; label: string }[];
-}[] = [
-  {
-    treeKey: "upc-fcb",
-    label: "FCB",
-    sizes: [
-      { href: "/upcs/fcb/19-2oz", label: "19.2 oz UPC's" },
-      { href: "/upcs/fcb/16oz", label: "16 oz UPC's" },
-      { href: "/upcs/fcb/12oz", label: "12 oz UPC's" },
-    ],
-  },
-  {
-    treeKey: "upc-speakeasy",
-    label: "Speakeasy",
-    sizes: [
-      { href: "/upcs/speakeasy/19-2oz", label: "19.2 oz UPC's" },
-      { href: "/upcs/speakeasy/16oz", label: "16 oz UPC's" },
-      { href: "/upcs/speakeasy/12oz", label: "12 oz UPC's" },
-    ],
-  },
-  {
-    treeKey: "upc-sonoma-cider",
-    label: "Sonoma Cider",
-    sizes: [
-      { href: "/upcs/sonoma-cider/19-2oz", label: "19.2 oz UPC's" },
-      { href: "/upcs/sonoma-cider/16oz", label: "16 oz UPC's" },
-      { href: "/upcs/sonoma-cider/12oz", label: "12 oz UPC's" },
-    ],
-  },
-  {
-    treeKey: "upc-oobli",
-    label: "Oobli",
-    sizes: [
-      { href: "/upcs/oobli/19-2oz", label: "19.2 oz UPC's" },
-      { href: "/upcs/oobli/16oz", label: "16 oz UPC's" },
-      { href: "/upcs/oobli/12oz", label: "12 oz UPC's" },
-    ],
-  },
-  {
-    treeKey: "upc-ugly-fresca",
-    label: "Ugly Fresca",
-    sizes: [
-      { href: "/upcs/ugly-fresca/19-2oz", label: "19.2 oz UPC's" },
-      { href: "/upcs/ugly-fresca/16oz", label: "16 oz UPC's" },
-      { href: "/upcs/ugly-fresca/12oz", label: "12 oz UPC's" },
-    ],
-  },
-];
-
 export default function Sidebar({
   role,
   sections,
@@ -279,7 +194,7 @@ export default function Sidebar({
   const [calendarsExpanded, setCalendarsExpanded] = useState(true);
   const [posTreeExpanded, setPosTreeExpanded] = useState<
     Record<string, boolean>
-  >({ "pos-labels": true, upcs: true });
+  >({ "pos-labels": true });
   const [seenNew, setSeenNew] = useState<Record<string, true>>({});
   // Which "New!" badges this signed-in person has already dismissed —
   // stored server-side (sidebar_new_seen table) rather than in this
@@ -440,7 +355,6 @@ export default function Sidebar({
   const opsAfterLabels = weeksIndex === -1 ? [] : visibleOperations.slice(weeksIndex + 1);
   const visibleSales = SALES_LINKS.filter((link) => can(link.section));
   const showPosTree = can("pos_labels");
-  const showUpcTree = can("upcs");
   const visibleCalendars = CALENDARS_LINKS.filter((link) => can(link.section));
   const showErnie = can(ERNIE_SECTION);
   const showTasks = can("tasks");
@@ -454,7 +368,6 @@ export default function Sidebar({
     visibleOperations.length === 0 &&
     visibleSales.length === 0 &&
     !showPosTree &&
-    !showUpcTree &&
     visibleCalendars.length === 0;
 
   return (
@@ -497,7 +410,7 @@ export default function Sidebar({
           </Link>
         )}
 
-        {(visibleOperations.length > 0 || showPosTree || showUpcTree) && (
+        {(visibleOperations.length > 0 || showPosTree) && (
           <>
             <button
               type="button"
@@ -549,62 +462,6 @@ export default function Sidebar({
                     {posTreeExpanded["pos-labels"] && (
                       <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
                         {POS_LABEL_BRANDS.map((brand) => (
-                          <div key={brand.treeKey} className="flex flex-col gap-1">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                togglePosTree(brand.treeKey);
-                                dismissNew(`section:${brand.treeKey}`);
-                              }}
-                              className="flex items-center gap-2 rounded px-2 py-1 text-left text-sm text-neutral-400 hover:bg-neutral-900 hover:text-white"
-                            >
-                              {brand.label}
-                              {showsNew(`section:${brand.treeKey}`) && <NewBadge />}
-                            </button>
-                            {posTreeExpanded[brand.treeKey] && (
-                              <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
-                                {brand.sizes.map((s) => (
-                                  <Link
-                                    key={s.href}
-                                    href={s.href}
-                                    className={linkClass(s.href)}
-                                    onClick={() => dismissNew(s.href)}
-                                  >
-                                    {s.label}
-                                    {showsNew(s.href) && <NewBadge />}
-                                  </Link>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* UPC's — new expandable brand+size tree, added
-                    2026-09-05 right after Labels, set up exactly like it
-                    per Chad: "i want it set up exactly like the labels
-                    is." Same two-level structure (brand -> size), just an
-                    editable Product/UPC table on each size's page instead
-                    of a file library. */}
-                {showUpcTree && (
-                  <div className="flex flex-col gap-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        togglePosTree("upcs");
-                        dismissNew("section:upcs");
-                      }}
-                      className="rounded px-2 py-1 text-left text-sm font-semibold text-neutral-400 hover:bg-neutral-900 hover:text-white flex items-center gap-2"
-                    >
-                      UPC&apos;s
-                      {showsNew("section:upcs") && <NewBadge />}
-                    </button>
-                    {posTreeExpanded["upcs"] && (
-                      <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
-                        {UPC_BRANDS.map((brand) => (
                           <div key={brand.treeKey} className="flex flex-col gap-1">
                             <button
                               type="button"

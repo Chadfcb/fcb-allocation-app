@@ -1,0 +1,94 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Preview — UPC's + Audit Log move</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #000;
+    color: #d4d4d4;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px;
+  }
+  .preview-banner {
+    background: #1f3a2a;
+    color: #6ABC46;
+    text-align: center;
+    padding: 6px 0;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .app { display: flex; min-height: 820px; }
+  .sidebar { width: 240px; flex-shrink: 0; border-right: 1px solid #262626; background: #0a0a0a; padding: 12px; }
+  .sidebar-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .sidebar-title { font-weight: 600; color: #f5f5f5; }
+  .hide-btn { border: 1px solid #404040; border-radius: 6px; padding: 4px 8px; font-size: 12px; color: #a3a3a3; }
+  .nav { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+  .navlink { border-radius: 4px; border-left: 2px solid transparent; padding: 6px 8px; color: #a3a3a3; display:flex; align-items:center; gap:8px; }
+  .navlink.active { border-left-color: #6ABC46; background: #171717; color: #6ABC46; font-weight: 600; }
+  .section-label { margin-top: 8px; border-radius: 4px; padding: 6px 8px; font-weight: 600; color: #d4d4d4; }
+  .sub-nav { margin-left: 8px; padding-left: 12px; border-left: 1px solid #262626; display: flex; flex-direction: column; gap: 4px; }
+  .sub-nav2 { margin-left: 8px; padding-left: 12px; border-left: 1px solid #262626; display: flex; flex-direction: column; gap: 4px; }
+  .new-badge { margin-left:auto; background:#6ABC46; color:#000; font-size:9px; font-weight:700; border-radius:999px; padding:2px 6px; line-height:1; }
+  .highlight { outline: 2px solid #6ABC46; outline-offset: 2px; border-radius: 4px; }
+  .main { flex: 1; padding: 24px; color: #737373; font-size: 13px; line-height:1.6; }
+</style>
+</head>
+<body>
+  <div class="preview-banner">PREVIEW ONLY — not yet deployed</div>
+  <div class="app">
+    <div class="sidebar">
+      <div class="sidebar-top">
+        <span class="sidebar-title">FCB Data</span>
+        <span class="hide-btn">Hide</span>
+      </div>
+      <div class="nav">
+        <div class="navlink">Dashboard</div>
+        <div class="navlink">Ernie AI</div>
+        <div class="navlink">Tasks</div>
+
+        <div class="section-label">Operations</div>
+        <div class="sub-nav">
+          <div class="navlink">Purchase Orders</div>
+          <div class="navlink">Inventory &amp; Allocation</div>
+          <div class="navlink">Distributor Inventory</div>
+          <div class="navlink">Build Orders</div>
+          <div class="navlink">Distributor Pricing</div>
+          <div class="navlink">Weeks</div>
+          <div class="navlink" style="font-weight:600;">Labels</div>
+          <div class="sub-nav2">
+            <div class="navlink">FCB</div>
+            <div class="navlink">Speakeasy</div>
+            <div class="navlink">Sonoma Cider</div>
+            <div class="navlink">Oobli</div>
+            <div class="navlink">Ugly Fresca</div>
+          </div>
+          <div class="navlink highlight">UPC's <span class="new-badge">New!</span></div>
+        </div>
+
+        <div class="section-label">Sales</div>
+        <div class="section-label">Calendars</div>
+        <div class="section-label" style="margin-top:16px;">Users</div>
+        <div class="navlink" style="margin-top:4px;">Audit Log</div>
+      </div>
+    </div>
+    <div class="main">
+      Two changes here: <b style="color:#6ABC46;">UPC's</b> is a new Operations
+      sub-link, sitting right where Audit Log used to be (last item, after
+      Labels) — flagged New! since it's a brand-new page. And
+      <b style="color:#6ABC46;">Audit Log</b> moved out of Operations
+      entirely — it's now its own top-level nav item, right below Users,
+      same as you asked. It keeps the same permission (whoever could see it
+      under Operations before still can, nothing about access changed,
+      just where it sits).
+      <br /><br />
+      Like Oobli/Ugly Fresca and the existing label pages, UPC's doesn't
+      have a real page behind it yet either — same heads-up as before,
+      clicking it would 404 until a page gets built for it.
+    </div>
+  </div>
+</body>
+</html>
