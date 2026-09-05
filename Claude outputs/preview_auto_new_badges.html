@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Preview: Automatic New! badges</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0a0a0a; color: #e5e5e5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 14px; }
+  .banner { background: #d99a3d; color: #1a1a1a; text-align: center; font-weight: 700; padding: 8px; font-size: 13px; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 28px 24px; }
+  h1 { font-size: 18px; color: #f5f5f5; margin: 0 0 4px 0; }
+  .sub { color: #737373; font-size: 13px; margin: 0 0 24px 0; }
+  .row { display: flex; gap: 20px; margin-bottom: 24px; }
+  .card { flex: 1; border: 1px solid #262626; border-radius: 8px; padding: 14px; }
+  .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; color: #737373; margin: 0 0 10px 0; }
+  nav a, nav button.navbtn { display: flex; align-items: center; gap: 8px; border-left: 2px solid transparent; border-radius: 4px; padding: 5px 8px; color: #a3a3a3; text-decoration: none; font-size: 13px; background: none; border-top: none; border-right: none; border-bottom: none; width: 100%; text-align: left; }
+  .indent { margin-left: 8px; padding-left: 10px; border-left: 1px solid #262626; display: flex; flex-direction: column; gap: 2px; }
+  .new-badge { margin-left: auto; flex-shrink: 0; border-radius: 999px; background: #6ABC46; padding: 2px 6px; font-size: 9px; font-weight: 700; color: #0a0a0a; line-height: 1; }
+  .strike { text-decoration: line-through; opacity: 0.4; }
+  .note { font-size: 13px; color: #a3a3a3; line-height: 1.6; margin-top: 8px; }
+  .arrow { display: flex; align-items: center; justify-content: center; color: #525252; font-size: 20px; }
+</style>
+</head>
+<body>
+  <div class="banner">PREVIEW ONLY — not yet deployed. Nothing here is live.</div>
+  <div class="wrap">
+    <h1>How "New!" badges work now</h1>
+    <p class="sub">Fixing the root cause, not just Operations' missed badge this one time.</p>
+
+    <div class="row">
+      <div class="card">
+        <h2>Old way</h2>
+        <nav>
+          <button class="navbtn">Operations</button>
+        </nav>
+        <p class="note">
+          Every time something new landed inside a section, I had to remember to <em>also</em> separately add that section's own button to a list. Miss that one step — like I did with Operations — and the button never lights up, even though New! badges show correctly one level deeper.
+        </p>
+      </div>
+      <div class="arrow">→</div>
+      <div class="card">
+        <h2>New way</h2>
+        <nav>
+          <button class="navbtn">Operations<span class="new-badge">New!</span></button>
+        </nav>
+        <p class="note">
+          A section's button now checks its own contents automatically — if anything unseen is nested inside it, anywhere, it lights up on its own. Nothing to remember, no separate step, can't be missed again.
+        </p>
+      </div>
+    </div>
+
+    <h2 style="font-size:12px; text-transform:uppercase; letter-spacing:0.03em; color:#737373;">What this means going forward</h2>
+    <p class="note">
+      From now on, adding a brand-new page only ever needs that one page's own id added to the flagged list — same as always. Its parent, and its parent's parent, and so on up the tree, all light up automatically because they check what's inside them instead of needing their own separate flag. This applies everywhere in the sidebar (Operations, Sales, Calendars, Labels, UPC's, and every brand underneath Labels/UPC's), not just the one spot that broke.
+    </p>
+    <p class="note">
+      Clicking a badge still only clears that one item, same as before — click Operations open and its own badge clears; the things still new inside it (Labels, UPC's, etc.) stay flagged until you click each of those too.
+    </p>
+  </div>
+</body>
+</html>

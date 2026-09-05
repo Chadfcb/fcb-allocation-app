@@ -21,17 +21,24 @@
 // "New!" badges (added 2026-09-05, per Chad): when a brand-new section or
 // sub-link is added to the sidebar, it can carry a small green "New!" tag
 // lined up on the right, so people notice it landed. Add its id to
-// NEW_SIDEBAR_IDS below when you add the item — a parent section (like
-// "Calendars") uses a synthetic "section:<name>" id since it has no href
-// of its own; a regular link just uses its href. The badge disappears the
-// first time that person clicks it and never comes back — remembered
-// server-side per signed-in person (sidebar_new_seen table), not just in
-// this browser, so it stays dismissed on every device they log in from.
-// Nothing existing today is flagged; per Chad, this is only for things
-// added from here forward, not retroactive for Chain Calendar/Social
-// Media Calendar/etc. which already existed before this feature shipped.
-// Once something's been out for a while, just delete its id from the list
-// below — no need to keep it around forever.
+// NEW_SIDEBAR_IDS below when you add the item — a genuine sub-tree parent
+// (like a brand under Labels/UPC's) uses a synthetic "section:<name>" id
+// since it has no href of its own; a regular link just uses its href. A
+// TOP-LEVEL parent (Operations, Sales, Calendars, Labels, UPC's) does NOT
+// need an entry here at all — sectionShowsNew() (defined further down,
+// inside the component) computes its badge automatically from whatever's
+// still unseen underneath it, so there's nothing to remember when you add
+// a new sub-item. (This replaced an earlier manual-only version of this
+// system, after Operations shipped a new sub-tree without its own button
+// ever lighting up — see sectionShowsNew()'s comment for the story.) The
+// badge disappears the first time that person clicks it and never comes
+// back — remembered server-side per signed-in person (sidebar_new_seen
+// table), not just in this browser, so it stays dismissed on every device
+// they log in from. Nothing existing today is flagged; per Chad, this is
+// only for things added from here forward, not retroactive for Chain
+// Calendar/Social Media Calendar/etc. which already existed before this
+// feature shipped. Once something's been out for a while, just delete its
+// id from the list below — no need to keep it around forever.
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
@@ -41,11 +48,17 @@ import { hasSection, ERNIE_SECTION, type AnySectionKey, type SectionKey } from "
 import { createClient } from "@/lib/supabase/client";
 
 const NEW_SIDEBAR_IDS: string[] = [
-  // First items to use this feature (added 2026-09-05, shipped today before
-  // anyone had logged in, so this doubles as the live test of it): Chain
-  // Calendar and Social Media Calendar, plus the Calendars parent section
-  // itself since it now has new children under it.
-  "section:calendars",
+  // Only actual leaf pages and true sub-tree parents (like a brand under
+  // Labels/UPC's) need to go in this list. A top-level parent — Calendars,
+  // Operations, Labels, UPC's, Sales — does NOT need its own entry
+  // anymore: sectionShowsNew() (below, in the component) computes those
+  // automatically from whatever's still unseen underneath them. That's a
+  // 2026-09-05 fix, per Chad, after Operations shipped the Labels
+  // Oobli/Ugly Fresca brands and the whole UPC's tree without its own
+  // button ever lighting up — it had needed a manually-added
+  // "section:operations" entry here that nobody remembered to add. Same
+  // fix applies to Calendars/Labels/UPC's/Sales so it can't happen again
+  // anywhere in the tree, not just Operations.
   "/chain-calendar",
   "/social-media-calendar",
   // Oobli and Ugly Fresca — new brands added under Labels (2026-09-05),
@@ -60,11 +73,10 @@ const NEW_SIDEBAR_IDS: string[] = [
   "/pos/labels/ugly-fresca/12oz",
   // UPC's — new expandable brand+size tree added under Operations
   // (2026-09-05), set up exactly like Labels. Every page under it is brand
-  // new, so the parent, every brand, and every size leaf are flagged.
-  // (Audit Log moved the same day too, but that's a relocation of
-  // something that already existed, not new content, so it isn't
-  // flagged.)
-  "section:upcs",
+  // new, so every brand and every size leaf are flagged (the UPC's parent
+  // itself picks this up automatically, per the note above). (Audit Log
+  // moved the same day too, but that's a relocation of something that
+  // already existed, not new content, so it isn't flagged.)
   "section:upc-fcb",
   "/upcs/fcb/19-2oz",
   "/upcs/fcb/16oz",
@@ -265,6 +277,24 @@ const UPC_BRANDS: {
   },
 ];
 
+// Every id nested under the Labels tree, for sectionShowsNew() to check
+// when deciding whether the Labels button itself (and, one level up,
+// Operations) should show New!.
+function labelsDescendantIds(): string[] {
+  return POS_LABEL_BRANDS.flatMap((b) => [
+    `section:${b.treeKey}`,
+    ...b.sizes.map((s) => s.href),
+  ]);
+}
+
+// Same idea, for the UPC's tree.
+function upcDescendantIds(): string[] {
+  return UPC_BRANDS.flatMap((b) => [
+    `section:${b.treeKey}`,
+    ...b.sizes.map((s) => s.href),
+  ]);
+}
+
 export default function Sidebar({
   role,
   sections,
@@ -363,6 +393,26 @@ export default function Sidebar({
     })();
   }
 
+  // A parent section/tree also shows New! automatically whenever anything
+  // still-unseen is nested inside it — added 2026-09-05 per Chad, after
+  // Operations shipped Labels' Oobli/Ugly Fresca and the whole UPC's tree
+  // without its own button ever lighting up: "operations didnt tell me
+  // something new was added inside it... i can see the new next to all
+  // the new things [but not on Operations itself]." Root cause was that a
+  // parent's badge only ever showed if I remembered to separately add
+  // "section:<name>" to NEW_SIDEBAR_IDS by hand — easy to forget, and
+  // exactly what happened here. This replaces that manual step: pass every
+  // descendant id (including nested parent ids, so it recurses through
+  // Labels/UPC's brand trees too) and it returns true if the parent's own
+  // id happens to be flagged+unseen OR any descendant still is. Going
+  // forward, adding a new sub-item only ever needs its own id added to
+  // NEW_SIDEBAR_IDS — every ancestor picks it up automatically, nothing
+  // else to remember.
+  function sectionShowsNew(id: string, descendantIds: string[] = []) {
+    if (showsNew(id)) return true;
+    return descendantIds.some((childId) => showsNew(childId));
+  }
+
   function toggleOperations() {
     setOperationsExpanded((prev) => {
       const next = !prev;
@@ -457,6 +507,14 @@ export default function Sidebar({
     !showUpcTree &&
     visibleCalendars.length === 0;
 
+  // Every id nested under Operations — everything sectionShowsNew() checks
+  // to decide whether the Operations button itself should show New!.
+  const operationsDescendantIds = [
+    ...visibleOperations.map((link) => link.href),
+    ...(showPosTree ? ["section:pos-labels", ...labelsDescendantIds()] : []),
+    ...(showUpcTree ? ["section:upcs", ...upcDescendantIds()] : []),
+  ];
+
   return (
     <div className="flex w-56 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950 p-3">
       <div className="mb-4 flex items-center justify-between gap-2">
@@ -508,7 +566,7 @@ export default function Sidebar({
               className="mt-2 flex items-center gap-2 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
             >
               Operations
-              {showsNew("section:operations") && <NewBadge />}
+              {sectionShowsNew("section:operations", operationsDescendantIds) && <NewBadge />}
             </button>
             {operationsExpanded && (
               <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
@@ -544,7 +602,7 @@ export default function Sidebar({
                       className="rounded px-2 py-1 text-left text-sm font-semibold text-neutral-400 hover:bg-neutral-900 hover:text-white flex items-center gap-2"
                     >
                       Labels
-                      {showsNew("section:pos-labels") && <NewBadge />}
+                      {sectionShowsNew("section:pos-labels", labelsDescendantIds()) && <NewBadge />}
                     </button>
                     {posTreeExpanded["pos-labels"] && (
                       <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
@@ -559,7 +617,7 @@ export default function Sidebar({
                               className="flex items-center gap-2 rounded px-2 py-1 text-left text-sm text-neutral-400 hover:bg-neutral-900 hover:text-white"
                             >
                               {brand.label}
-                              {showsNew(`section:${brand.treeKey}`) && <NewBadge />}
+                              {sectionShowsNew(`section:${brand.treeKey}`, brand.sizes.map((s) => s.href)) && <NewBadge />}
                             </button>
                             {posTreeExpanded[brand.treeKey] && (
                               <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
@@ -600,7 +658,7 @@ export default function Sidebar({
                       className="rounded px-2 py-1 text-left text-sm font-semibold text-neutral-400 hover:bg-neutral-900 hover:text-white flex items-center gap-2"
                     >
                       UPC&apos;s
-                      {showsNew("section:upcs") && <NewBadge />}
+                      {sectionShowsNew("section:upcs", upcDescendantIds()) && <NewBadge />}
                     </button>
                     {posTreeExpanded["upcs"] && (
                       <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
@@ -615,7 +673,7 @@ export default function Sidebar({
                               className="flex items-center gap-2 rounded px-2 py-1 text-left text-sm text-neutral-400 hover:bg-neutral-900 hover:text-white"
                             >
                               {brand.label}
-                              {showsNew(`section:${brand.treeKey}`) && <NewBadge />}
+                              {sectionShowsNew(`section:${brand.treeKey}`, brand.sizes.map((s) => s.href)) && <NewBadge />}
                             </button>
                             {posTreeExpanded[brand.treeKey] && (
                               <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
@@ -666,7 +724,7 @@ export default function Sidebar({
               className="mt-1 flex items-center gap-2 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
             >
               Sales
-              {showsNew("section:sales") && <NewBadge />}
+              {sectionShowsNew("section:sales", visibleSales.map((link) => link.href)) && <NewBadge />}
             </button>
             {salesExpanded && (
               <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
@@ -697,7 +755,7 @@ export default function Sidebar({
               className="mt-1 flex items-center gap-2 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
             >
               Calendars
-              {showsNew("section:calendars") && <NewBadge />}
+              {sectionShowsNew("section:calendars", visibleCalendars.map((link) => link.href)) && <NewBadge />}
             </button>
             {calendarsExpanded && (
               <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
