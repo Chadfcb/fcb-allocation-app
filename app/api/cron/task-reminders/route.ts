@@ -83,7 +83,7 @@ async function notifyBatch(
         await sendMail({
           to: person.email,
           subject: `Task ${whenPhrase}: ${task.title}`,
-          text: `Hi ${firstName},\n\nThis is a reminder that "${task.title}" is ${whenPhrase} (${formatDueDate(task.due_date)}).\n\nOpen Tasks in FCB Data to view or update it.\n\n— FCB Data`,
+          text: `Hi ${firstName},\n\nThis is a reminder that "${task.title}" is ${whenPhrase} (${formatDueDate(task.due_date)}).\n\nOpen Tasks in FCB Data to view or update it.\n\n— FCB Data\n\nThis is an automated message from a mailbox that isn't monitored — please don't reply to this email.`,
         });
         sent += 1;
       } catch {
