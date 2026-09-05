@@ -695,6 +695,12 @@ export interface PosLabelFile {
   // Set only for entries too large to upload directly (over the Storage
   // plan's size cap); points to the file elsewhere (e.g. Google Drive).
   external_url: string | null;
+  // A small JPG rendered from the original file (e.g. a PSD's flattened
+  // composite image) — browsers can't display .psd/.ai files directly, so
+  // this is what the card thumbnail and the preview modal actually show.
+  // Set for every entry that has one, regardless of storage_path/
+  // external_url — including Drive-link entries.
+  preview_path: string | null;
   mime_type: string | null;
   size_bytes: number | null;
   uploaded_by: string | null;

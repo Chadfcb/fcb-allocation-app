@@ -41,6 +41,17 @@ export default function PosLabelFilesClient({
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // The path to actually show as a thumbnail/preview image for a file.
+  // Prefers the generated preview JPG (works for .psd and anything else
+  // browsers can't render directly, and exists even for Drive-link
+  // entries); falls back to the original file itself only when it's
+  // already a browser-displayable image type with no separate preview.
+  function previewSourcePath(f: PosLabelFile): string | null {
+    if (f.preview_path) return f.preview_path;
+    if (f.storage_path && isImageFile(f.file_name)) return f.storage_path;
+    return null;
+  }
+
   const load = useCallback(async () => {
     const {
       data: { user },
@@ -80,10 +91,11 @@ export default function PosLabelFilesClient({
   useEffect(() => {
     const paths = new Set(
       files
-        .filter((f) => isImageFile(f.file_name) && f.storage_path)
-        .map((f) => f.storage_path as string),
+        .map((f) => previewSourcePath(f))
+        .filter((p): p is string => !!p),
     );
-    if (previewFile?.storage_path) paths.add(previewFile.storage_path);
+    const previewFilePath = previewFile ? previewSourcePath(previewFile) : null;
+    if (previewFilePath) paths.add(previewFilePath);
     const missing = Array.from(paths).filter((p) => !signedUrls[p]);
     if (!missing.length) return;
     (async () => {
@@ -198,7 +210,8 @@ export default function PosLabelFilesClient({
 
   async function openPreview(f: PosLabelFile) {
     setPreviewFile(f);
-    if (f.storage_path) await ensureSignedUrl(f.storage_path);
+    const path = previewSourcePath(f);
+    if (path) await ensureSignedUrl(path);
   }
 
   if (loading) return <p className="text-sm text-neutral-400">Loading…</p>;
@@ -251,12 +264,10 @@ export default function PosLabelFilesClient({
                 onClick={() => openPreview(f)}
                 className="flex h-28 items-center justify-center overflow-hidden bg-neutral-900 text-3xl"
               >
-                {isImageFile(f.file_name) &&
-                f.storage_path &&
-                signedUrls[f.storage_path] ? (
+                {previewSourcePath(f) && signedUrls[previewSourcePath(f) as string] ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={signedUrls[f.storage_path]}
+                    src={signedUrls[previewSourcePath(f) as string]}
                     alt=""
                     className="h-full w-full object-cover"
                   />
@@ -346,46 +357,58 @@ export default function PosLabelFilesClient({
               </div>
             </div>
             <div className="flex flex-1 items-center justify-center overflow-auto bg-neutral-900 p-4">
-              {!previewFile.storage_path ? (
-                <div className="flex flex-col items-center gap-3 py-10 text-center">
-                  <span className="text-5xl">
-                    {fileIcon(previewFile.file_name)}
-                  </span>
-                  <p className="text-sm text-neutral-400">
-                    This file is too large to store directly — it lives on
-                    Google Drive instead. Use &quot;Open Drive Link&quot;
-                    above to view or download it.
-                  </p>
-                </div>
-              ) : isImageFile(previewFile.file_name) ? (
-                signedUrls[previewFile.storage_path] ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={signedUrls[previewFile.storage_path]}
-                    alt={previewFile.file_name}
-                    className="max-h-[70vh] max-w-full object-contain"
-                  />
-                ) : (
-                  <p className="text-sm text-neutral-500">Loading preview…</p>
-                )
-              ) : previewFile.file_name.toLowerCase().endsWith(".pdf") &&
-                signedUrls[previewFile.storage_path] ? (
-                <iframe
-                  src={signedUrls[previewFile.storage_path]}
-                  title={previewFile.file_name}
-                  className="h-[70vh] w-full"
-                />
-              ) : (
-                <div className="flex flex-col items-center gap-3 py-10 text-center">
-                  <span className="text-5xl">
-                    {fileIcon(previewFile.file_name)}
-                  </span>
-                  <p className="text-sm text-neutral-400">
-                    No inline preview for this file type — use Download to open
-                    it.
-                  </p>
-                </div>
-              )}
+              {(() => {
+                const path = previewSourcePath(previewFile);
+                if (path) {
+                  return signedUrls[path] ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={signedUrls[path]}
+                      alt={previewFile.file_name}
+                      className="max-h-[70vh] max-w-full object-contain"
+                    />
+                  ) : (
+                    <p className="text-sm text-neutral-500">Loading preview…</p>
+                  );
+                }
+                if (!previewFile.storage_path) {
+                  return (
+                    <div className="flex flex-col items-center gap-3 py-10 text-center">
+                      <span className="text-5xl">
+                        {fileIcon(previewFile.file_name)}
+                      </span>
+                      <p className="text-sm text-neutral-400">
+                        This file is too large to store directly — it lives on
+                        Google Drive instead. Use &quot;Open Drive Link&quot;
+                        above to view or download it.
+                      </p>
+                    </div>
+                  );
+                }
+                if (
+                  previewFile.file_name.toLowerCase().endsWith(".pdf") &&
+                  signedUrls[previewFile.storage_path]
+                ) {
+                  return (
+                    <iframe
+                      src={signedUrls[previewFile.storage_path]}
+                      title={previewFile.file_name}
+                      className="h-[70vh] w-full"
+                    />
+                  );
+                }
+                return (
+                  <div className="flex flex-col items-center gap-3 py-10 text-center">
+                    <span className="text-5xl">
+                      {fileIcon(previewFile.file_name)}
+                    </span>
+                    <p className="text-sm text-neutral-400">
+                      No inline preview for this file type — use Download to
+                      open it.
+                    </p>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>
