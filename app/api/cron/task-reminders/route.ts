@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { sendMail } from "@/lib/email/sendMail";
 
 // Task due-date email reminders (2026-09-05, per Chad: "we need the push
@@ -100,13 +101,26 @@ async function notifyBatch(
 }
 
 export async function GET(req: NextRequest) {
-  // Vercel sends this header automatically on its own cron invocations when
-  // CRON_SECRET is set — keeps this endpoint from being triggered by anyone
-  // who finds the URL.
+  // Two ways in: Vercel sends the CRON_SECRET header automatically on its
+  // own scheduled invocations, OR a signed-in admin can hit this URL
+  // directly from their own browser (e.g. to test it on demand, rather than
+  // waiting for the daily schedule) — checked via their normal login
+  // cookie, no secret needed. Anyone else gets turned away.
   const cronSecret = process.env.CRON_SECRET;
-  if (cronSecret) {
-    const auth = req.headers.get("authorization");
-    if (auth !== `Bearer ${cronSecret}`) {
+  const auth = req.headers.get("authorization");
+  const hasValidSecret = Boolean(cronSecret) && auth === `Bearer ${cronSecret}`;
+
+  if (!hasValidSecret) {
+    const userSupabase = await createClient();
+    const {
+      data: { user },
+    } = await userSupabase.auth.getUser();
+    let isAdmin = false;
+    if (user) {
+      const { data: profile } = await userSupabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
+      isAdmin = profile?.role === "admin";
+    }
+    if (!isAdmin) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
   }
