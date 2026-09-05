@@ -1262,27 +1262,6 @@ export default function TasksPageClient() {
 
         {view === "detail" && selectedItem && (
           <div className="flex h-full gap-4 py-2">
-            <div className="flex w-72 shrink-0 flex-col overflow-y-auto border-r border-neutral-800 pr-4">
-              <p className="mb-2 text-[11px] tracking-wide text-neutral-500">ACTIVITY LOG</p>
-              {activity.length === 0 && <p className="text-xs text-neutral-600">No activity yet.</p>}
-              <div className="flex flex-col gap-3">
-                {activity.map((entry) => (
-                  <div key={entry.id} className="flex gap-2.5">
-                    <span
-                      className="mt-1 h-2 w-2 shrink-0 rounded-full"
-                      style={{ backgroundColor: BRAND_GREEN }}
-                    />
-                    <div>
-                      <p className="text-xs leading-snug text-neutral-300">
-                        {activityText(entry, profiles)}
-                      </p>
-                      <p className="text-[11px] text-neutral-600">{relativeTime(entry.created_at)}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
             <div className="flex min-w-0 flex-1 flex-col">
               <div className="flex items-start justify-between gap-4 pb-3">
                 <div>
@@ -1479,6 +1458,30 @@ export default function TasksPageClient() {
                     {sending ? "Sending…" : "Send"}
                   </button>
                 </div>
+              </div>
+            </div>
+
+            {/* Activity log — moved to the right side to match the layout
+                pattern used on Ernie's page (main content on the left, a
+                supporting panel on the right). */}
+            <div className="flex w-72 shrink-0 flex-col overflow-y-auto border-l border-neutral-800 pl-4">
+              <p className="mb-2 text-[11px] tracking-wide text-neutral-500">ACTIVITY LOG</p>
+              {activity.length === 0 && <p className="text-xs text-neutral-600">No activity yet.</p>}
+              <div className="flex flex-col gap-3">
+                {activity.map((entry) => (
+                  <div key={entry.id} className="flex gap-2.5">
+                    <span
+                      className="mt-1 h-2 w-2 shrink-0 rounded-full"
+                      style={{ backgroundColor: BRAND_GREEN }}
+                    />
+                    <div>
+                      <p className="text-xs leading-snug text-neutral-300">
+                        {activityText(entry, profiles)}
+                      </p>
+                      <p className="text-[11px] text-neutral-600">{relativeTime(entry.created_at)}</p>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
