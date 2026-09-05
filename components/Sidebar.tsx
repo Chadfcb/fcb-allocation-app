@@ -160,6 +160,14 @@ const CALENDARS_STORAGE_KEY = "fcb-sidebar-calendars-expanded";
 // lib/permissions.ts's SECTION_GROUPS. POS no longer appears as its own
 // nav entry at all (it would have nothing left under it).
 const POS_TREE_STORAGE_KEY = "fcb-sidebar-pos-tree-expanded";
+// Only the two top-level tree ids get remembered across page loads — a
+// brand row (e.g. "pos-labels-fcb") always starts collapsed each time you
+// open Labels/UPC's, so clicking "Labels" only ever reveals the 5 brand
+// names, never cascades open whichever brands you'd previously clicked
+// into. Fixed 2026-09-05 per Chad, after brand-level expand state (which
+// used to get saved right alongside the top-level state) made "Labels"
+// look like it was opening everything at once.
+const PERSISTED_POS_TREE_KEYS = ["pos-labels", "upcs"];
 
 const POS_LABEL_BRANDS: {
   treeKey: string;
@@ -338,9 +346,17 @@ export default function Sidebar({
     const storedPosTree = localStorage.getItem(POS_TREE_STORAGE_KEY);
     if (storedPosTree) {
       try {
+        const parsed = JSON.parse(storedPosTree) as Record<string, boolean>;
+        // Only hydrate the two top-level keys — ignore any brand-level
+        // entries that may be sitting in older, already-saved localStorage
+        // from before this fix, so they don't cascade back open.
+        const filtered: Record<string, boolean> = {};
+        for (const key of PERSISTED_POS_TREE_KEYS) {
+          if (key in parsed) filtered[key] = parsed[key];
+        }
         setPosTreeExpanded((prev) => ({
           ...prev,
-          ...JSON.parse(storedPosTree),
+          ...filtered,
         }));
       } catch {
         // Ignore malformed/stale localStorage content.
@@ -439,8 +455,27 @@ export default function Sidebar({
 
   function togglePosTree(key: string) {
     setPosTreeExpanded((prev) => {
-      const next = { ...prev, [key]: !prev[key] };
-      localStorage.setItem(POS_TREE_STORAGE_KEY, JSON.stringify(next));
+      let next = { ...prev, [key]: !prev[key] };
+      // Opening the top-level Labels/UPC's tree always starts every brand
+      // row collapsed underneath it — clicking "Labels" should only ever
+      // reveal the 5 brand names, never whichever ones happened to be left
+      // open from earlier in this same browsing session.
+      if (key === "pos-labels" && next[key]) {
+        for (const b of POS_LABEL_BRANDS) next = { ...next, [b.treeKey]: false };
+      }
+      if (key === "upcs" && next[key]) {
+        for (const b of UPC_BRANDS) next = { ...next, [b.treeKey]: false };
+      }
+      // Only persist the top-level Labels/UPC's open-closed state — brand
+      // rows (e.g. "pos-labels-fcb") stay in-memory only for this page
+      // load, so they never carry over and cascade open next time.
+      if (PERSISTED_POS_TREE_KEYS.includes(key)) {
+        const toPersist: Record<string, boolean> = {};
+        for (const k of PERSISTED_POS_TREE_KEYS) {
+          if (k in next) toPersist[k] = next[k];
+        }
+        localStorage.setItem(POS_TREE_STORAGE_KEY, JSON.stringify(toPersist));
+      }
       return next;
     });
   }
