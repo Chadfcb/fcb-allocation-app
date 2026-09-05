@@ -101,6 +101,8 @@ const NEW_SIDEBAR_IDS: string[] = [
   // 2026-09-05, per Chad.
   "/sales/chain-authorizations",
   "/sales/chain-mandates",
+  // Football POS — new POS sub-link, added 2026-09-05, per Chad.
+  "/pos/football",
 ];
 
 function NewBadge() {
@@ -160,11 +162,13 @@ const CALENDARS_STORAGE_KEY = "fcb-sidebar-calendars-expanded";
 // entry disappeared along with it (Labels was the only thing under it, and
 // an empty top-level section doesn't render on its own — see the
 // showPosSection check below). Labels itself correctly stays under
-// Operations; POS is back empty, on purpose, for Chad to add new items to.
-// Matches lib/permissions.ts's "pos_labels" GroupKey, which was already
-// kept around empty with the label "POS" for the same reason.
+// Operations; POS started back out empty, on purpose, for Chad to add new
+// items to — Football POS (added same day) is its first one: a flat file
+// library of football-season POS art, no brand/size nesting like Labels.
 const POS_STORAGE_KEY = "fcb-sidebar-pos-expanded";
-const POS_LINKS: { href: string; label: string; section: SectionKey }[] = [];
+const POS_LINKS: { href: string; label: string; section: SectionKey }[] = [
+  { href: "/pos/football", label: "Football POS", section: "football_pos" },
+];
 
 // Labels > <brand> > <size> — a nested tree (unlike Operations/Sales' other
 // links, which are one level of flat links), so its expand/collapse state

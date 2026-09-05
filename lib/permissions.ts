@@ -31,7 +31,8 @@ export type SectionKey =
   | "pos_labels"
   | "tasks"
   | "chain_authorizations"
-  | "chain_mandates";
+  | "chain_mandates"
+  | "football_pos";
 
 // Ernie AI is deliberately its own grantable section, separate from every
 // page section above — an admin may want someone to have, say, Purchase
@@ -129,13 +130,15 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
   },
   {
     key: "pos_labels",
-    // Left empty for now, per Chad, 2026-09-05: "remove it from POS and
-    // leave POS empty for now" — Labels moved to Operations above. A
-    // group with no items is hidden from the Users > Edit checklist and
-    // access summary (see app/(app)/admin/users/page.tsx) rather than
-    // showing a checkbox that would always read as checked.
+    // Was left empty per Chad, 2026-09-05: "remove it from POS and leave
+    // POS empty for now" — Labels had moved to Operations. Now has its
+    // first real item: Football POS (2026-09-05), a flat file library of
+    // football-season point-of-sale art (posters, table tents, stickers,
+    // distributor strips), set up just like POS > Labels' file cards
+    // (preview + download) but with no brand/size nesting — it's one
+    // shared pool, not per-brand artwork.
     label: "POS",
-    items: [],
+    items: [{ key: "football_pos", label: "Football POS" }],
   },
   {
     key: "tasks",

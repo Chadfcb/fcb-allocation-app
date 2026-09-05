@@ -712,6 +712,25 @@ export interface PosLabelFile {
   uploaded_at: string;
 }
 
+// POS > Football POS (added 2026-09-05) — a flat file library of
+// football-season point-of-sale art (posters, table tents, stickers,
+// distributor strips) — no brand/size nesting like Labels, since this is
+// one shared pool of seasonal marketing material, not per-brand artwork.
+// Same shape as PosLabelFile (preview_path for the browser-safe thumbnail,
+// external_url for anything too large to store directly), just without
+// the brand/size columns.
+export interface PosFootballFile {
+  id: string;
+  file_name: string;
+  storage_path: string | null;
+  external_url: string | null;
+  preview_path: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  uploaded_by: string | null;
+  uploaded_at: string;
+}
+
 // UPC's (added 2026-09-05) — a reference table of product name -> UPC
 // barcode, editable right on the page (add/edit/delete), per Chad. Set up
 // exactly like Labels above, per Chad, 2026-09-05: "i want it set up
