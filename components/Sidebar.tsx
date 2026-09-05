@@ -69,6 +69,10 @@ const NEW_SIDEBAR_IDS: string[] = [
   "/pos/labels/ugly-fresca/19-2oz",
   "/pos/labels/ugly-fresca/16oz",
   "/pos/labels/ugly-fresca/12oz",
+  // Other — new catch-all brand under Labels (2026-09-05), per Chad, for
+  // one-off custom labels like Spartan Ale.
+  "section:pos-labels-other",
+  "/pos/labels/other/12oz",
   // UPC's — new expandable brand+size tree added under Operations
   // (2026-09-05), set up exactly like Labels. Every page under it is brand
   // new, so every brand and every size leaf are flagged (the UPC's parent
@@ -140,6 +144,17 @@ const CALENDARS_LINKS: { href: string; label: string; section: SectionKey }[] = 
 const OPERATIONS_STORAGE_KEY = "fcb-sidebar-operations-expanded";
 const SALES_STORAGE_KEY = "fcb-sidebar-sales-expanded";
 const CALENDARS_STORAGE_KEY = "fcb-sidebar-calendars-expanded";
+
+// POS — restored 2026-09-05 as its own top-level nav section, per Chad,
+// after "move Labels out of POS" got read too literally and the whole POS
+// entry disappeared along with it (Labels was the only thing under it, and
+// an empty top-level section doesn't render on its own — see the
+// showPosSection check below). Labels itself correctly stays under
+// Operations; POS is back empty, on purpose, for Chad to add new items to.
+// Matches lib/permissions.ts's "pos_labels" GroupKey, which was already
+// kept around empty with the label "POS" for the same reason.
+const POS_STORAGE_KEY = "fcb-sidebar-pos-expanded";
+const POS_LINKS: { href: string; label: string; section: SectionKey }[] = [];
 
 // Labels > <brand> > <size> — a nested tree (unlike Operations/Sales' other
 // links, which are one level of flat links), so its expand/collapse state
@@ -214,6 +229,16 @@ const POS_LABEL_BRANDS: {
       { href: "/pos/labels/ugly-fresca/16oz", label: "16 oz Labels" },
       { href: "/pos/labels/ugly-fresca/12oz", label: "12 oz Labels" },
     ],
+  },
+  {
+    // Catch-all for one-off custom labels that aren't one of FCB's own
+    // brands (e.g. Spartan Ale, made for San Jose State University) — added
+    // 2026-09-05, per Chad: "add a new sub category called Other, put the
+    // spartan ale in there." Only a 12oz bucket, since there's no reason to
+    // expect other sizes of a one-off label.
+    treeKey: "pos-labels-other",
+    label: "Other",
+    sizes: [{ href: "/pos/labels/other/12oz", label: "12 oz Labels" }],
   },
 ];
 
@@ -305,6 +330,7 @@ export default function Sidebar({
   const [operationsExpanded, setOperationsExpanded] = useState(true);
   const [salesExpanded, setSalesExpanded] = useState(true);
   const [calendarsExpanded, setCalendarsExpanded] = useState(true);
+  const [posExpanded, setPosExpanded] = useState(true);
   const [posTreeExpanded, setPosTreeExpanded] = useState<
     Record<string, boolean>
   >({ "pos-labels": true, upcs: true });
@@ -332,6 +358,10 @@ export default function Sidebar({
     const storedCalendars = localStorage.getItem(CALENDARS_STORAGE_KEY);
     if (storedCalendars !== null) {
       setCalendarsExpanded(storedCalendars === "true");
+    }
+    const storedPos = localStorage.getItem(POS_STORAGE_KEY);
+    if (storedPos !== null) {
+      setPosExpanded(storedPos === "true");
     }
     const storedPosTree = localStorage.getItem(POS_TREE_STORAGE_KEY);
     if (storedPosTree) {
@@ -443,6 +473,14 @@ export default function Sidebar({
     });
   }
 
+  function togglePos() {
+    setPosExpanded((prev) => {
+      const next = !prev;
+      localStorage.setItem(POS_STORAGE_KEY, String(next));
+      return next;
+    });
+  }
+
   function togglePosTree(key: string) {
     setPosTreeExpanded((prev) => {
       let next = { ...prev, [key]: !prev[key] };
@@ -517,6 +555,11 @@ export default function Sidebar({
   const showPosTree = can("pos_labels");
   const showUpcTree = can("upcs");
   const visibleCalendars = CALENDARS_LINKS.filter((link) => can(link.section));
+  const visiblePos = POS_LINKS.filter((link) => can(link.section));
+  // POS has nothing under it yet (see POS_LINKS above) — show the empty
+  // section to admins so Chad has somewhere to add to, but don't show an
+  // empty, useless heading to a Basic user who has nothing granted in it.
+  const showPosSection = role === "admin" || visiblePos.length > 0;
   const showErnie = can(ERNIE_SECTION);
   const showTasks = can("tasks");
   const showAuditLog = can("audit_log");
@@ -530,7 +573,8 @@ export default function Sidebar({
     visibleSales.length === 0 &&
     !showPosTree &&
     !showUpcTree &&
-    visibleCalendars.length === 0;
+    visibleCalendars.length === 0 &&
+    visiblePos.length === 0;
 
   // Every id nested under Operations — everything sectionShowsNew() checks
   // to decide whether the Operations button itself should show New!.
@@ -764,6 +808,47 @@ export default function Sidebar({
                     {showsNew(link.href) && <NewBadge />}
                   </Link>
                 ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* POS — its own top-level section, empty for now. Restored
+            2026-09-05 per Chad after it got removed by mistake along with
+            Labels (Labels moved to Operations, which was the actual
+            request — POS itself was meant to stay, just empty, ready for
+            new items). Placed here, between Sales and Calendars, per Chad. */}
+        {showPosSection && (
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                togglePos();
+                dismissNew("section:pos");
+              }}
+              className="mt-1 flex items-center gap-2 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
+            >
+              POS
+              {sectionShowsNew("section:pos", visiblePos.map((link) => link.href)) && <NewBadge />}
+            </button>
+            {posExpanded && (
+              <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
+                {visiblePos.map((link) => (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    className={linkClass(link.href)}
+                    onClick={() => dismissNew(link.href)}
+                  >
+                    {link.label}
+                    {showsNew(link.href) && <NewBadge />}
+                  </Link>
+                ))}
+                {visiblePos.length === 0 && (
+                  <p className="px-2 py-1 text-xs leading-relaxed text-neutral-600">
+                    Nothing here yet.
+                  </p>
+                )}
               </div>
             )}
           </>

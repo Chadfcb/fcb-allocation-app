@@ -18,6 +18,7 @@ export const POS_LABEL_BRAND_OPTIONS: {
   { value: "sonoma-cider", label: "Sonoma Cider" },
   { value: "oobli", label: "Oobli" },
   { value: "ugly-fresca", label: "Ugly Fresca" },
+  { value: "other", label: "Other" },
 ];
 
 export const POS_LABEL_BRAND_LABELS: Record<PosLabelBrand, string> = {
@@ -26,6 +27,7 @@ export const POS_LABEL_BRAND_LABELS: Record<PosLabelBrand, string> = {
   "sonoma-cider": "Sonoma Cider",
   oobli: "Oobli",
   "ugly-fresca": "Ugly Fresca",
+  other: "Other",
 };
 
 export const POS_LABEL_SIZE_OPTIONS: { value: PosLabelSize; label: string }[] =

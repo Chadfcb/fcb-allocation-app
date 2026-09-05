@@ -681,7 +681,12 @@ export interface SocialMediaEventMaterial {
 // PosLibraryFile above but scoped by brand + size instead of being one
 // shared pool.
 // "oobli" and "ugly-fresca" added 2026-09-05 as new brands under Labels.
-export type PosLabelBrand = "fcb" | "speakeasy" | "sonoma-cider" | "oobli" | "ugly-fresca";
+// "other" added 2026-09-05 too, per Chad, as a catch-all for one-off
+// custom labels that don't belong to any of FCB's own brands (e.g. a
+// label made for a specific outside customer like a university) — filed
+// under a single "12oz" bucket rather than getting all three sizes, since
+// there's no reason to expect 19.2oz/16oz versions of a one-off label.
+export type PosLabelBrand = "fcb" | "speakeasy" | "sonoma-cider" | "oobli" | "ugly-fresca" | "other";
 export type PosLabelSize = "19.2oz" | "16oz" | "12oz";
 
 export interface PosLabelFile {
