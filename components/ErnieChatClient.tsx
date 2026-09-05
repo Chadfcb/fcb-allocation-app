@@ -163,7 +163,14 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
     function updateHeight() {
       if (!panelRef.current) return;
       const top = panelRef.current.getBoundingClientRect().top;
-      setPanelHeight(window.innerHeight - top);
+      // The shared (app) layout's <main> wraps every page in "py-6", so
+      // there's padding below this panel too — without subtracting it, the
+      // panel's bottom (and the input bar in it) always sat just far enough
+      // past the viewport's bottom edge to force a page-level scrollbar.
+      const parentPaddingBottom = panelRef.current.parentElement
+        ? parseFloat(getComputedStyle(panelRef.current.parentElement).paddingBottom || "0")
+        : 0;
+      setPanelHeight(window.innerHeight - top - parentPaddingBottom);
     }
     updateHeight();
     window.addEventListener("resize", updateHeight);
@@ -565,7 +572,7 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
     <div
       ref={panelRef}
       style={panelHeight != null ? { height: panelHeight } : undefined}
-      className={`${archivo.variable} ${plexSans.variable} ${plexMono.variable} relative mx-auto flex w-full max-w-[1600px] gap-4 p-6`}
+      className={`${archivo.variable} ${plexSans.variable} ${plexMono.variable} relative mx-auto flex w-full max-w-[1600px] gap-4 overflow-hidden p-6`}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
