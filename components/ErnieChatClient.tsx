@@ -756,7 +756,7 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
         <div className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[#4c8a32] via-[#6ABC46] to-[#7fce5c]" />
         <div className="border-b border-[#1c2117] px-4 py-4">
           <h2 className="font-[family-name:var(--font-archivo)] text-sm font-bold tracking-tight text-[#eef1e9]">
-            Conversations
+            Past Conversations
           </h2>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto font-[family-name:var(--font-plex-sans)]">
