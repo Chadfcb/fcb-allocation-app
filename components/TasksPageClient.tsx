@@ -370,7 +370,8 @@ export default function TasksPageClient() {
     return categories.find((c) => c.id === sub.category_id) ?? null;
   }
   function itemsForDate(iso: string) {
-    return items.filter((i) => i.due_date === iso);
+    // Resolved tasks shouldn't clutter the calendar — only show what's still open.
+    return items.filter((i) => i.due_date === iso && i.status === "open");
   }
   function shiftMonth(delta: number) {
     setCalendarMonth((prev) => {
@@ -722,7 +723,7 @@ export default function TasksPageClient() {
           </nav>
         </div>
       )}
-      <div className="flex items-start justify-between gap-6 border-b border-neutral-800 pb-4">
+      <div className="flex items-center justify-between gap-6 border-b border-neutral-800 pb-4">
         <div>
           {(view === "categories" || view === "calendar") && (
             <button
@@ -737,21 +738,11 @@ export default function TasksPageClient() {
               Categories
             </button>
           )}
-          {view === "categories" && (
-            <button
-              type="button"
-              onClick={addCategory}
-              className="mt-3 rounded-md px-3.5 py-2 text-xs font-semibold text-black hover:opacity-90"
-              style={{ backgroundColor: BRAND_GREEN }}
-            >
-              + Add Category
-            </button>
-          )}
           {view === "subcategories" && currentCategory && (
             <button
               type="button"
               onClick={() => addSubcategory(currentCategory.id)}
-              className="mt-3 rounded-md px-3.5 py-2 text-xs font-semibold text-black hover:opacity-90"
+              className="rounded-md px-3.5 py-2 text-xs font-semibold text-black hover:opacity-90"
               style={{ backgroundColor: BRAND_GREEN }}
             >
               + Add Subcategory
@@ -761,7 +752,7 @@ export default function TasksPageClient() {
             <button
               type="button"
               onClick={() => setShowAddTask((v) => !v)}
-              className="mt-3 rounded-md px-3.5 py-2 text-xs font-semibold text-black hover:opacity-90"
+              className="rounded-md px-3.5 py-2 text-xs font-semibold text-black hover:opacity-90"
               style={{ backgroundColor: BRAND_GREEN }}
             >
               + Add Task
@@ -856,6 +847,15 @@ export default function TasksPageClient() {
                 </div>
               );
             })}
+            <button
+              type="button"
+              onClick={addCategory}
+              className="flex min-h-[110px] flex-col items-center justify-center gap-1.5 rounded-lg border border-dashed border-neutral-700 bg-neutral-950 text-sm font-semibold hover:border-neutral-500"
+              style={{ color: BRAND_GREEN }}
+            >
+              <span className="text-2xl leading-none">+</span>
+              Add Category
+            </button>
           </div>
         )}
 
