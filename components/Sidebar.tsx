@@ -17,12 +17,39 @@
 //   visible on a fresh page load, per Chad's request.
 // - Nothing about WHICH links show is persisted — that comes fresh from
 //   the server on every load via the `sections` prop.
+//
+// "New!" badges (added 2026-09-05, per Chad): when a brand-new section or
+// sub-link is added to the sidebar, it can carry a small green "New!" tag
+// lined up on the right, so people notice it landed. Add its id to
+// NEW_SIDEBAR_IDS below when you add the item — a parent section (like
+// "Calendars") uses a synthetic "section:<name>" id since it has no href
+// of its own; a regular link just uses its href. The badge disappears the
+// first time that person clicks it and never comes back — remembered
+// per-browser in localStorage, the same way expand/collapse state is.
+// Nothing existing today is flagged; per Chad, this is only for things
+// added from here forward, not retroactive for Chain Calendar/Social
+// Media Calendar/etc. which already existed before this feature shipped.
+// Once something's been out for a while, just delete its id from the list
+// below — no need to keep it around forever.
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { Role } from "@/lib/types/db";
 import { hasSection, ERNIE_SECTION, type AnySectionKey, type SectionKey } from "@/lib/permissions";
+import { createClient } from "@/lib/supabase/client";
+
+const NEW_SIDEBAR_IDS: string[] = [
+  // e.g. "section:calendars", "/chain-calendar",
+];
+
+function NewBadge() {
+  return (
+    <span className="ml-auto shrink-0 rounded-full bg-[#6ABC46] px-1.5 py-0.5 text-[9px] font-bold leading-none text-black">
+      New!
+    </span>
+  );
+}
 
 const OPERATIONS_LINKS: { href: string; label: string; section: SectionKey }[] = [
   { href: "/purchase-orders", label: "Purchase Orders", section: "purchase_orders" },
@@ -112,6 +139,13 @@ export default function Sidebar({
   const [posTreeExpanded, setPosTreeExpanded] = useState<
     Record<string, boolean>
   >({ pos: true, "pos-labels": true });
+  const [seenNew, setSeenNew] = useState<Record<string, true>>({});
+  // Which "New!" badges this signed-in person has already dismissed —
+  // stored server-side (sidebar_new_seen table) rather than in this
+  // browser's localStorage, so a badge stays dismissed no matter which
+  // device or browser they next log in from. Created once and reused for
+  // the life of this component.
+  const [supabase] = useState(() => createClient());
 
   useEffect(() => {
     // Hydrate persisted expand/collapse prefs after mount rather than in the
@@ -142,6 +176,51 @@ export default function Sidebar({
       }
     }
   }, []);
+
+  useEffect(() => {
+    // Pull this person's previously-dismissed "New!" badges from the
+    // database on mount — nothing to fetch if nothing's currently flagged.
+    if (NEW_SIDEBAR_IDS.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await supabase.from("sidebar_new_seen").select("item_id").eq("user_id", user.id);
+      if (cancelled || !data) return;
+      const next: Record<string, true> = {};
+      for (const row of data) next[row.item_id] = true;
+      setSeenNew(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase]);
+
+  // Whether a "New!" badge should currently show for this id — flagged in
+  // NEW_SIDEBAR_IDS above, and not yet clicked by this person.
+  function showsNew(id: string) {
+    return NEW_SIDEBAR_IDS.includes(id) && !seenNew[id];
+  }
+
+  // First click on a flagged item retires its badge for good — recorded
+  // against this person's account, so it stays gone on every device/
+  // browser they sign in from, not just this one.
+  function dismissNew(id: string) {
+    if (!NEW_SIDEBAR_IDS.includes(id) || seenNew[id]) return;
+    setSeenNew((prev) => ({ ...prev, [id]: true as const }));
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+      await supabase.from("sidebar_new_seen").upsert(
+        { user_id: user.id, item_id: id },
+        { onConflict: "user_id,item_id", ignoreDuplicates: true },
+      );
+    })();
+  }
 
   function toggleOperations() {
     setOperationsExpanded((prev) => {
@@ -191,7 +270,7 @@ export default function Sidebar({
   // border-l-2 is always reserved (transparent when inactive) so the text
   // doesn't shift left/right as a link becomes active.
   const linkClass = (href: string) =>
-    `rounded border-l-2 px-2 py-1.5 ${
+    `flex items-center gap-2 rounded border-l-2 px-2 py-1.5 ${
       isActive(href)
         ? "border-[#6ABC46] bg-neutral-900 font-semibold text-[#6ABC46]"
         : "border-transparent text-neutral-400 hover:bg-neutral-900 hover:text-white"
@@ -242,14 +321,16 @@ export default function Sidebar({
 
       <nav className="flex flex-col gap-1 text-sm">
         {role === "admin" && (
-          <Link href="/dashboard" className={linkClass("/dashboard")}>
+          <Link href="/dashboard" className={linkClass("/dashboard")} onClick={() => dismissNew("/dashboard")}>
             Dashboard
+            {showsNew("/dashboard") && <NewBadge />}
           </Link>
         )}
 
         {showErnie && (
-          <Link href="/ernie" className={`mt-1 ${linkClass("/ernie")}`}>
+          <Link href="/ernie" className={`mt-1 ${linkClass("/ernie")}`} onClick={() => dismissNew("/ernie")}>
             Ernie AI
+            {showsNew("/ernie") && <NewBadge />}
           </Link>
         )}
 
@@ -259,8 +340,9 @@ export default function Sidebar({
             unrestricted use of Tasks itself (create/assign/resolve/delete),
             this only controls who can get into the page at all. */}
         {showTasks && (
-          <Link href="/tasks" className={`mt-1 ${linkClass("/tasks")}`}>
+          <Link href="/tasks" className={`mt-1 ${linkClass("/tasks")}`} onClick={() => dismissNew("/tasks")}>
             Tasks
+            {showsNew("/tasks") && <NewBadge />}
           </Link>
         )}
 
@@ -268,10 +350,14 @@ export default function Sidebar({
           <>
             <button
               type="button"
-              onClick={toggleOperations}
-              className="mt-2 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
+              onClick={() => {
+                toggleOperations();
+                dismissNew("section:operations");
+              }}
+              className="mt-2 flex items-center gap-2 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
             >
               Operations
+              {showsNew("section:operations") && <NewBadge />}
             </button>
             {operationsExpanded && (
               <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
@@ -280,8 +366,10 @@ export default function Sidebar({
                     key={link.href}
                     href={link.href}
                     className={linkClass(link.href)}
+                    onClick={() => dismissNew(link.href)}
                   >
                     {link.label}
+                    {showsNew(link.href) && <NewBadge />}
                   </Link>
                 ))}
               </div>
@@ -293,10 +381,14 @@ export default function Sidebar({
           <>
             <button
               type="button"
-              onClick={toggleSales}
-              className="mt-1 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
+              onClick={() => {
+                toggleSales();
+                dismissNew("section:sales");
+              }}
+              className="mt-1 flex items-center gap-2 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
             >
               Sales
+              {showsNew("section:sales") && <NewBadge />}
             </button>
             {salesExpanded && (
               <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
@@ -305,8 +397,10 @@ export default function Sidebar({
                     key={link.href}
                     href={link.href}
                     className={linkClass(link.href)}
+                    onClick={() => dismissNew(link.href)}
                   >
                     {link.label}
+                    {showsNew(link.href) && <NewBadge />}
                   </Link>
                 ))}
               </div>
@@ -318,19 +412,27 @@ export default function Sidebar({
           <>
             <button
               type="button"
-              onClick={() => togglePosTree("pos")}
-              className="mt-1 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
+              onClick={() => {
+                togglePosTree("pos");
+                dismissNew("section:pos");
+              }}
+              className="mt-1 flex items-center gap-2 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
             >
               POS
+              {showsNew("section:pos") && <NewBadge />}
             </button>
             {posTreeExpanded.pos && (
               <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
                 <button
                   type="button"
-                  onClick={() => togglePosTree("pos-labels")}
-                  className="rounded px-2 py-1 text-left text-sm font-semibold text-neutral-400 hover:bg-neutral-900 hover:text-white"
+                  onClick={() => {
+                    togglePosTree("pos-labels");
+                    dismissNew("section:pos-labels");
+                  }}
+                  className="flex items-center gap-2 rounded px-2 py-1 text-left text-sm font-semibold text-neutral-400 hover:bg-neutral-900 hover:text-white"
                 >
                   Labels
+                  {showsNew("section:pos-labels") && <NewBadge />}
                 </button>
                 {posTreeExpanded["pos-labels"] && (
                   <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
@@ -338,10 +440,14 @@ export default function Sidebar({
                       <div key={brand.treeKey} className="flex flex-col gap-1">
                         <button
                           type="button"
-                          onClick={() => togglePosTree(brand.treeKey)}
-                          className="rounded px-2 py-1 text-left text-sm text-neutral-400 hover:bg-neutral-900 hover:text-white"
+                          onClick={() => {
+                            togglePosTree(brand.treeKey);
+                            dismissNew(`section:${brand.treeKey}`);
+                          }}
+                          className="flex items-center gap-2 rounded px-2 py-1 text-left text-sm text-neutral-400 hover:bg-neutral-900 hover:text-white"
                         >
                           {brand.label}
+                          {showsNew(`section:${brand.treeKey}`) && <NewBadge />}
                         </button>
                         {posTreeExpanded[brand.treeKey] && (
                           <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
@@ -350,8 +456,10 @@ export default function Sidebar({
                                 key={s.href}
                                 href={s.href}
                                 className={linkClass(s.href)}
+                                onClick={() => dismissNew(s.href)}
                               >
                                 {s.label}
+                                {showsNew(s.href) && <NewBadge />}
                               </Link>
                             ))}
                           </div>
@@ -369,10 +477,14 @@ export default function Sidebar({
           <>
             <button
               type="button"
-              onClick={toggleCalendars}
-              className="mt-1 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
+              onClick={() => {
+                toggleCalendars();
+                dismissNew("section:calendars");
+              }}
+              className="mt-1 flex items-center gap-2 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
             >
               Calendars
+              {showsNew("section:calendars") && <NewBadge />}
             </button>
             {calendarsExpanded && (
               <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
@@ -381,8 +493,10 @@ export default function Sidebar({
                     key={link.href}
                     href={link.href}
                     className={linkClass(link.href)}
+                    onClick={() => dismissNew(link.href)}
                   >
                     {link.label}
+                    {showsNew(link.href) && <NewBadge />}
                   </Link>
                 ))}
               </div>
@@ -394,8 +508,10 @@ export default function Sidebar({
           <Link
             href="/admin/users"
             className={`mt-1 ${linkClass("/admin/users")}`}
+            onClick={() => dismissNew("/admin/users")}
           >
             Users
+            {showsNew("/admin/users") && <NewBadge />}
           </Link>
         )}
 
