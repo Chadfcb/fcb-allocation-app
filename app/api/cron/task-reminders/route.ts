@@ -79,11 +79,23 @@ async function notifyBatch(
 
     for (const person of recipients) {
       const firstName = person.full_name?.trim().split(/\s+/)[0] || "there";
+      const paragraphs = [
+        `Hi ${firstName},`,
+        `This is a reminder that "${task.title}" is ${whenPhrase} (${formatDueDate(task.due_date)}).`,
+        `Open Tasks in FCB Data to view or update it.`,
+        `This is an automated message from a mailbox that isn't monitored — please don't reply to this email.`,
+      ];
       try {
         await sendMail({
           to: person.email,
           subject: `Task ${whenPhrase}: ${task.title}`,
-          text: `Hi ${firstName},\n\nThis is a reminder that "${task.title}" is ${whenPhrase} (${formatDueDate(task.due_date)}).\n\nOpen Tasks in FCB Data to view or update it.\n\nThis is an automated message from a mailbox that isn't monitored — please don't reply to this email.`,
+          text: paragraphs.join("\n\n"),
+          // A real HTML body (not just the text reused as-is) so each
+          // paragraph actually breaks onto its own line AND Gmail still
+          // appends its own HTML signature — logos, bold text, the link —
+          // underneath it. Sending text-only suppresses that signature down
+          // to plain text, which is what stripped the logos out last time.
+          html: paragraphs.map((p) => `<p>${p}</p>`).join(""),
         });
         sent += 1;
       } catch {
