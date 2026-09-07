@@ -775,6 +775,69 @@ export default function InventoryPage() {
     const sortOrder = computeDistributorInsertSortOrder("__end__");
     const color = newDistributorColor.trim() || null;
 
+    // A distributor removed from a prior week is archived (active: false),
+    // not deleted — and distributors.name is unique, so trying to insert a
+    // fresh row with the same name always fails with a 23505. Check for
+    // that archived row first and bring it back instead of just reporting
+    // "already exists" for a name Chad is deliberately re-adding.
+    const { data: existing, error: lookupError } = await supabase
+      .from("distributors")
+      .select("*")
+      .ilike("name", name)
+      .maybeSingle();
+
+    if (!lookupError && existing) {
+      const existingDistributor = existing as Distributor;
+
+      if (existingDistributor.active) {
+        setAddDistributorError("A distributor with that name already exists.");
+        setAddingDistributor(false);
+        return;
+      }
+
+      const { data: updated, error: reactivateError } = await supabase
+        .from("distributors")
+        .update({
+          active: true,
+          sort_order: sortOrder,
+          ...(color ? { color } : {}),
+        })
+        .eq("id", existingDistributor.id)
+        .select()
+        .single();
+
+      if (reactivateError || !updated) {
+        setAddDistributorError(
+          reactivateError?.message ?? "Couldn't bring that distributor back."
+        );
+        setAddingDistributor(false);
+        return;
+      }
+
+      setDistributors((prev) =>
+        [...prev, updated as Distributor].sort((a, b) => {
+          const ao = a.sort_order ?? Number.MAX_SAFE_INTEGER;
+          const bo = b.sort_order ?? Number.MAX_SAFE_INTEGER;
+          if (ao !== bo) return ao - bo;
+          return a.name.localeCompare(b.name);
+        })
+      );
+      setNewDistributorName("");
+      setNewDistributorColor("");
+      setAddingDistributor(false);
+
+      await logChange(supabase, {
+        weekId: week?.id ?? null,
+        tableName: "distributors",
+        recordId: existingDistributor.id,
+        fieldName: "active",
+        oldValue: false,
+        newValue: true,
+        changedBy: userId,
+      });
+      return;
+    }
+
     const { data, error } = await supabase
       .from("distributors")
       .insert({ name, color, active: true, sort_order: sortOrder })
