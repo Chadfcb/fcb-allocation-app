@@ -206,6 +206,12 @@ export async function POST(req: NextRequest) {
         ];
 
         let finalText = "";
+        // Files Ernie produced or fetched during this turn (edit_spreadsheet,
+        // get_file_for_download) so they can be shown as download chips —
+        // both live, via the "done" SSE event, and later, by persisting them
+        // on the assistant's own ernie_messages row the same way a user
+        // message's fileIds already work.
+        const outputFileIds: string[] = [];
 
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
           // On the last round, force a plain-text answer instead of allowing
@@ -272,6 +278,19 @@ export async function POST(req: NextRequest) {
                     toolErr instanceof Error ? toolErr.message : "Tool lookup failed",
                 };
               }
+              // edit_spreadsheet and get_file_for_download both hand back
+              // { id, file_name, ... } for a file now sitting in ernie_files
+              // — capture that id so it can be surfaced as a download chip
+              // instead of silently existing only in the database.
+              if (
+                (block.name === "edit_spreadsheet" || block.name === "get_file_for_download") &&
+                result &&
+                typeof result === "object" &&
+                "id" in result &&
+                typeof (result as { id: unknown }).id === "string"
+              ) {
+                outputFileIds.push((result as { id: string }).id);
+              }
               toolResults.push({
                 type: "tool_result",
                 tool_use_id: block.id,
@@ -301,6 +320,7 @@ export async function POST(req: NextRequest) {
           conversation_id: conversationId,
           role: "assistant",
           content: finalText,
+          file_ids: outputFileIds,
         });
         if (insertAssistantErr) throw insertAssistantErr;
 
@@ -311,7 +331,7 @@ export async function POST(req: NextRequest) {
           .update({ updated_at: new Date().toISOString() })
           .eq("id", conversationId);
 
-        send({ type: "done", text: finalText, conversationId });
+        send({ type: "done", text: finalText, conversationId, outputFileIds });
       } catch (err) {
         send({
           type: "error",
