@@ -287,86 +287,106 @@ export default function InventoryPage() {
     } = await supabase.auth.getUser();
     setUserId(user?.id ?? null);
 
-    if (user) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
-        .maybeSingle();
-      setIsAdmin(profile?.role === "admin");
-    }
+    // None of these depend on each other — only the week-scoped batch below
+    // depends on weekData's id. Running them together instead of one at a
+    // time (the original pattern) turns ~8 sequential round-trips to
+    // Supabase into 1, which was the main cause of the app feeling slow
+    // switching between sections (Chad, 2026-09-07).
+    const [
+      profileResult,
+      weekResult,
+      productResult,
+      dividerResult,
+      distributorResult,
+      priceResult,
+      customPkgItemResult,
+      customLabelItemResult,
+    ] = await Promise.all([
+      user
+        ? supabase.from("profiles").select("role").eq("id", user.id).maybeSingle()
+        : Promise.resolve({ data: null }),
+      supabase
+        .from("weeks")
+        .select("*")
+        .order("week_start", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from("products")
+        .select("*")
+        .eq("active", true)
+        .order("sort_order", { ascending: true, nullsFirst: false })
+        .order("name"),
+      supabase.from("section_dividers").select("*"),
+      supabase
+        .from("distributors")
+        .select("*")
+        .eq("active", true)
+        .order("sort_order", { ascending: true, nullsFirst: false })
+        .order("name"),
+      // Distributor pricing is standing catalog data, not tied to a week —
+      // set on the Distributor Pricing page, used here to drive Order Value
+      // totals.
+      supabase.from("distributor_prices").select("*"),
+      supabase
+        .from("custom_packaging_items")
+        .select("*")
+        .eq("active", true)
+        .order("sort_order", { ascending: true, nullsFirst: false })
+        .order("name"),
+      supabase
+        .from("custom_label_items")
+        .select("*")
+        .eq("active", true)
+        .order("sort_order", { ascending: true, nullsFirst: false })
+        .order("name"),
+    ]);
 
-    const { data: weekData } = await supabase
-      .from("weeks")
-      .select("*")
-      .order("week_start", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    setIsAdmin(profileResult.data?.role === "admin");
+
+    const weekData = weekResult.data;
     setWeek(weekData as Week | null);
 
-    const { data: productData } = await supabase
-      .from("products")
-      .select("*")
-      .eq("active", true)
-      .order("sort_order", { ascending: true, nullsFirst: false })
-      .order("name");
-    setProducts((productData as Product[]) ?? []);
+    setProducts((productResult.data as Product[]) ?? []);
+    setDividers((dividerResult.data as SectionDivider[]) ?? []);
+    setDistributors((distributorResult.data as Distributor[]) ?? []);
 
-    const { data: dividerData } = await supabase.from("section_dividers").select("*");
-    setDividers((dividerData as SectionDivider[]) ?? []);
-
-    const { data: distributorData } = await supabase
-      .from("distributors")
-      .select("*")
-      .eq("active", true)
-      .order("sort_order", { ascending: true, nullsFirst: false })
-      .order("name");
-    setDistributors((distributorData as Distributor[]) ?? []);
-
-    // Distributor pricing is standing catalog data, not tied to a week — set
-    // on the Distributor Pricing page, used here to drive Order Value totals.
-    const { data: priceData } = await supabase.from("distributor_prices").select("*");
     const priceMap: Record<string, DistributorPrice> = {};
-    (priceData as DistributorPrice[] | null)?.forEach((row) => {
+    (priceResult.data as DistributorPrice[] | null)?.forEach((row) => {
       priceMap[`${row.product_id}:${row.distributor_id}`] = row;
     });
     setDistributorPrices(priceMap);
 
-    const { data: customPkgItemData } = await supabase
-      .from("custom_packaging_items")
-      .select("*")
-      .eq("active", true)
-      .order("sort_order", { ascending: true, nullsFirst: false })
-      .order("name");
-    setCustomPackagingItems((customPkgItemData as CustomPackagingItem[]) ?? []);
-
-    const { data: customLabelItemData } = await supabase
-      .from("custom_label_items")
-      .select("*")
-      .eq("active", true)
-      .order("sort_order", { ascending: true, nullsFirst: false })
-      .order("name");
-    setCustomLabelItems((customLabelItemData as CustomLabelItem[]) ?? []);
+    setCustomPackagingItems((customPkgItemResult.data as CustomPackagingItem[]) ?? []);
+    setCustomLabelItems((customLabelItemResult.data as CustomLabelItem[]) ?? []);
 
     if (weekData) {
-      const { data: invData } = await supabase
-        .from("inventory_with_remaining")
-        .select("*")
-        .eq("week_id", weekData.id);
+      const [
+        invResult,
+        allocResult,
+        poResult,
+        packagingResult,
+        labelResult,
+        customPkgInvResult,
+        customLabelInvResult,
+      ] = await Promise.all([
+        supabase.from("inventory_with_remaining").select("*").eq("week_id", weekData.id),
+        supabase.from("allocations").select("*").eq("week_id", weekData.id),
+        supabase.from("distributor_pos").select("*").eq("week_id", weekData.id),
+        supabase.from("packaging_inventory").select("*").eq("week_id", weekData.id),
+        supabase.from("label_inventory").select("*").eq("week_id", weekData.id),
+        supabase.from("custom_packaging_inventory").select("*").eq("week_id", weekData.id),
+        supabase.from("custom_label_inventory").select("*").eq("week_id", weekData.id),
+      ]);
 
       const invMap: Record<string, InventoryWithRemaining> = {};
-      (invData as InventoryWithRemaining[] | null)?.forEach((row) => {
+      (invResult.data as InventoryWithRemaining[] | null)?.forEach((row) => {
         invMap[row.product_id] = row;
       });
       setInventory(invMap);
 
-      const { data: allocData } = await supabase
-        .from("allocations")
-        .select("*")
-        .eq("week_id", weekData.id);
-
       const allocMap: Record<string, AllocationCell> = {};
-      (allocData as Allocation[] | null)?.forEach((row) => {
+      (allocResult.data as Allocation[] | null)?.forEach((row) => {
         allocMap[`${row.product_id}:${row.distributor_id}`] = {
           id: row.id,
           quantity: row.quantity,
@@ -375,57 +395,32 @@ export default function InventoryPage() {
       });
       setAllocations(allocMap);
 
-      const { data: poData } = await supabase
-        .from("distributor_pos")
-        .select("*")
-        .eq("week_id", weekData.id);
-
       const poMap: Record<string, DistributorPO> = {};
-      (poData as DistributorPO[] | null)?.forEach((row) => {
+      (poResult.data as DistributorPO[] | null)?.forEach((row) => {
         poMap[row.distributor_id] = row;
       });
       setPos(poMap);
 
-      const { data: packagingData } = await supabase
-        .from("packaging_inventory")
-        .select("*")
-        .eq("week_id", weekData.id);
-
       const pkgMap: Record<string, PackagingInventoryRow> = {};
-      (packagingData as PackagingInventoryRow[] | null)?.forEach((row) => {
+      (packagingResult.data as PackagingInventoryRow[] | null)?.forEach((row) => {
         pkgMap[row.item_key] = row;
       });
       setPackaging(pkgMap);
 
-      const { data: labelData } = await supabase
-        .from("label_inventory")
-        .select("*")
-        .eq("week_id", weekData.id);
-
       const lblMap: Record<string, LabelInventoryRow> = {};
-      (labelData as LabelInventoryRow[] | null)?.forEach((row) => {
+      (labelResult.data as LabelInventoryRow[] | null)?.forEach((row) => {
         lblMap[row.product_id] = row;
       });
       setLabelInventory(lblMap);
 
-      const { data: customPkgInvData } = await supabase
-        .from("custom_packaging_inventory")
-        .select("*")
-        .eq("week_id", weekData.id);
-
       const customPkgInvMap: Record<string, CustomPackagingInventoryRow> = {};
-      (customPkgInvData as CustomPackagingInventoryRow[] | null)?.forEach((row) => {
+      (customPkgInvResult.data as CustomPackagingInventoryRow[] | null)?.forEach((row) => {
         customPkgInvMap[row.item_id] = row;
       });
       setCustomPackagingInventory(customPkgInvMap);
 
-      const { data: customLabelInvData } = await supabase
-        .from("custom_label_inventory")
-        .select("*")
-        .eq("week_id", weekData.id);
-
       const customLabelInvMap: Record<string, CustomLabelInventoryRow> = {};
-      (customLabelInvData as CustomLabelInventoryRow[] | null)?.forEach((row) => {
+      (customLabelInvResult.data as CustomLabelInventoryRow[] | null)?.forEach((row) => {
         customLabelInvMap[row.item_id] = row;
       });
       setCustomLabelInventory(customLabelInvMap);

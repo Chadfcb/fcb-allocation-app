@@ -101,86 +101,95 @@ export default function BuildOrdersPage() {
     } = await supabase.auth.getUser();
     setUserId(user?.id ?? null);
 
-    if (user) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
+    // Everything below this point is independent of everything else EXCEPT
+    // the two queries at the very end (invData/recData), which need
+    // weekData's id first. Firing all of these off together instead of
+    // awaiting them one at a time (the original pattern) turns ~9 sequential
+    // round-trips to Supabase into 2 — this was the main cause of the app
+    // feeling slow when switching between sections (Chad, 2026-09-07).
+    const [
+      profileResult,
+      weekResult,
+      productResult,
+      dividerResult,
+      distributorResult,
+      parResult,
+      brandResult,
+      tankResult,
+    ] = await Promise.all([
+      user
+        ? supabase.from("profiles").select("role").eq("id", user.id).maybeSingle()
+        : Promise.resolve({ data: null }),
+      supabase
+        .from("weeks")
+        .select("*")
+        .order("week_start", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from("products")
+        .select("*")
+        .eq("active", true)
+        .order("sort_order", { ascending: true, nullsFirst: false })
+        .order("name"),
+      supabase.from("section_dividers").select("*"),
+      // Same distributor set/order as Distributor Inventory.
+      supabase
+        .from("distributors")
+        .select("*")
+        .eq("active", true)
+        .eq("track_inventory", true)
+        .order("inventory_sort_order", { ascending: true, nullsFirst: false })
+        .order("name"),
+      supabase.from("distributor_par_levels").select("*"),
+      // Tank Allocations — standing, same brand list as Sales > Price List,
+      // independent of the current week.
+      supabase
+        .from("pricing_brands")
+        .select("*")
+        .eq("active", true)
+        .order("sort_order", { ascending: true, nullsFirst: false })
+        .order("name"),
+      supabase.from("tank_allocations").select("*"),
+    ]);
+
+    const profile = profileResult.data;
+    // Section access replaces the old admin-only gate — see
+    // lib/permissions.ts. An admin still always gets in; a Basic user needs
+    // the "build_orders" section granted from Users > Edit.
+    if (profile?.role === "admin") {
+      setIsAdmin(true);
+    } else if (user) {
+      const { data: grant } = await supabase
+        .from("user_section_access")
+        .select("section_key")
+        .eq("user_id", user.id)
+        .eq("section_key", "build_orders")
         .maybeSingle();
-      // Section access replaces the old admin-only gate — see
-      // lib/permissions.ts. An admin still always gets in; a Basic user
-      // needs the "build_orders" section granted from Users > Edit.
-      if (profile?.role === "admin") {
-        setIsAdmin(true);
-      } else {
-        const { data: grant } = await supabase
-          .from("user_section_access")
-          .select("section_key")
-          .eq("user_id", user.id)
-          .eq("section_key", "build_orders")
-          .maybeSingle();
-        setIsAdmin(!!grant);
-      }
+      setIsAdmin(!!grant);
     }
 
-    const { data: weekData } = await supabase
-      .from("weeks")
-      .select("*")
-      .order("week_start", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const weekData = weekResult.data;
     setWeek(weekData as Week | null);
 
-    const { data: productData } = await supabase
-      .from("products")
-      .select("*")
-      .eq("active", true)
-      .order("sort_order", { ascending: true, nullsFirst: false })
-      .order("name");
-    const activeProducts = ((productData as Product[]) ?? []).filter(
+    const activeProducts = ((productResult.data as Product[]) ?? []).filter(
       (p) => derivePackaging(p.name).kind !== "tap_handle",
     );
     setProducts(activeProducts);
 
-    const { data: dividerData } = await supabase
-      .from("section_dividers")
-      .select("*");
-    setDividers((dividerData as SectionDivider[]) ?? []);
+    setDividers((dividerResult.data as SectionDivider[]) ?? []);
+    setDistributors((distributorResult.data as Distributor[]) ?? []);
 
-    // Same distributor set/order as Distributor Inventory.
-    const { data: distributorData } = await supabase
-      .from("distributors")
-      .select("*")
-      .eq("active", true)
-      .eq("track_inventory", true)
-      .order("inventory_sort_order", { ascending: true, nullsFirst: false })
-      .order("name");
-    setDistributors((distributorData as Distributor[]) ?? []);
-
-    const { data: parData } = await supabase
-      .from("distributor_par_levels")
-      .select("*");
     const parMap: Record<string, DistributorParLevel> = {};
-    (parData as DistributorParLevel[] | null)?.forEach((row) => {
+    (parResult.data as DistributorParLevel[] | null)?.forEach((row) => {
       parMap[`${row.product_id}:${row.distributor_id}`] = row;
     });
     setParLevels(parMap);
 
-    // Tank Allocations — standing, same brand list as Sales > Price List,
-    // independent of the current week.
-    const { data: brandData } = await supabase
-      .from("pricing_brands")
-      .select("*")
-      .eq("active", true)
-      .order("sort_order", { ascending: true, nullsFirst: false })
-      .order("name");
-    setBrands((brandData as PricingBrand[]) ?? []);
+    setBrands((brandResult.data as PricingBrand[]) ?? []);
 
-    const { data: tankData } = await supabase
-      .from("tank_allocations")
-      .select("*");
     const tankMap: Record<string, TankAllocation> = {};
-    (tankData as TankAllocation[] | null)?.forEach((row) => {
+    (tankResult.data as TankAllocation[] | null)?.forEach((row) => {
       tankMap[row.brand_id] = row;
     });
     setTankAllocations(tankMap);
@@ -188,13 +197,20 @@ export default function BuildOrdersPage() {
     if (weekData) {
       const week_ = weekData as Week;
 
-      const { data: invData } = await supabase
-        .from("distributor_inventory")
-        .select("product_id, distributor_id, on_hand_qty")
-        .eq("week_id", week_.id);
+      const [invResult, recResult] = await Promise.all([
+        supabase
+          .from("distributor_inventory")
+          .select("product_id, distributor_id, on_hand_qty")
+          .eq("week_id", week_.id),
+        supabase
+          .from("build_order_recommendations")
+          .select("*")
+          .eq("week_id", week_.id),
+      ]);
+
       const onHandMap: Record<string, number> = {};
       (
-        invData as
+        invResult.data as
           | Pick<
               DistributorInventory,
               "product_id" | "distributor_id" | "on_hand_qty"
@@ -205,12 +221,8 @@ export default function BuildOrdersPage() {
       });
       setOnHand(onHandMap);
 
-      const { data: recData } = await supabase
-        .from("build_order_recommendations")
-        .select("*")
-        .eq("week_id", week_.id);
       const recMap: Record<string, BuildOrderRecommendation> = {};
-      (recData as BuildOrderRecommendation[] | null)?.forEach((row) => {
+      (recResult.data as BuildOrderRecommendation[] | null)?.forEach((row) => {
         recMap[`${row.product_id}:${row.distributor_id}`] = row;
       });
       setRecommended(recMap);

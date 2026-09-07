@@ -66,69 +66,74 @@ export default function DistributorInventoryPage() {
     } = await supabase.auth.getUser();
     setUserId(user?.id ?? null);
 
-    if (user) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("role")
-        .eq("id", user.id)
+    // None of these depend on each other — running them together instead of
+    // one at a time (the original pattern) turns ~5 sequential round-trips
+    // to Supabase into 1, which was the main cause of the app feeling slow
+    // switching between sections (Chad, 2026-09-07).
+    const [profileResult, weekResult, productResult, dividerResult, distributorResult] =
+      await Promise.all([
+        user
+          ? supabase.from("profiles").select("role").eq("id", user.id).maybeSingle()
+          : Promise.resolve({ data: null }),
+        supabase
+          .from("weeks")
+          .select("*")
+          .order("week_start", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        // Same product list/order/brand dividers as Inventory & Allocation,
+        // minus tap handles — distributors don't hold tap handle inventory.
+        supabase
+          .from("products")
+          .select("*")
+          .eq("active", true)
+          .order("sort_order", { ascending: true, nullsFirst: false })
+          .order("name"),
+        supabase.from("section_dividers").select("*"),
+        // Ordered by inventory_sort_order (this page's own column order),
+        // NOT the shared sort_order used by Inventory & Allocation /
+        // Purchase Orders / Pricing / Distributor Data.
+        //
+        // Deliberately NOT filtered on `active` — that flag only controls
+        // whether a distributor shows up as a column on Inventory &
+        // Allocation for the current week. A distributor pulled from that
+        // grid (e.g. between weeks) should still show up here and keep
+        // syncing on-hand numbers from Ekos; track_inventory is the only
+        // gate for this page.
+        supabase
+          .from("distributors")
+          .select("*")
+          .eq("track_inventory", true)
+          .order("inventory_sort_order", { ascending: true, nullsFirst: false })
+          .order("name"),
+      ]);
+
+    // Section access replaces the old admin-only gate — see
+    // lib/permissions.ts. An admin still always gets in; a Basic user needs
+    // the "distributor_inventory" section granted from Users > Edit.
+    if (profileResult.data?.role === "admin") {
+      setIsAdmin(true);
+    } else if (user) {
+      const { data: grant } = await supabase
+        .from("user_section_access")
+        .select("section_key")
+        .eq("user_id", user.id)
+        .eq("section_key", "distributor_inventory")
         .maybeSingle();
-      // Section access replaces the old admin-only gate — see
-      // lib/permissions.ts. An admin still always gets in; a Basic user
-      // needs the "distributor_inventory" section granted from Users > Edit.
-      if (profile?.role === "admin") {
-        setIsAdmin(true);
-      } else {
-        const { data: grant } = await supabase
-          .from("user_section_access")
-          .select("section_key")
-          .eq("user_id", user.id)
-          .eq("section_key", "distributor_inventory")
-          .maybeSingle();
-        setIsAdmin(!!grant);
-      }
+      setIsAdmin(!!grant);
     }
 
-    const { data: weekData } = await supabase
-      .from("weeks")
-      .select("*")
-      .order("week_start", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const weekData = weekResult.data;
     setWeek(weekData as Week | null);
 
-    // Same product list/order/brand dividers as Inventory & Allocation,
-    // minus tap handles — distributors don't hold tap handle inventory.
-    const { data: productData } = await supabase
-      .from("products")
-      .select("*")
-      .eq("active", true)
-      .order("sort_order", { ascending: true, nullsFirst: false })
-      .order("name");
     setProducts(
-      ((productData as Product[]) ?? []).filter(
+      ((productResult.data as Product[]) ?? []).filter(
         (p) => derivePackaging(p.name).kind !== "tap_handle"
       )
     );
 
-    const { data: dividerData } = await supabase.from("section_dividers").select("*");
-    setDividers((dividerData as SectionDivider[]) ?? []);
-
-    // Ordered by inventory_sort_order (this page's own column order), NOT
-    // the shared sort_order used by Inventory & Allocation / Purchase
-    // Orders / Pricing / Distributor Data.
-    //
-    // Deliberately NOT filtered on `active` — that flag only controls
-    // whether a distributor shows up as a column on Inventory & Allocation
-    // for the current week. A distributor pulled from that grid (e.g.
-    // between weeks) should still show up here and keep syncing on-hand
-    // numbers from Ekos; track_inventory is the only gate for this page.
-    const { data: distributorData } = await supabase
-      .from("distributors")
-      .select("*")
-      .eq("track_inventory", true)
-      .order("inventory_sort_order", { ascending: true, nullsFirst: false })
-      .order("name");
-    setDistributors((distributorData as Distributor[]) ?? []);
+    setDividers((dividerResult.data as SectionDivider[]) ?? []);
+    setDistributors((distributorResult.data as Distributor[]) ?? []);
 
     if (weekData) {
       const { data: invData } = await supabase
