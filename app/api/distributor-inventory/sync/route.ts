@@ -14,8 +14,11 @@ import { createClient } from "@/lib/supabase/server";
 //
 // Semantics: each entry is upserted into distributor_inventory for the
 // CURRENT week (most recently started) only — this never touches past
-// weeks. A distributor or product name that doesn't match anything active
-// is skipped and reported back in `errors` rather than silently dropped.
+// weeks. A distributor match only requires track_inventory (NOT active —
+// a distributor pulled from this week's Inventory & Allocation grid still
+// syncs its on-hand numbers here); a product match requires active. A
+// name that doesn't match is skipped and reported back in `errors` rather
+// than silently dropped.
 interface SyncEntry {
   distributor: string;
   product: string;
@@ -66,12 +69,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No week has been started yet." }, { status: 400 });
   }
 
+  // Not filtered on `active` here — that flag only controls whether a
+  // distributor shows up as a column on Inventory & Allocation for the
+  // current week. A distributor pulled from that grid should still accept
+  // synced on-hand numbers here; track_inventory is the only gate.
   const [{ data: distributors }, { data: products }] = await Promise.all([
-    supabase
-      .from("distributors")
-      .select("id, name")
-      .eq("active", true)
-      .eq("track_inventory", true),
+    supabase.from("distributors").select("id, name").eq("track_inventory", true),
     supabase.from("products").select("id, name").eq("active", true),
   ]);
 

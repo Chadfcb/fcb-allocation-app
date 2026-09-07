@@ -116,10 +116,15 @@ export default function DistributorInventoryPage() {
     // Ordered by inventory_sort_order (this page's own column order), NOT
     // the shared sort_order used by Inventory & Allocation / Purchase
     // Orders / Pricing / Distributor Data.
+    //
+    // Deliberately NOT filtered on `active` — that flag only controls
+    // whether a distributor shows up as a column on Inventory & Allocation
+    // for the current week. A distributor pulled from that grid (e.g.
+    // between weeks) should still show up here and keep syncing on-hand
+    // numbers from Ekos; track_inventory is the only gate for this page.
     const { data: distributorData } = await supabase
       .from("distributors")
       .select("*")
-      .eq("active", true)
       .eq("track_inventory", true)
       .order("inventory_sort_order", { ascending: true, nullsFirst: false })
       .order("name");
@@ -375,7 +380,7 @@ export default function DistributorInventoryPage() {
             {distributors.length === 0 ? (
               <tr>
                 <td colSpan={1} className="px-3 py-6 text-center text-neutral-500">
-                  No active distributors.
+                  No distributors set up for inventory tracking.
                 </td>
               </tr>
             ) : (
