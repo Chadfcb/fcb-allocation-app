@@ -960,6 +960,45 @@ export default function InventoryPage() {
     }
   }
 
+  // Freezes/unfreezes a distributor's quantity cells for everyone except an
+  // admin — for when the team keeps typing allocation quantities into the
+  // wrong distributor's column and Chad wants specific ones locked down
+  // until he says otherwise (2026-09-08).
+  async function handleToggleDistributorLock(distributorId: string) {
+    if (!userId) return;
+    const existing = distributors.find((d) => d.id === distributorId);
+    if (!existing) return;
+    const newLocked = !existing.allocations_locked;
+
+    setDistributors((prev) =>
+      prev.map((d) => (d.id === distributorId ? { ...d, allocations_locked: newLocked } : d))
+    );
+
+    const { error } = await supabase
+      .from("distributors")
+      .update({ allocations_locked: newLocked })
+      .eq("id", distributorId);
+
+    if (!error) {
+      await logChange(supabase, {
+        weekId: week?.id ?? null,
+        tableName: "distributors",
+        recordId: distributorId,
+        fieldName: "allocations_locked",
+        oldValue: existing.allocations_locked,
+        newValue: newLocked,
+        changedBy: userId,
+      });
+    } else {
+      // Roll the optimistic update back if the write didn't actually happen.
+      setDistributors((prev) =>
+        prev.map((d) =>
+          d.id === distributorId ? { ...d, allocations_locked: existing.allocations_locked } : d
+        )
+      );
+    }
+  }
+
   async function handleMoveDistributor(index: number, direction: "left" | "right") {
     if (!userId) return;
     const targetIndex = direction === "left" ? index - 1 : index + 1;
@@ -2322,7 +2361,31 @@ export default function InventoryPage() {
                     className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right"
                     style={{ color: d.color ?? undefined }}
                   >
-                    {d.name}
+                    <span className="inline-flex items-center justify-end gap-1">
+                      {isAdmin ? (
+                        <button
+                          onClick={() => handleToggleDistributorLock(d.id)}
+                          title={
+                            d.allocations_locked
+                              ? "Locked — only admins can edit this distributor's quantities. Click to unlock."
+                              : "Unlocked — anyone with access can edit. Click to lock to admins only."
+                          }
+                          className="text-xs leading-none opacity-80 hover:opacity-100"
+                        >
+                          {d.allocations_locked ? "🔒" : "🔓"}
+                        </button>
+                      ) : (
+                        d.allocations_locked && (
+                          <span
+                            className="text-xs leading-none"
+                            title="Locked — only admins can edit this distributor's quantities."
+                          >
+                            🔒
+                          </span>
+                        )
+                      )}
+                      {d.name}
+                    </span>
                   </th>
                 )
               )}
@@ -2626,12 +2689,18 @@ export default function InventoryPage() {
                         <div className="relative inline-block">
                           <input
                             type="number"
-                            className="w-16 rounded border border-neutral-700 px-1.5 py-0.5 text-right"
+                            className="w-16 rounded border border-neutral-700 px-1.5 py-0.5 text-right disabled:cursor-not-allowed disabled:opacity-60"
                             style={{
                               backgroundColor: flagColor ?? "#171717",
                               color: flagColor ? "#000000" : "#f5f5f5",
                             }}
                             value={cell?.quantity ?? 0}
+                            disabled={d.allocations_locked && !isAdmin}
+                            title={
+                              d.allocations_locked && !isAdmin
+                                ? "This distributor is locked — ask an admin to unlock it or enter this quantity for you."
+                                : undefined
+                            }
                             onChange={(e) =>
                               handleAllocationChange(p.id, d.id, Number(e.target.value) || 0)
                             }
