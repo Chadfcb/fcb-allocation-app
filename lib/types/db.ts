@@ -40,6 +40,11 @@ export interface Distributor {
   // Column order on the Distributor Inventory page only — independent of
   // `sort_order`, which drives every other page's distributor columns.
   inventory_sort_order: number | null;
+  // When true, only an admin can edit this distributor's quantity cells on
+  // Inventory & Allocation — everyone else sees the column but the input is
+  // disabled. Lets an admin freeze a distributor so the team can't
+  // accidentally type a quantity into the wrong one (Chad, 2026-09-08).
+  allocations_locked: boolean;
 }
 
 export interface Product {
