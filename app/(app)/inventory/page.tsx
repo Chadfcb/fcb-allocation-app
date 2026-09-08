@@ -648,6 +648,18 @@ export default function InventoryPage() {
 
   const grandOrderValue = distributors.reduce((sum, d) => sum + orderValueFor(d.id), 0);
 
+  // While one or more distributors are locked, every OTHER distributor's
+  // column dims and stops accepting input — the point isn't to protect a
+  // locked distributor from being edited, it's to make the locked one(s)
+  // the only thing you can type into, so it's unmistakable which column
+  // you're working in (Chad, 2026-09-08: "make it clear to me his column
+  // is the one I'm editing"). With nothing locked, every column behaves
+  // normally.
+  const anyDistributorLocked = distributors.some((d) => d.allocations_locked);
+  function isDistributorDimmed(d: Distributor) {
+    return anyDistributorLocked && !d.allocations_locked;
+  }
+
   // Total pallets for a distributor's whole order — every product, every
   // brand, not just whatever divider group this happens to be displayed
   // under. See lib/pallets.ts for the keg/can math.
@@ -2358,7 +2370,9 @@ export default function InventoryPage() {
                 ) : (
                   <th
                     key={d.id}
-                    className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right"
+                    className={`sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right ${
+                      isDistributorDimmed(d) ? "opacity-25" : ""
+                    }`}
                     style={{ color: d.color ?? undefined }}
                   >
                     <span className="inline-flex items-center justify-end gap-1">
@@ -2367,8 +2381,8 @@ export default function InventoryPage() {
                           onClick={() => handleToggleDistributorLock(d.id)}
                           title={
                             d.allocations_locked
-                              ? "Locked — only admins can edit this distributor's quantities. Click to unlock."
-                              : "Unlocked — anyone with access can edit. Click to lock to admins only."
+                              ? "Locked for editing — every other distributor is dimmed and locked out until you unlock this one."
+                              : "Click to lock — dims and locks every other distributor so only this one can be edited."
                           }
                           className="text-xs leading-none opacity-80 hover:opacity-100"
                         >
@@ -2378,7 +2392,7 @@ export default function InventoryPage() {
                         d.allocations_locked && (
                           <span
                             className="text-xs leading-none"
-                            title="Locked — only admins can edit this distributor's quantities."
+                            title="Locked for editing right now."
                           >
                             🔒
                           </span>
@@ -2455,7 +2469,9 @@ export default function InventoryPage() {
               {distributors.map((d) => (
                 <th
                   key={d.id}
-                  className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2 text-right font-semibold text-neutral-200"
+                  className={`sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2 text-right font-semibold text-neutral-200 ${
+                    isDistributorDimmed(d) ? "opacity-25" : ""
+                  }`}
                 >
                   {currencyFormatter.format(orderValueFor(d.id))}
                 </th>
@@ -2475,13 +2491,16 @@ export default function InventoryPage() {
               {distributors.map((d) => (
                 <th
                   key={d.id}
-                  className="sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2 text-right"
+                  className={`sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2 text-right ${
+                    isDistributorDimmed(d) ? "opacity-25" : ""
+                  }`}
                 >
                   <input
                     type="text"
                     placeholder="PO #"
-                    className="w-28 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-[11px] font-normal normal-case text-neutral-100"
+                    className="w-28 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-[11px] font-normal normal-case text-neutral-100 disabled:cursor-not-allowed"
                     value={pos[d.id]?.po_number ?? ""}
+                    disabled={isDistributorDimmed(d)}
                     onChange={(e) => handlePoNumberChange(d.id, e.target.value)}
                   />
                 </th>
@@ -2499,14 +2518,17 @@ export default function InventoryPage() {
               {distributors.map((d) => {
                 const status = pos[d.id]?.po_status ?? "";
                 const bgColor = status ? PO_STATUS_COLORS[status] : undefined;
+                const dimmed = isDistributorDimmed(d);
                 return (
                   <th
                     key={d.id}
-                    className="sticky top-[88px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2 text-right"
+                    className={`sticky top-[88px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2 text-right ${
+                      dimmed ? "opacity-25" : ""
+                    }`}
                   >
                     <select
                       value={status}
-                      disabled={!isAdmin}
+                      disabled={!isAdmin || dimmed}
                       onChange={(e) =>
                         handlePoStatusChange(d.id, (e.target.value || null) as PoStatus)
                       }
@@ -2617,7 +2639,9 @@ export default function InventoryPage() {
                         <td
                           key={dist.id}
                           title="Total pallets for this distributor's whole order (kegs + cans, all brands)"
-                          className="px-2 py-1.5 text-right text-xs font-semibold text-neutral-200"
+                          className={`px-2 py-1.5 text-right text-xs font-semibold text-neutral-200 ${
+                            isDistributorDimmed(dist) ? "opacity-25" : ""
+                          }`}
                         >
                           {palletsFor(dist.id)}
                         </td>
@@ -2684,8 +2708,12 @@ export default function InventoryPage() {
                     const cell = allocations[`${p.id}:${d.id}`];
                     const flag = cell?.status_flag ?? null;
                     const flagColor = flag ? STATUS_FLAG_COLORS[flag] : null;
+                    const dimmed = isDistributorDimmed(d);
                     return (
-                      <td key={d.id} className="px-2 py-1.5 text-right">
+                      <td
+                        key={d.id}
+                        className={`px-2 py-1.5 text-right ${dimmed ? "opacity-25" : ""}`}
+                      >
                         <div className="relative inline-block">
                           <input
                             type="number"
@@ -2695,10 +2723,10 @@ export default function InventoryPage() {
                               color: flagColor ? "#000000" : "#f5f5f5",
                             }}
                             value={cell?.quantity ?? 0}
-                            disabled={d.allocations_locked && !isAdmin}
+                            disabled={dimmed}
                             title={
-                              d.allocations_locked && !isAdmin
-                                ? "This distributor is locked — ask an admin to unlock it or enter this quantity for you."
+                              dimmed
+                                ? "Another distributor is locked for editing right now — unlock it to edit this one."
                                 : undefined
                             }
                             onChange={(e) =>
@@ -2710,7 +2738,8 @@ export default function InventoryPage() {
                               the cell itself (the input's background) is what shows the color. */}
                           <select
                             aria-label="Color code this cell"
-                            className="absolute -right-1 -top-1 h-3 w-3 cursor-pointer appearance-none overflow-hidden rounded-full border border-neutral-950 p-0 text-xs leading-none"
+                            disabled={dimmed}
+                            className="absolute -right-1 -top-1 h-3 w-3 cursor-pointer appearance-none overflow-hidden rounded-full border border-neutral-950 p-0 text-xs leading-none disabled:cursor-not-allowed"
                             style={{ backgroundColor: flagColor ?? "#525252" }}
                             value={flag ?? ""}
                             title={flag ? STATUS_FLAG_LABELS[flag] : "Color code this cell"}
