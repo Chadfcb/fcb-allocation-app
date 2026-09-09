@@ -1011,6 +1011,48 @@ export default function InventoryPage() {
     }
   }
 
+  // Marks/unmarks a distributor as one of FCB's real, ongoing distributors —
+  // added 2026-09-09. Completely independent of the weekly active toggle
+  // (a distributor stays flagged Core even in a week it's toggled off).
+  // This is what Finance > Distributor Data reads to decide which
+  // distributors show up there with payment Terms — keeps one-off/direct-
+  // customer rows (e.g. Sjsu) and duplicate-order rows (e.g. "Matagrano 2")
+  // off that page for good, rather than depending on which distributors
+  // happen to be active this particular week.
+  async function handleToggleCoreDistributor(distributorId: string) {
+    if (!userId) return;
+    const existing = distributors.find((d) => d.id === distributorId);
+    if (!existing) return;
+    const newCore = !existing.is_core_distributor;
+
+    setDistributors((prev) =>
+      prev.map((d) => (d.id === distributorId ? { ...d, is_core_distributor: newCore } : d))
+    );
+
+    const { error } = await supabase
+      .from("distributors")
+      .update({ is_core_distributor: newCore })
+      .eq("id", distributorId);
+
+    if (!error) {
+      await logChange(supabase, {
+        weekId: week?.id ?? null,
+        tableName: "distributors",
+        recordId: distributorId,
+        fieldName: "is_core_distributor",
+        oldValue: existing.is_core_distributor,
+        newValue: newCore,
+        changedBy: userId,
+      });
+    } else {
+      setDistributors((prev) =>
+        prev.map((d) =>
+          d.id === distributorId ? { ...d, is_core_distributor: existing.is_core_distributor } : d
+        )
+      );
+    }
+  }
+
   async function handleMoveDistributor(index: number, direction: "left" | "right") {
     if (!userId) return;
     const targetIndex = direction === "left" ? index - 1 : index + 1;
@@ -2435,6 +2477,18 @@ export default function InventoryPage() {
                           </option>
                         ))}
                       </select>
+                      <label
+                        className="flex shrink-0 items-center gap-0.5 text-[9px] leading-none text-neutral-500"
+                        title="Core distributor — one of FCB's real, ongoing distributors. Drives Finance > Distributor Data (only Core distributors show up there with payment Terms). Independent of whether this distributor is toggled active for this week."
+                      >
+                        <input
+                          type="checkbox"
+                          checked={d.is_core_distributor}
+                          onChange={() => handleToggleCoreDistributor(d.id)}
+                          className="h-3 w-3"
+                        />
+                        Core
+                      </label>
                       <button
                         onClick={() => handleArchiveDistributor(d.id)}
                         disabled={savingKey === `archive-distributor:${d.id}`}

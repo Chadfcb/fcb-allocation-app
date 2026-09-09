@@ -9,12 +9,21 @@
 // This page is also just the home for whatever other distributor-level
 // finance data comes up later; it doesn't need to stay just Terms.
 //
-// Shows EVERY distributor on file, not just `active` ones — fixed
-// 2026-09-09 per Chad's correction. `active` is the weekly toggle for
-// who's currently shown on the Inventory & Allocations grid (who FCB is
-// delivering to that particular week) — a distributor's payment Terms is
-// a property of the distributor itself, not of any one week, so it needs
-// to stay visible/editable here even in a week they're toggled off.
+// Shows only CORE distributors — `distributors.is_core_distributor`,
+// added 2026-09-09 (see sql/distributors_core_flag.sql). Filtering on
+// `active` (tried first, then corrected) was wrong twice over: `active`
+// is the WEEKLY on/off toggle for who's currently shown on the Inventory
+// & Allocation grid (who FCB is delivering to that particular week), so
+// filtering by it either hid real distributors toggled off for the week
+// (Coast, Valleywide) or, with no filter at all, brought back rows that
+// should never appear here — a one-off/direct-customer entry like Sjsu,
+// or leftover junk like a dropped distributor (Saccani) or a duplicate
+// order entry against the same distributor ("Matagrano 2"). Chad named
+// the real, ongoing roster explicitly (2026-09-09): Matagrano, Markstein,
+// Valley Wide, Coast, Guardian, Mussetter, Superior — is_core_distributor
+// is what's actually true for exactly those, independent of any week's
+// active toggle, and is only ever changed by hand (the "Core" checkbox in
+// Inventory & Allocation's Edit Distributors mode).
 //
 // Live via Supabase Realtime, same as the rest of the app.
 
@@ -38,6 +47,7 @@ export default function DistributorDataPageClient() {
     const { data } = await supabase
       .from("distributors")
       .select("*")
+      .eq("is_core_distributor", true)
       .order("sort_order", { ascending: true, nullsFirst: false })
       .order("name");
     setDistributors((data as Distributor[]) ?? []);
@@ -99,9 +109,10 @@ export default function DistributorDataPageClient() {
       <div>
         <h1 className="text-lg font-semibold text-neutral-100">Distributor Data</h1>
         <p className="text-sm text-neutral-400">
-          Each distributor&apos;s payment terms — how many days after a delivered order&apos;s
-          Delivery Date its revenue actually lands, on the Cash Flow Dashboard. 0 means due on
-          delivery.
+          Each core distributor&apos;s payment terms — how many days after a delivered
+          order&apos;s Delivery Date its revenue actually lands, on the Cash Flow Dashboard. 0
+          means due on delivery. Only distributors flagged &quot;Core&quot; on Inventory &amp;
+          Allocation show up here.
         </p>
       </div>
 
@@ -123,7 +134,8 @@ export default function DistributorDataPageClient() {
             ) : distributors.length === 0 ? (
               <tr>
                 <td colSpan={2} className="px-3 py-6 text-center text-neutral-500">
-                  No distributors on file.
+                  No distributors flagged as Core yet — flip the "Core" checkbox for a
+                  distributor in Inventory & Allocation's Edit Distributors mode.
                 </td>
               </tr>
             ) : (

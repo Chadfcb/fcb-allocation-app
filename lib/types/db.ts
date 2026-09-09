@@ -62,6 +62,17 @@ export interface Distributor {
   // this decides which week that order's revenue lands in on the Cash
   // Flow Dashboard.
   payment_terms_days: number;
+  // True only for FCB's real, ongoing distributors (Matagrano, Markstein,
+  // Valley Wide, Coast, Guardian, Mussetter, Superior, as of 2026-09-09) —
+  // set by hand via the "Core" checkbox in Inventory & Allocation's Edit
+  // Distributors mode. Completely independent of `active` (the weekly
+  // on/off toggle for who's on this week's Inventory grid) and
+  // `track_inventory` above. Drives Finance > Distributor Data: a
+  // distributor only shows there, and can only carry payment Terms, when
+  // this is true — keeps one-off/direct-customer rows (e.g. Sjsu) and
+  // duplicate-order rows (e.g. "Matagrano 2") off that page for good,
+  // regardless of any given week's active toggle.
+  is_core_distributor: boolean;
 }
 
 export interface Product {
