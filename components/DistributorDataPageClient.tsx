@@ -9,6 +9,13 @@
 // This page is also just the home for whatever other distributor-level
 // finance data comes up later; it doesn't need to stay just Terms.
 //
+// Shows EVERY distributor on file, not just `active` ones — fixed
+// 2026-09-09 per Chad's correction. `active` is the weekly toggle for
+// who's currently shown on the Inventory & Allocations grid (who FCB is
+// delivering to that particular week) — a distributor's payment Terms is
+// a property of the distributor itself, not of any one week, so it needs
+// to stay visible/editable here even in a week they're toggled off.
+//
 // Live via Supabase Realtime, same as the rest of the app.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -31,7 +38,6 @@ export default function DistributorDataPageClient() {
     const { data } = await supabase
       .from("distributors")
       .select("*")
-      .eq("active", true)
       .order("sort_order", { ascending: true, nullsFirst: false })
       .order("name");
     setDistributors((data as Distributor[]) ?? []);
@@ -117,7 +123,7 @@ export default function DistributorDataPageClient() {
             ) : distributors.length === 0 ? (
               <tr>
                 <td colSpan={2} className="px-3 py-6 text-center text-neutral-500">
-                  No active distributors.
+                  No distributors on file.
                 </td>
               </tr>
             ) : (
