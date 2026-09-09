@@ -18,8 +18,9 @@
 //   the spreadsheet — the current week (the most recent real week on
 //   file, highlighted with a ★, matching the spreadsheet's own Wk37 ★),
 //   the previous 3 real weeks before it, then extended forward with
-//   placeholder weeks out to 18 months (no real data exists for those yet
-//   — same "—" placeholder treatment as the Timing Summary below).
+//   placeholder weeks out to 18 months (no real Revenue data exists for
+//   those yet — but Expenses CAN land there, see below).
+//
 //   CASH FLOW TIMING SUMMARY — a weekly-rows table (Week Start / Cash In /
 //                    Cumulative In / Cash Out / Cumulative Out / Net Cash)
 //                    running 18 months out (not 13 weeks — Chad's boss Art
@@ -33,13 +34,30 @@
 //                    batches, distributor terms, etc. — the Brew Planner
 //                    work).
 //
-// Revenue In / Expenses Out / Net / Running Total ARE wired to real data:
-//   - Revenue: for every week a distributor's PO is marked Delivered, the
-//     same Order Value math (quantity × that distributor's price, summed
-//     across every product) the Inventory & Allocation page itself uses.
-//   - Expenses: purchase_orders.total_cost, bucketed into whichever week
-//     each PO's po_date falls in, grouped by supplier (the spreadsheet's
-//     "vendor" rows).
+// Revenue In IS wired to real data: for every week a distributor's PO is
+// marked Delivered, the same Order Value math (quantity × that
+// distributor's price, summed across every product) the Inventory &
+// Allocation page itself uses.
+//
+// Expenses Out — bucketing rule, added 2026-09-09 (this used to just be
+// po_date for every PO, regardless of paid/pending):
+//   - A Paid PO lands in whichever week its Paid Date falls in (the date
+//     it was actually marked Paid on the Open Purchase Orders page — see
+//     PurchaseOrdersPageClient.tsx).
+//   - A Pending PO lands in its PO Date's week — UNLESS that week has
+//     already passed, in which case it automatically rolls forward into
+//     the CURRENT real-world week instead (computed live off today's
+//     actual date every time this page loads; nothing manual, and
+//     completely independent of the "Start New Week" button on the
+//     Inventory side). It keeps effectively "riding along" in the current
+//     week until it's marked Paid.
+//   - Every dollar figure carries a small color marker matching the Open
+//     Purchase Orders page's own Paid/Pending colors (PO_PAYMENT_STATUS_
+//     COLORS). A vendor/week cell with both paid and pending POs in it
+//     splits into two stacked amounts instead of one combined total.
+//   - Net Cash Flow / Running Total still combine paid + pending (same as
+//     before this change) — only the Expenses Out grid's own display
+//     splits them apart.
 //
 // Access to the tables this reads (allocations, distributor_pos,
 // purchase_orders) is granted either by their own usual section
@@ -47,8 +65,9 @@
 // (see sql/is_super_admin.sql) — so this works standalone for someone who
 // has ONLY been granted Finance.
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { PO_PAYMENT_STATUS_COLORS } from "@/lib/types/db";
 
 interface WeekRow {
   id: string;
@@ -61,6 +80,28 @@ interface DistributorRow {
   name: string;
 }
 
+interface PoRow {
+  supplier: string;
+  po_date: string | null;
+  total_cost: number | null;
+  payment_status: string;
+  paid_date: string | null;
+}
+
+interface GridColumn {
+  key: string;
+  weekId: string | null; // null for a placeholder future week
+  dateIso: string;
+  topLabel: string;
+  isCurrent: boolean;
+  isPlaceholder: boolean;
+}
+
+interface ExpenseAmounts {
+  paid: number;
+  pending: number;
+}
+
 const currency = new Intl.NumberFormat("en-US", {
   style: "currency",
   currency: "USD",
@@ -71,6 +112,35 @@ function Money({ value, className = "" }: { value: number; className?: string })
   if (value === 0) return <span className="text-neutral-600">—</span>;
   return (
     <span className={`${value < 0 ? "text-red-400" : ""} ${className}`}>{currency.format(value)}</span>
+  );
+}
+
+function ExpenseDot({ color }: { color: string }) {
+  return <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />;
+}
+
+// Paid amount (green dot) stacked over pending amount (orange dot) —
+// matching the Open Purchase Orders page's own Paid/Pending colors. Shows
+// just one line when a cell is entirely one or the other, "—" when both
+// are zero.
+function ExpenseCell({ amounts }: { amounts: ExpenseAmounts }) {
+  const { paid, pending } = amounts;
+  if (paid === 0 && pending === 0) return <span className="text-neutral-600">—</span>;
+  return (
+    <div className="flex flex-col items-end gap-0.5">
+      {paid !== 0 && (
+        <span className="flex items-center gap-1 text-neutral-200">
+          <ExpenseDot color={PO_PAYMENT_STATUS_COLORS.paid} />
+          {currency.format(paid)}
+        </span>
+      )}
+      {pending !== 0 && (
+        <span className="flex items-center gap-1 text-neutral-200">
+          <ExpenseDot color={PO_PAYMENT_STATUS_COLORS.pending} />
+          {currency.format(pending)}
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -96,6 +166,24 @@ function buildTimingSummaryWeeks(mostRecentWeekStart: string | null): string[] {
   return dates;
 }
 
+// Finds which column's weekly window a date falls into — a column's
+// window runs from its own date up to (but not including) the next
+// column's date, or +7 days for the very last column. Used both to bucket
+// a PO by its own date AND to find "today's column" for rolling pending
+// POs forward. Dates before the first column or after the last one clamp
+// to that end, so this never returns an out-of-range index.
+function columnIndexForDate(columns: { dateIso: string }[], dateIso: string): number {
+  const d = new Date(dateIso).getTime();
+  for (let i = 0; i < columns.length; i++) {
+    const start = new Date(columns[i].dateIso).getTime();
+    const end =
+      i + 1 < columns.length ? new Date(columns[i + 1].dateIso).getTime() : start + 7 * 24 * 60 * 60 * 1000;
+    if (d >= start && d < end) return i;
+  }
+  if (columns.length === 0) return -1;
+  return d < new Date(columns[0].dateIso).getTime() ? 0 : columns.length - 1;
+}
+
 export default function CashflowDashboardPageClient() {
   const [supabase] = useState(() => createClient());
   const [loading, setLoading] = useState(true);
@@ -104,8 +192,7 @@ export default function CashflowDashboardPageClient() {
   const [weeks, setWeeks] = useState<WeekRow[]>([]);
   const [distributors, setDistributors] = useState<DistributorRow[]>([]);
   const [revenueGrid, setRevenueGrid] = useState<Map<string, Map<string, number>>>(new Map());
-  const [vendors, setVendors] = useState<string[]>([]);
-  const [expenseGrid, setExpenseGrid] = useState<Map<string, Map<string, number>>>(new Map());
+  const [purchaseOrderRows, setPurchaseOrderRows] = useState<PoRow[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -131,7 +218,9 @@ export default function CashflowDashboardPageClient() {
           supabase.from("distributor_pos").select("week_id, distributor_id, po_status"),
           supabase.from("allocations").select("week_id, distributor_id, product_id, quantity"),
           supabase.from("distributor_prices").select("distributor_id, product_id, price"),
-          supabase.from("purchase_orders").select("supplier, po_date, total_cost"),
+          supabase
+            .from("purchase_orders")
+            .select("supplier, po_date, total_cost, payment_status, paid_date"),
         ]);
 
         const firstError = weeksErr ?? distErr ?? dposErr ?? allocErr ?? pricesErr ?? poErr;
@@ -170,47 +259,10 @@ export default function CashflowDashboardPageClient() {
           revGrid.set(d.id, byWeek);
         }
 
-        // --- Expenses Out: vendor (supplier) x week, by po_date ---
-        const vendorNames = Array.from(
-          new Set((purchaseOrders ?? []).map((po) => po.supplier).filter(Boolean)),
-        ).sort((a, b) => a.localeCompare(b));
-
-        // Bucket each PO into whichever week its po_date falls in — a
-        // week's window is [week_start, next week's week_start), or
-        // [week_start, week_start+7d) for the very last week on file.
-        function weekIdForDate(dateStr: string | null): string | null {
-          if (!dateStr) return null;
-          const d = new Date(dateStr).getTime();
-          for (let i = 0; i < weekRows.length; i++) {
-            const start = new Date(weekRows[i].week_start).getTime();
-            const end =
-              i + 1 < weekRows.length
-                ? new Date(weekRows[i + 1].week_start).getTime()
-                : start + 7 * 24 * 60 * 60 * 1000;
-            if (d >= start && d < end) return weekRows[i].id;
-          }
-          return null;
-        }
-
-        const expGrid = new Map<string, Map<string, number>>();
-        for (const vendor of vendorNames) {
-          const byWeek = new Map<string, number>();
-          for (const w of weekRows) byWeek.set(w.id, 0);
-          expGrid.set(vendor, byWeek);
-        }
-        for (const po of purchaseOrders ?? []) {
-          const weekId = weekIdForDate(po.po_date);
-          if (!weekId) continue;
-          const byWeek = expGrid.get(po.supplier);
-          if (!byWeek) continue;
-          byWeek.set(weekId, (byWeek.get(weekId) ?? 0) + (po.total_cost ?? 0));
-        }
-
         setWeeks(weekRows);
         setDistributors(distributorRows);
         setRevenueGrid(revGrid);
-        setVendors(vendorNames);
-        setExpenseGrid(expGrid);
+        setPurchaseOrderRows((purchaseOrders ?? []) as PoRow[]);
       } catch (err) {
         if (!cancelled) {
           setErrorMsg(
@@ -238,34 +290,6 @@ export default function CashflowDashboardPageClient() {
     return totals;
   }, [weeks, revenueGrid]);
 
-  const totalExpensesByWeek = useMemo(() => {
-    const totals = new Map<string, number>();
-    for (const w of weeks) {
-      let sum = 0;
-      for (const byWeek of expenseGrid.values()) sum += byWeek.get(w.id) ?? 0;
-      totals.set(w.id, sum);
-    }
-    return totals;
-  }, [weeks, expenseGrid]);
-
-  const netByWeek = useMemo(() => {
-    const net = new Map<string, number>();
-    for (const w of weeks) {
-      net.set(w.id, (totalRevenueByWeek.get(w.id) ?? 0) - (totalExpensesByWeek.get(w.id) ?? 0));
-    }
-    return net;
-  }, [weeks, totalRevenueByWeek, totalExpensesByWeek]);
-
-  const runningTotalByWeek = useMemo(() => {
-    const running = new Map<string, number>();
-    let cumulative = 0;
-    for (const w of weeks) {
-      cumulative += netByWeek.get(w.id) ?? 0;
-      running.set(w.id, cumulative);
-    }
-    return running;
-  }, [weeks, netByWeek]);
-
   const timingWeeks = useMemo(
     () => buildTimingSummaryWeeks(weeks.length ? weeks[weeks.length - 1].week_start : null),
     [weeks],
@@ -276,15 +300,6 @@ export default function CashflowDashboardPageClient() {
   // previous 3 real weeks, then the same 18-month run of placeholder
   // future weeks used below for the Timing Summary — built like the
   // spreadsheet, current week highlighted, extended out per Chad/Art.
-  interface GridColumn {
-    key: string;
-    weekId: string | null; // null for a placeholder future week
-    dateIso: string;
-    topLabel: string;
-    isCurrent: boolean;
-    isPlaceholder: boolean;
-  }
-
   const displayColumns = useMemo<GridColumn[]>(() => {
     const currentWeekId = weeks.length ? weeks[weeks.length - 1].id : null;
     const realCols: GridColumn[] = weeks.slice(Math.max(0, weeks.length - 4)).map((w) => ({
@@ -306,40 +321,104 @@ export default function CashflowDashboardPageClient() {
     return [...realCols, ...placeholderCols];
   }, [weeks, timingWeeks]);
 
-  const lastRealRunningTotal = weeks.length ? runningTotalByWeek.get(weeks[weeks.length - 1].id) ?? 0 : 0;
+  // --- Expenses Out: vendor x column, paid/pending split, with pending
+  // POs whose own week has passed rolling forward to the current
+  // real-world week (see file header comment for the full rule). ---
+  const vendors = useMemo(
+    () =>
+      Array.from(new Set(purchaseOrderRows.map((po) => po.supplier).filter(Boolean))).sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [purchaseOrderRows],
+  );
 
-  function revenueCell(distributorId: string, col: GridColumn): number {
-    if (col.isPlaceholder || !col.weekId) return 0;
-    return revenueGrid.get(distributorId)?.get(col.weekId) ?? 0;
-  }
-  function expenseCell(vendor: string, col: GridColumn): number {
-    if (col.isPlaceholder || !col.weekId) return 0;
-    return expenseGrid.get(vendor)?.get(col.weekId) ?? 0;
-  }
-  function totalRevenueCell(col: GridColumn): number {
-    if (col.isPlaceholder || !col.weekId) return 0;
-    return totalRevenueByWeek.get(col.weekId) ?? 0;
-  }
-  function totalExpenseCell(col: GridColumn): number {
-    if (col.isPlaceholder || !col.weekId) return 0;
-    return totalExpensesByWeek.get(col.weekId) ?? 0;
-  }
-  function netCell(col: GridColumn): number {
-    if (col.isPlaceholder || !col.weekId) return 0;
-    return netByWeek.get(col.weekId) ?? 0;
-  }
-  function runningTotalCell(col: GridColumn): number {
-    if (!col.isPlaceholder && col.weekId) return runningTotalByWeek.get(col.weekId) ?? 0;
-    // Placeholder future weeks: carry the last real cumulative total flat
-    // until this is wired to a real forward-looking projection.
-    return lastRealRunningTotal;
-  }
+  const expenseGrid = useMemo(() => {
+    const grid = new Map<string, Map<string, ExpenseAmounts>>();
+    for (const vendor of vendors) {
+      const byCol = new Map<string, ExpenseAmounts>();
+      for (const col of displayColumns) byCol.set(col.key, { paid: 0, pending: 0 });
+      grid.set(vendor, byCol);
+    }
+    if (displayColumns.length === 0) return grid;
+
+    const todayColIndex = columnIndexForDate(displayColumns, new Date().toISOString());
+
+    for (const po of purchaseOrderRows) {
+      const byCol = grid.get(po.supplier);
+      if (!byCol) continue;
+      const isPaid = po.payment_status === "paid";
+      const targetDate = isPaid ? po.paid_date ?? po.po_date : po.po_date;
+      if (!targetDate) continue;
+
+      let colIndex = columnIndexForDate(displayColumns, targetDate);
+      if (!isPaid && todayColIndex >= 0 && colIndex < todayColIndex) colIndex = todayColIndex;
+      const col = displayColumns[colIndex];
+      if (!col) continue;
+
+      const amounts = byCol.get(col.key) ?? { paid: 0, pending: 0 };
+      const amount = po.total_cost ?? 0;
+      if (isPaid) amounts.paid += amount;
+      else amounts.pending += amount;
+      byCol.set(col.key, amounts);
+    }
+    return grid;
+  }, [vendors, displayColumns, purchaseOrderRows]);
+
+  // Per-column revenue / expense / net / running totals — a single pass so
+  // Running Total is a genuine cumulative sum across the WHOLE column
+  // range (real weeks AND placeholder weeks), since a rolled-forward
+  // pending expense can now legitimately land in a placeholder column.
+  const columnTotals = useMemo(() => {
+    let cumulative = 0;
+    return displayColumns.map((col) => {
+      const revenue = col.weekId ? totalRevenueByWeek.get(col.weekId) ?? 0 : 0;
+      let expensePaid = 0;
+      let expensePending = 0;
+      for (const byCol of expenseGrid.values()) {
+        const amounts = byCol.get(col.key);
+        if (amounts) {
+          expensePaid += amounts.paid;
+          expensePending += amounts.pending;
+        }
+      }
+      const net = revenue - (expensePaid + expensePending);
+      cumulative += net;
+      return { key: col.key, revenue, expensePaid, expensePending, net, runningTotal: cumulative };
+    });
+  }, [displayColumns, expenseGrid, totalRevenueByWeek]);
+
+  const columnTotalsByKey = useMemo(() => new Map(columnTotals.map((c) => [c.key, c])), [columnTotals]);
 
   const rowLabelCellClass =
     "sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 text-left text-neutral-300";
   const weekHeaderCellClass =
     "sticky top-0 z-10 whitespace-nowrap bg-neutral-900 px-3 py-1.5 text-right text-xs font-semibold uppercase tracking-wide text-neutral-400";
   const valueCellClass = "whitespace-nowrap px-3 py-1.5 text-right text-neutral-200";
+
+  function renderColumnHeader(col: GridColumn, compact = false) {
+    return (
+      <th
+        key={col.key}
+        className={`${weekHeaderCellClass} ${col.isCurrent ? "bg-[#6ABC46]/10 text-[#6ABC46]" : ""} ${col.isPlaceholder ? "text-neutral-600" : ""}`}
+      >
+        {col.isPlaceholder ? (
+          shortDate(col.dateIso)
+        ) : compact ? (
+          <>
+            {col.topLabel}
+            {col.isCurrent && <span className="ml-1">★</span>}
+          </>
+        ) : (
+          <>
+            {col.topLabel}
+            {col.isCurrent && <span className="ml-1">★</span>}
+            <br />
+            <span className="font-normal normal-case text-neutral-500">{shortDate(col.dateIso)}</span>
+          </>
+        )}
+      </th>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -375,23 +454,7 @@ export default function CashflowDashboardPageClient() {
                 <thead>
                   <tr>
                     <th className={`${weekHeaderCellClass} sticky left-0 z-20 text-left`}>Distributor</th>
-                    {displayColumns.map((col) => (
-                      <th
-                        key={col.key}
-                        className={`${weekHeaderCellClass} ${col.isCurrent ? "bg-[#6ABC46]/10 text-[#6ABC46]" : ""} ${col.isPlaceholder ? "text-neutral-600" : ""}`}
-                      >
-                        {col.isPlaceholder ? (
-                          shortDate(col.dateIso)
-                        ) : (
-                          <>
-                            {col.topLabel}
-                            {col.isCurrent && <span className="ml-1">★</span>}
-                            <br />
-                            <span className="font-normal normal-case text-neutral-500">{shortDate(col.dateIso)}</span>
-                          </>
-                        )}
-                      </th>
-                    ))}
+                    {displayColumns.map((col) => renderColumnHeader(col))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-900">
@@ -400,7 +463,7 @@ export default function CashflowDashboardPageClient() {
                       <td className={rowLabelCellClass}>{d.name}</td>
                       {displayColumns.map((col) => (
                         <td key={col.key} className={valueCellClass}>
-                          <Money value={revenueCell(d.id, col)} />
+                          <Money value={col.weekId ? revenueGrid.get(d.id)?.get(col.weekId) ?? 0 : 0} />
                         </td>
                       ))}
                     </tr>
@@ -409,7 +472,10 @@ export default function CashflowDashboardPageClient() {
                     <td className={`${rowLabelCellClass} bg-neutral-900`}>Total Revenue</td>
                     {displayColumns.map((col) => (
                       <td key={col.key} className={`${valueCellClass} bg-neutral-900`}>
-                        <Money value={totalRevenueCell(col)} className="text-[#6ABC46]" />
+                        <Money
+                          value={columnTotalsByKey.get(col.key)?.revenue ?? 0}
+                          className="text-[#6ABC46]"
+                        />
                       </td>
                     ))}
                   </tr>
@@ -421,30 +487,23 @@ export default function CashflowDashboardPageClient() {
           <div className="rounded-lg border border-neutral-800 bg-neutral-950">
             <div className="border-b border-neutral-900 px-4 py-3">
               <h2 className="text-sm font-semibold text-neutral-100">Expenses Out</h2>
-              <p className="text-xs text-neutral-500">Vendor purchase orders, bucketed by PO date</p>
+              <p className="text-xs text-neutral-500">
+                Paid POs land in the week they were paid; pending POs land in their PO-date week,
+                rolling forward to the current week once that&apos;s passed.{" "}
+                <span className="inline-flex items-center gap-1">
+                  <ExpenseDot color={PO_PAYMENT_STATUS_COLORS.paid} /> Paid
+                </span>{" "}
+                <span className="inline-flex items-center gap-1">
+                  <ExpenseDot color={PO_PAYMENT_STATUS_COLORS.pending} /> Pending
+                </span>
+              </p>
             </div>
             <div className="max-h-[420px] overflow-auto">
               <table className="min-w-full border-collapse text-sm">
                 <thead>
                   <tr>
                     <th className={`${weekHeaderCellClass} sticky left-0 z-20 text-left`}>Vendor</th>
-                    {displayColumns.map((col) => (
-                      <th
-                        key={col.key}
-                        className={`${weekHeaderCellClass} ${col.isCurrent ? "bg-[#6ABC46]/10 text-[#6ABC46]" : ""} ${col.isPlaceholder ? "text-neutral-600" : ""}`}
-                      >
-                        {col.isPlaceholder ? (
-                          shortDate(col.dateIso)
-                        ) : (
-                          <>
-                            {col.topLabel}
-                            {col.isCurrent && <span className="ml-1">★</span>}
-                            <br />
-                            <span className="font-normal normal-case text-neutral-500">{shortDate(col.dateIso)}</span>
-                          </>
-                        )}
-                      </th>
-                    ))}
+                    {displayColumns.map((col) => renderColumnHeader(col))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-900">
@@ -460,7 +519,9 @@ export default function CashflowDashboardPageClient() {
                         <td className={rowLabelCellClass}>{vendor}</td>
                         {displayColumns.map((col) => (
                           <td key={col.key} className={valueCellClass}>
-                            <Money value={expenseCell(vendor, col)} />
+                            <ExpenseCell
+                              amounts={expenseGrid.get(vendor)?.get(col.key) ?? { paid: 0, pending: 0 }}
+                            />
                           </td>
                         ))}
                       </tr>
@@ -468,11 +529,19 @@ export default function CashflowDashboardPageClient() {
                   )}
                   <tr className="border-t-2 border-neutral-800 font-semibold text-neutral-100">
                     <td className={`${rowLabelCellClass} bg-neutral-900`}>Total Expenses</td>
-                    {displayColumns.map((col) => (
-                      <td key={col.key} className={`${valueCellClass} bg-neutral-900`}>
-                        <Money value={totalExpenseCell(col)} />
-                      </td>
-                    ))}
+                    {displayColumns.map((col) => {
+                      const totals = columnTotalsByKey.get(col.key);
+                      return (
+                        <td key={col.key} className={`${valueCellClass} bg-neutral-900`}>
+                          <ExpenseCell
+                            amounts={{
+                              paid: totals?.expensePaid ?? 0,
+                              pending: totals?.expensePending ?? 0,
+                            }}
+                          />
+                        </td>
+                      );
+                    })}
                   </tr>
                 </tbody>
               </table>
@@ -485,19 +554,7 @@ export default function CashflowDashboardPageClient() {
                 <thead>
                   <tr>
                     <th className={`${weekHeaderCellClass} sticky left-0 z-20 text-left`}></th>
-                    {displayColumns.map((col) => (
-                      <th
-                        key={col.key}
-                        className={`${weekHeaderCellClass} ${col.isCurrent ? "bg-[#6ABC46]/10 text-[#6ABC46]" : ""} ${col.isPlaceholder ? "text-neutral-600" : ""}`}
-                      >
-                        {col.isPlaceholder ? shortDate(col.dateIso) : (
-                          <>
-                            {col.topLabel}
-                            {col.isCurrent && <span className="ml-1">★</span>}
-                          </>
-                        )}
-                      </th>
-                    ))}
+                    {displayColumns.map((col) => renderColumnHeader(col, true))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-900">
@@ -505,7 +562,7 @@ export default function CashflowDashboardPageClient() {
                     <td className={rowLabelCellClass}>Net Cash Flow</td>
                     {displayColumns.map((col) => (
                       <td key={col.key} className={valueCellClass}>
-                        <Money value={netCell(col)} className="text-[#6ABC46]" />
+                        <Money value={columnTotalsByKey.get(col.key)?.net ?? 0} className="text-[#6ABC46]" />
                       </td>
                     ))}
                   </tr>
@@ -513,7 +570,10 @@ export default function CashflowDashboardPageClient() {
                     <td className={rowLabelCellClass}>Running Total</td>
                     {displayColumns.map((col) => (
                       <td key={col.key} className={valueCellClass}>
-                        <Money value={runningTotalCell(col)} className="text-[#6ABC46]" />
+                        <Money
+                          value={columnTotalsByKey.get(col.key)?.runningTotal ?? 0}
+                          className="text-[#6ABC46]"
+                        />
                       </td>
                     ))}
                   </tr>

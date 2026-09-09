@@ -9,12 +9,18 @@ import { createClient } from "@/lib/supabase/server";
 // items), and posts it here — mirroring manual data entry through the
 // site's own fields rather than a raw database write from outside the app.
 //
-// Semantics: this REPLACES the purchase_orders table's contents with
-// whatever's in the payload. Any PO not the payload gets deleted (it's no
-// longer open in Ekos — closed, received, or otherwise resolved since the
-// last sync); every PO in the payload is upserted by its Ekos PO number,
-// with its line items fully replaced each time so they always match
-// whatever's currently on the PO in Ekos.
+// Semantics (updated 2026-09-09): a PO currently marked 'open' that's no
+// longer in the payload moves to 'holding' instead of being deleted — it's
+// no longer open in Ekos (closed, received, or otherwise resolved since the
+// last sync), but nothing gets removed automatically anymore; a person
+// decides from the Holding section whether to delete it for real or mark
+// it Completed. Every PO in the payload is upserted by its Ekos PO number
+// and always set back to 'open' (so a PO that had drifted into Holding or
+// Completed and shows back up as open in Ekos returns to Open
+// automatically), with its line items fully replaced each time so they
+// always match whatever's currently on the PO in Ekos. A PO already
+// sitting in Holding or Completed is left alone if it's simply missing
+// from the payload — that's expected, not a new event.
 interface SyncItem {
   itemName: string;
   quantity: number | null;
@@ -70,16 +76,21 @@ export async function POST(req: NextRequest) {
     .map((po) => po.ekosPoNumber?.trim())
     .filter((n): n is string => Boolean(n));
 
-  // Remove POs that are no longer open in Ekos.
-  const { data: existing } = await supabase.from("purchase_orders").select("id, ekos_po_number");
-  const toRemove = (existing ?? []).filter((row) => !incomingNumbers.includes(row.ekos_po_number));
-  if (toRemove.length > 0) {
+  // Move POs that are no longer open in Ekos into Holding — only ones
+  // currently 'open'; a PO already sitting in Holding or Completed is left
+  // alone even if it's still missing from this sync.
+  const { data: existingOpen } = await supabase
+    .from("purchase_orders")
+    .select("id, ekos_po_number")
+    .eq("record_status", "open");
+  const toHold = (existingOpen ?? []).filter((row) => !incomingNumbers.includes(row.ekos_po_number));
+  if (toHold.length > 0) {
     await supabase
       .from("purchase_orders")
-      .delete()
+      .update({ record_status: "holding" })
       .in(
         "id",
-        toRemove.map((r) => r.id)
+        toHold.map((r) => r.id)
       );
   }
 
@@ -107,6 +118,9 @@ export async function POST(req: NextRequest) {
           ekos_last_modified_by: po.ekosLastModifiedBy ?? null,
           synced_by: user.id,
           synced_at: new Date().toISOString(),
+          // Always back to 'open' — handles a PO that had drifted into
+          // Holding or Completed and is open in Ekos again.
+          record_status: "open",
         },
         { onConflict: "ekos_po_number" }
       )
@@ -145,7 +159,7 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     syncedCount,
-    removedCount: toRemove.length,
+    movedToHoldingCount: toHold.length,
     errors,
   });
 }

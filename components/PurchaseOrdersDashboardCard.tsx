@@ -33,9 +33,12 @@ export default function PurchaseOrdersDashboardCard() {
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
+    // Holding/Completed POs (added 2026-09-09) stay out of this card —
+    // it's specifically "what's currently open," matching its own title.
     const { data } = await supabase
       .from("purchase_orders")
       .select("*")
+      .eq("record_status", "open")
       .order("po_date", { ascending: false });
     setOrders((data as PurchaseOrder[]) ?? []);
     setLoading(false);

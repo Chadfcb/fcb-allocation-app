@@ -525,6 +525,21 @@ export const PO_ORDERED_STATUS_COLORS: Record<PoOrderedStatus, string> = {
   not_ordered: "#525252",
 };
 
+// FCB's own lifecycle for a PO's row in the app — added 2026-09-09,
+// replacing "delete on sync" with a real triage step. 'open' is what every
+// PO used to be, full stop. A PO the latest Ekos sync no longer reports as
+// open moves to 'holding' instead of getting deleted; from there it's
+// either permanently deleted (a real row delete, not this field) or moved
+// to 'completed'. If a holding/completed PO reappears as open in a later
+// Ekos sync, it moves back to 'open' automatically.
+export type PoRecordStatus = "open" | "holding" | "completed";
+
+export const PO_RECORD_STATUS_LABELS: Record<PoRecordStatus, string> = {
+  open: "Open",
+  holding: "Holding",
+  completed: "Completed",
+};
+
 export interface PurchaseOrder {
   id: string;
   ekos_po_number: string;
@@ -535,8 +550,16 @@ export interface PurchaseOrder {
   status: string | null;
   // Our own "have we paid this" tracker — see PoPaymentStatus above.
   payment_status: PoPaymentStatus;
+  // The date this PO was actually marked Paid — added 2026-09-09. Auto-set
+  // to today when payment_status flips to 'paid', cleared if flipped back
+  // to 'pending', always editable/backdatable by hand. The Cash Flow
+  // Dashboard's Expenses Out grid uses this (not po_date) to bucket a paid
+  // expense into the week it actually got paid.
+  paid_date: string | null;
   // Our own "have we ordered this" tracker — see PoOrderedStatus above.
   ordered_status: PoOrderedStatus;
+  // Open / Holding / Completed — see PoRecordStatus above.
+  record_status: PoRecordStatus;
   // The freeform note Chad (or whoever) typed onto the PO in Ekos itself —
   // this is the whole reason this feature exists, so it needs to travel
   // along with everything else and surface on both the Purchase Orders page

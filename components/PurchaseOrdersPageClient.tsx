@@ -1,16 +1,39 @@
 "use client";
 
-// Operations > Purchase Orders — FCB's own outgoing vendor purchase orders
-// (buying ingredients/supplies from suppliers), synced in from Ekos. Live
-// via Supabase Realtime, same as the rest of the app.
+// Operations > Open Purchase Orders — FCB's own outgoing vendor purchase
+// orders (buying ingredients/supplies from suppliers), synced in from Ekos.
+// Live via Supabase Realtime, same as the rest of the app.
 //
 // The "Sync from Ekos" box is how new data actually arrives: there's no
 // live Ekos API, so a live Claude-in-Chrome session (driven by Chad, using
 // his own already-logged-in Ekos tab) reads the current Open - Purchase
 // Orders list and posts it here as JSON, same shape this box accepts by
 // hand if anyone ever needed to.
+//
+// Lifecycle (added 2026-09-09) — every PO has a record_status:
+//   open      — currently open in Ekos (what the table above used to be,
+//               full stop, before this existed).
+//   holding   — dropped off the most recent Ekos sync (closed/received in
+//               Ekos), waiting on a decision. NOTHING gets auto-deleted on
+//               sync anymore — a PO that's no longer open just moves here.
+//   completed — moved here on purpose from Holding, once its Total Cost and
+//               Paid Date (if needed) are correct. An archive, not a queue.
+// From Holding, each row can be Deleted (a real, permanent delete — no
+// undo, confirmed before it fires) or Completed (moves it down). If a PO
+// that's sitting in Holding or Completed shows back up as open in a later
+// Ekos sync, it automatically moves back to Open.
+//
+// Paid Date (added 2026-09-09) — sits between Paid and Ordered. Flipping a
+// PO to Paid auto-fills today's date; flipping back to Pending clears it.
+// It's always editable/backdatable by hand too. This is what the Cash Flow
+// Dashboard's Expenses Out grid uses to bucket a paid expense into the week
+// it actually got paid, instead of the week it was ordered.
+//
+// Total Cost is read-only in Open (it's what Ekos reports) but editable in
+// Holding and Completed, since a vendor's final invoice can differ from the
+// PO total by the time it's actually settled.
 
-import { Fragment, useEffect, useMemo, useState, useCallback } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { logChange } from "@/lib/audit";
 import type { PurchaseOrder, PurchaseOrderItem, PoPaymentStatus, PoOrderedStatus } from "@/lib/types/db";
@@ -33,6 +56,10 @@ function formatDate(value: string | null): string {
   return `${month}/${day}/${year}`;
 }
 
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export default function PurchaseOrdersPageClient() {
   const supabase = useMemo(() => createClient(), []);
   const [orders, setOrders] = useState<PurchaseOrder[]>([]);
@@ -46,7 +73,7 @@ export default function PurchaseOrdersPageClient() {
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<{
     syncedCount: number;
-    removedCount: number;
+    movedToHoldingCount: number;
     errors: string[];
   } | null>(null);
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -96,12 +123,17 @@ export default function PurchaseOrdersPageClient() {
     if (!userId) return;
 
     const existing = orders.find((po) => po.id === poId);
-    const oldValue = existing?.payment_status ?? "pending";
-    setOrders((prev) => prev.map((po) => (po.id === poId ? { ...po, payment_status: value } : po)));
+    const oldPayment = existing?.payment_status ?? "pending";
+    const oldPaidDate = existing?.paid_date ?? null;
+    const newPaidDate = value === "paid" ? oldPaidDate ?? todayIsoDate() : null;
+
+    setOrders((prev) =>
+      prev.map((po) => (po.id === poId ? { ...po, payment_status: value, paid_date: newPaidDate } : po)),
+    );
 
     const { data, error } = await supabase
       .from("purchase_orders")
-      .update({ payment_status: value })
+      .update({ payment_status: value, paid_date: newPaidDate })
       .eq("id", poId)
       .select()
       .single();
@@ -113,8 +145,80 @@ export default function PurchaseOrdersPageClient() {
         tableName: "purchase_orders",
         recordId: poId,
         fieldName: "payment_status",
-        oldValue,
+        oldValue: oldPayment,
         newValue: value,
+        changedBy: userId,
+      });
+      if (oldPaidDate !== newPaidDate) {
+        await logChange(supabase, {
+          weekId: null,
+          tableName: "purchase_orders",
+          recordId: poId,
+          fieldName: "paid_date",
+          oldValue: oldPaidDate,
+          newValue: newPaidDate,
+          changedBy: userId,
+        });
+      }
+    }
+  }
+
+  async function handlePaidDateChange(poId: string, value: string) {
+    if (!userId) return;
+
+    const existing = orders.find((po) => po.id === poId);
+    const oldValue = existing?.paid_date ?? null;
+    const newValue = value || null;
+    setOrders((prev) => prev.map((po) => (po.id === poId ? { ...po, paid_date: newValue } : po)));
+
+    const { data, error } = await supabase
+      .from("purchase_orders")
+      .update({ paid_date: newValue })
+      .eq("id", poId)
+      .select()
+      .single();
+
+    if (!error && data) {
+      setOrders((prev) => prev.map((po) => (po.id === poId ? (data as PurchaseOrder) : po)));
+      await logChange(supabase, {
+        weekId: null,
+        tableName: "purchase_orders",
+        recordId: poId,
+        fieldName: "paid_date",
+        oldValue,
+        newValue,
+        changedBy: userId,
+      });
+    }
+  }
+
+  async function handleTotalCostChange(poId: string, value: string) {
+    if (!userId) return;
+
+    const trimmed = value.trim();
+    const parsed = trimmed === "" ? null : Number(trimmed);
+    if (parsed !== null && Number.isNaN(parsed)) return;
+
+    const existing = orders.find((po) => po.id === poId);
+    const oldValue = existing?.total_cost ?? null;
+    setOrders((prev) => prev.map((po) => (po.id === poId ? { ...po, total_cost: parsed } : po)));
+
+    const { data, error } = await supabase
+      .from("purchase_orders")
+      .update({ total_cost: parsed })
+      .eq("id", poId)
+      .select()
+      .single();
+
+    if (!error && data) {
+      setOrders((prev) => prev.map((po) => (po.id === poId ? (data as PurchaseOrder) : po)));
+      await logChange(supabase, {
+        weekId: null,
+        tableName: "purchase_orders",
+        recordId: poId,
+        fieldName: "total_cost",
+        oldValue,
+        newValue: parsed,
         changedBy: userId,
       });
     }
@@ -145,6 +249,65 @@ export default function PurchaseOrdersPageClient() {
         newValue: value,
         changedBy: userId,
       });
+    }
+  }
+
+  async function handleCompletePo(poId: string) {
+    if (!userId) return;
+
+    const existing = orders.find((po) => po.id === poId);
+    const oldValue = existing?.record_status ?? "holding";
+    setOrders((prev) => prev.map((po) => (po.id === poId ? { ...po, record_status: "completed" } : po)));
+
+    const { data, error } = await supabase
+      .from("purchase_orders")
+      .update({ record_status: "completed" })
+      .eq("id", poId)
+      .select()
+      .single();
+
+    if (!error && data) {
+      setOrders((prev) => prev.map((po) => (po.id === poId ? (data as PurchaseOrder) : po)));
+      await logChange(supabase, {
+        weekId: null,
+        tableName: "purchase_orders",
+        recordId: poId,
+        fieldName: "record_status",
+        oldValue,
+        newValue: "completed",
+        changedBy: userId,
+      });
+    } else {
+      await load();
+    }
+  }
+
+  async function handleDeletePo(poId: string) {
+    if (!userId) return;
+    const po = orders.find((o) => o.id === poId);
+    if (!po) return;
+
+    const confirmed = window.confirm(
+      `Permanently delete PO ${po.ekos_po_number} (${po.supplier})? This can't be undone.`,
+    );
+    if (!confirmed) return;
+
+    setOrders((prev) => prev.filter((o) => o.id !== poId));
+
+    const { error } = await supabase.from("purchase_orders").delete().eq("id", poId);
+
+    if (!error) {
+      await logChange(supabase, {
+        weekId: null,
+        tableName: "purchase_orders",
+        recordId: poId,
+        fieldName: "deleted",
+        oldValue: `${po.ekos_po_number} (${po.supplier})`,
+        newValue: null,
+        changedBy: userId,
+      });
+    } else {
+      await load();
     }
   }
 
@@ -191,17 +354,160 @@ export default function PurchaseOrdersPageClient() {
   // Not Ordered ones; anything still tied keeps its existing order (po_date
   // descending, from the query) — the sort is stable, so ties fall through
   // to that original order automatically.
-  const sortedOrders = [...orders].sort((a, b) => {
-    const paidDiff = Number(b.payment_status === "paid") - Number(a.payment_status === "paid");
-    if (paidDiff !== 0) return paidDiff;
-    return Number(b.ordered_status === "ordered") - Number(a.ordered_status === "ordered");
-  });
+  function sortPos(list: PurchaseOrder[]): PurchaseOrder[] {
+    return [...list].sort((a, b) => {
+      const paidDiff = Number(b.payment_status === "paid") - Number(a.payment_status === "paid");
+      if (paidDiff !== 0) return paidDiff;
+      return Number(b.ordered_status === "ordered") - Number(a.ordered_status === "ordered");
+    });
+  }
+
+  const openOrders = sortPos(orders.filter((po) => po.record_status === "open"));
+  const holdingOrders = sortPos(orders.filter((po) => po.record_status === "holding"));
+  const completedOrders = sortPos(orders.filter((po) => po.record_status === "completed"));
+
+  const paymentSelectClass = "w-24 rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] font-semibold";
+  const orderedSelectClass = "w-28 rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] font-semibold";
+  const paidDateInputClass =
+    "w-32 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-[11px] text-neutral-100";
+  const totalCostInputClass =
+    "w-24 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-[11px] text-neutral-100";
+
+  function renderHeaderRow(withActions: boolean) {
+    return (
+      <tr>
+        <th className="w-8 px-2 py-2" />
+        <th className="px-3 py-2 text-left">Number</th>
+        <th className="px-3 py-2 text-left">Supplier</th>
+        <th className="px-3 py-2 text-left">PO Date</th>
+        <th className="px-3 py-2 text-left">Expected Delivery</th>
+        <th className="px-3 py-2 text-right">Total Cost</th>
+        <th className="px-3 py-2 text-left">Status</th>
+        <th className="px-3 py-2 text-left">Paid</th>
+        <th className="px-3 py-2 text-left">Paid Date</th>
+        <th className="px-3 py-2 text-left">Ordered</th>
+        <th className="px-3 py-2 text-left">Comments</th>
+        {withActions && <th className="px-3 py-2 text-left">Actions</th>}
+      </tr>
+    );
+  }
+
+  function renderOrderRow(po: PurchaseOrder, opts: { costEditable: boolean; actions?: React.ReactNode }) {
+    const items = itemsByPo[po.id] ?? [];
+    const isExpanded = expanded[po.id] ?? false;
+    const columnCount = opts.actions !== undefined ? 11 : 10;
+
+    return (
+      <Fragment key={po.id}>
+        <tr onClick={() => toggleExpanded(po.id)} className="cursor-pointer hover:bg-neutral-900/60">
+          <td className="px-2 py-2 text-center text-neutral-500">{isExpanded ? "▾" : "▸"}</td>
+          <td className="px-3 py-2 font-medium text-neutral-100">{po.ekos_po_number}</td>
+          <td className="px-3 py-2 text-neutral-300">{po.supplier}</td>
+          <td className="px-3 py-2 text-neutral-400">{formatDate(po.po_date)}</td>
+          <td className="px-3 py-2 text-neutral-400">{formatDate(po.expected_delivery_date)}</td>
+          <td className="px-3 py-2 text-right text-neutral-100" onClick={(e) => e.stopPropagation()}>
+            {opts.costEditable ? (
+              <input
+                type="number"
+                step="0.01"
+                defaultValue={po.total_cost ?? ""}
+                onBlur={(e) => handleTotalCostChange(po.id, e.target.value)}
+                className={totalCostInputClass}
+              />
+            ) : po.total_cost != null ? (
+              currencyFormatter.format(po.total_cost)
+            ) : (
+              "—"
+            )}
+          </td>
+          <td className="px-3 py-2 text-neutral-400">{po.status ?? "—"}</td>
+          <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+            <select
+              value={po.payment_status}
+              onChange={(e) => handlePaymentStatusChange(po.id, e.target.value as PoPaymentStatus)}
+              className={paymentSelectClass}
+              style={{ backgroundColor: PO_PAYMENT_STATUS_COLORS[po.payment_status], color: "#000000" }}
+            >
+              {(Object.keys(PO_PAYMENT_STATUS_LABELS) as PoPaymentStatus[]).map((s) => (
+                <option key={s} value={s} style={{ backgroundColor: PO_PAYMENT_STATUS_COLORS[s], color: "#000000" }}>
+                  {PO_PAYMENT_STATUS_LABELS[s]}
+                </option>
+              ))}
+            </select>
+          </td>
+          <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+            <input
+              type="date"
+              value={po.paid_date ?? ""}
+              onChange={(e) => handlePaidDateChange(po.id, e.target.value)}
+              className={paidDateInputClass}
+            />
+          </td>
+          <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+            <select
+              value={po.ordered_status}
+              onChange={(e) => handleOrderedStatusChange(po.id, e.target.value as PoOrderedStatus)}
+              className={orderedSelectClass}
+              style={{ backgroundColor: PO_ORDERED_STATUS_COLORS[po.ordered_status], color: "#000000" }}
+            >
+              {(Object.keys(PO_ORDERED_STATUS_LABELS) as PoOrderedStatus[]).map((s) => (
+                <option key={s} value={s} style={{ backgroundColor: PO_ORDERED_STATUS_COLORS[s], color: "#000000" }}>
+                  {PO_ORDERED_STATUS_LABELS[s]}
+                </option>
+              ))}
+            </select>
+          </td>
+          <td className="px-3 py-2 text-neutral-300">{po.comments ?? "—"}</td>
+          {opts.actions !== undefined && (
+            <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+              {opts.actions}
+            </td>
+          )}
+        </tr>
+        {isExpanded && (
+          <tr className="bg-neutral-950/60">
+            <td />
+            <td colSpan={columnCount} className="px-3 py-3">
+              {items.length === 0 ? (
+                <p className="text-sm text-neutral-500">No line items captured.</p>
+              ) : (
+                <table className="w-full max-w-2xl text-xs">
+                  <thead className="text-neutral-500">
+                    <tr>
+                      <th className="px-2 py-1 text-left">Item</th>
+                      <th className="px-2 py-1 text-right">Quantity</th>
+                      <th className="px-2 py-1 text-right">Unit Cost</th>
+                      <th className="px-2 py-1 text-right">Line Total</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-neutral-900">
+                    {items.map((item) => (
+                      <tr key={item.id}>
+                        <td className="px-2 py-1 text-neutral-300">{item.item_name}</td>
+                        <td className="px-2 py-1 text-right text-neutral-300">{item.quantity ?? "—"}</td>
+                        <td className="px-2 py-1 text-right text-neutral-400">
+                          {item.unit_cost != null ? currencyFormatter.format(item.unit_cost) : "—"}
+                        </td>
+                        <td className="px-2 py-1 text-right text-neutral-400">
+                          {item.line_total != null ? currencyFormatter.format(item.line_total) : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </td>
+          </tr>
+        )}
+      </Fragment>
+    );
+  }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-lg font-semibold text-neutral-100">Purchase Orders</h1>
+          <h1 className="text-lg font-semibold text-neutral-100">Open Purchase Orders</h1>
           <p className="text-sm text-neutral-400">
             Open vendor purchase orders, synced from Ekos.
             {lastSyncedAt && (
@@ -231,8 +537,9 @@ export default function PurchaseOrdersPageClient() {
       {syncOpen && (
         <div className="rounded-lg border border-yellow-500/40 bg-yellow-500/[0.03] p-3">
           <p className="mb-2 text-sm text-neutral-400">
-            Paste the current Open - Purchase Orders data (JSON) from Ekos, then Sync. This
-            replaces the list below with exactly what&apos;s open in Ekos right now.
+            Paste the current Open - Purchase Orders data (JSON) from Ekos, then Sync. Anything
+            below that&apos;s no longer in that list moves to Holding — nothing gets deleted
+            automatically.
           </p>
           <textarea
             value={syncText}
@@ -253,7 +560,7 @@ export default function PurchaseOrdersPageClient() {
             {syncError && <p className="text-sm text-red-400">{syncError}</p>}
             {syncResult && (
               <p className="text-sm text-neutral-300">
-                Synced {syncResult.syncedCount}, removed {syncResult.removedCount}
+                Synced {syncResult.syncedCount}, moved to Holding {syncResult.movedToHoldingCount}
                 {syncResult.errors.length > 0 && (
                   <span className="text-red-400"> — {syncResult.errors.join("; ")}</span>
                 )}
@@ -266,153 +573,117 @@ export default function PurchaseOrdersPageClient() {
       <div className="overflow-x-auto rounded-lg border border-neutral-800">
         <table className="min-w-full text-sm">
           <thead className="bg-neutral-900 text-xs uppercase tracking-wide text-neutral-500">
-            <tr>
-              <th className="w-8 px-2 py-2" />
-              <th className="px-3 py-2 text-left">Number</th>
-              <th className="px-3 py-2 text-left">Supplier</th>
-              <th className="px-3 py-2 text-left">PO Date</th>
-              <th className="px-3 py-2 text-left">Expected Delivery</th>
-              <th className="px-3 py-2 text-right">Total Cost</th>
-              <th className="px-3 py-2 text-left">Status</th>
-              <th className="px-3 py-2 text-left">Paid</th>
-              <th className="px-3 py-2 text-left">Ordered</th>
-              <th className="px-3 py-2 text-left">Comments</th>
-            </tr>
+            {renderHeaderRow(false)}
           </thead>
           <tbody className="divide-y divide-neutral-900">
             {loading ? (
               <tr>
-                <td colSpan={10} className="px-3 py-6 text-center text-neutral-500">
+                <td colSpan={11} className="px-3 py-6 text-center text-neutral-500">
                   Loading…
                 </td>
               </tr>
-            ) : orders.length === 0 ? (
+            ) : openOrders.length === 0 ? (
               <tr>
-                <td colSpan={10} className="px-3 py-6 text-center text-neutral-500">
+                <td colSpan={11} className="px-3 py-6 text-center text-neutral-500">
                   No open purchase orders yet — use &quot;Sync from Ekos&quot; above to pull them
                   in.
                 </td>
               </tr>
             ) : (
-              sortedOrders.map((po) => {
-                const items = itemsByPo[po.id] ?? [];
-                const isExpanded = expanded[po.id] ?? false;
-                return (
-                  <Fragment key={po.id}>
-                    <tr
-                      onClick={() => toggleExpanded(po.id)}
-                      className="cursor-pointer hover:bg-neutral-900/60"
-                    >
-                      <td className="px-2 py-2 text-center text-neutral-500">
-                        {isExpanded ? "▾" : "▸"}
-                      </td>
-                      <td className="px-3 py-2 font-medium text-neutral-100">
-                        {po.ekos_po_number}
-                      </td>
-                      <td className="px-3 py-2 text-neutral-300">{po.supplier}</td>
-                      <td className="px-3 py-2 text-neutral-400">{formatDate(po.po_date)}</td>
-                      <td className="px-3 py-2 text-neutral-400">
-                        {formatDate(po.expected_delivery_date)}
-                      </td>
-                      <td className="px-3 py-2 text-right text-neutral-100">
-                        {po.total_cost != null ? currencyFormatter.format(po.total_cost) : "—"}
-                      </td>
-                      <td className="px-3 py-2 text-neutral-400">{po.status ?? "—"}</td>
-                      <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
-                        <select
-                          value={po.payment_status}
-                          onChange={(e) =>
-                            handlePaymentStatusChange(po.id, e.target.value as PoPaymentStatus)
-                          }
-                          className="w-24 rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] font-semibold"
-                          style={{
-                            backgroundColor: PO_PAYMENT_STATUS_COLORS[po.payment_status],
-                            color: "#000000",
-                          }}
-                        >
-                          {(Object.keys(PO_PAYMENT_STATUS_LABELS) as PoPaymentStatus[]).map((s) => (
-                            <option
-                              key={s}
-                              value={s}
-                              style={{ backgroundColor: PO_PAYMENT_STATUS_COLORS[s], color: "#000000" }}
-                            >
-                              {PO_PAYMENT_STATUS_LABELS[s]}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
-                        <select
-                          value={po.ordered_status}
-                          onChange={(e) =>
-                            handleOrderedStatusChange(po.id, e.target.value as PoOrderedStatus)
-                          }
-                          className="w-28 rounded border border-neutral-700 px-1.5 py-0.5 text-[11px] font-semibold"
-                          style={{
-                            backgroundColor: PO_ORDERED_STATUS_COLORS[po.ordered_status],
-                            color: "#000000",
-                          }}
-                        >
-                          {(Object.keys(PO_ORDERED_STATUS_LABELS) as PoOrderedStatus[]).map((s) => (
-                            <option
-                              key={s}
-                              value={s}
-                              style={{ backgroundColor: PO_ORDERED_STATUS_COLORS[s], color: "#000000" }}
-                            >
-                              {PO_ORDERED_STATUS_LABELS[s]}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="px-3 py-2 text-neutral-300">{po.comments ?? "—"}</td>
-                    </tr>
-                    {isExpanded && (
-                      <tr className="bg-neutral-950/60">
-                        <td />
-                        <td colSpan={9} className="px-3 py-3">
-                          {items.length === 0 ? (
-                            <p className="text-sm text-neutral-500">No line items captured.</p>
-                          ) : (
-                            <table className="w-full max-w-2xl text-xs">
-                              <thead className="text-neutral-500">
-                                <tr>
-                                  <th className="px-2 py-1 text-left">Item</th>
-                                  <th className="px-2 py-1 text-right">Quantity</th>
-                                  <th className="px-2 py-1 text-right">Unit Cost</th>
-                                  <th className="px-2 py-1 text-right">Line Total</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-neutral-900">
-                                {items.map((item) => (
-                                  <tr key={item.id}>
-                                    <td className="px-2 py-1 text-neutral-300">{item.item_name}</td>
-                                    <td className="px-2 py-1 text-right text-neutral-300">
-                                      {item.quantity ?? "—"}
-                                    </td>
-                                    <td className="px-2 py-1 text-right text-neutral-400">
-                                      {item.unit_cost != null
-                                        ? currencyFormatter.format(item.unit_cost)
-                                        : "—"}
-                                    </td>
-                                    <td className="px-2 py-1 text-right text-neutral-400">
-                                      {item.line_total != null
-                                        ? currencyFormatter.format(item.line_total)
-                                        : "—"}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          )}
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                );
-              })
+              openOrders.map((po) => renderOrderRow(po, { costEditable: false }))
             )}
           </tbody>
         </table>
+      </div>
+
+      <div>
+        <div className="mb-2">
+          <h2 className="text-sm font-semibold text-neutral-100">Holding</h2>
+          <p className="text-xs text-neutral-500">
+            Dropped off the latest Ekos sync (closed/received there) — pick Delete or Complete for
+            each one. Total Cost and Paid Date are editable here.
+          </p>
+        </div>
+        <div className="overflow-x-auto rounded-lg border border-neutral-800">
+          <table className="min-w-full text-sm">
+            <thead className="bg-neutral-900 text-xs uppercase tracking-wide text-neutral-500">
+              {renderHeaderRow(true)}
+            </thead>
+            <tbody className="divide-y divide-neutral-900">
+              {loading ? (
+                <tr>
+                  <td colSpan={12} className="px-3 py-6 text-center text-neutral-500">
+                    Loading…
+                  </td>
+                </tr>
+              ) : holdingOrders.length === 0 ? (
+                <tr>
+                  <td colSpan={12} className="px-3 py-6 text-center text-neutral-500">
+                    Nothing waiting on a decision.
+                  </td>
+                </tr>
+              ) : (
+                holdingOrders.map((po) =>
+                  renderOrderRow(po, {
+                    costEditable: true,
+                    actions: (
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleCompletePo(po.id)}
+                          className="rounded border border-[#6ABC46]/50 px-2 py-1 text-[11px] font-medium text-[#6ABC46] hover:bg-[#6ABC46]/10"
+                        >
+                          Complete
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePo(po.id)}
+                          className="rounded border border-red-500/50 px-2 py-1 text-[11px] font-medium text-red-400 hover:bg-red-500/10"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    ),
+                  }),
+                )
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div>
+        <div className="mb-2">
+          <h2 className="text-sm font-semibold text-neutral-100">Completed Purchase Orders</h2>
+          <p className="text-xs text-neutral-500">
+            The archive. Total Cost and Paid Date stay editable in case a final invoice differs
+            from what Ekos originally reported.
+          </p>
+        </div>
+        <div className="overflow-x-auto rounded-lg border border-neutral-800">
+          <table className="min-w-full text-sm">
+            <thead className="bg-neutral-900 text-xs uppercase tracking-wide text-neutral-500">
+              {renderHeaderRow(false)}
+            </thead>
+            <tbody className="divide-y divide-neutral-900">
+              {loading ? (
+                <tr>
+                  <td colSpan={11} className="px-3 py-6 text-center text-neutral-500">
+                    Loading…
+                  </td>
+                </tr>
+              ) : completedOrders.length === 0 ? (
+                <tr>
+                  <td colSpan={11} className="px-3 py-6 text-center text-neutral-500">
+                    Nothing completed yet.
+                  </td>
+                </tr>
+              ) : (
+                completedOrders.map((po) => renderOrderRow(po, { costEditable: true }))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );
