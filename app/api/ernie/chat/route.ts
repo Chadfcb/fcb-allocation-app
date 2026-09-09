@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getErnieTools, buildErnieSystemPrompt, runErnieTool, describeErnieToolCall } from "@/lib/ernie/tools";
 import { hasSection, getUserSections, ERNIE_SECTION } from "@/lib/permissions";
-import { buildFileContentBlocks, type ErnieFileRow } from "@/lib/ernie/files";
+import { buildFileContentBlocks, captureCodeExecutionFile, logErnieToolExecution, type ErnieFileRow } from "@/lib/ernie/files";
 
 // Ernie's chat backend. Open to every signed-in user, read-only: this route
 // calls Claude's Messages API directly (Ernie's underlying model — never
@@ -49,6 +49,38 @@ const WEB_SEARCH_TOOL = {
   type: "web_search_20250305",
   name: "web_search",
   max_uses: 5,
+};
+
+// Anthropic's hosted web fetch tool (added 2026-09-09, see
+// claude/ernie-sandbox-restrictions.md) — reads the actual content of a
+// specific URL (HTML pages and PDFs), not just a search snippet. Resolved
+// server-side within the same API response, same as WEB_SEARCH_TOOL
+// above. Its own built-in safeguard: Claude can only fetch a URL that
+// already appeared somewhere in the conversation (a user message, a prior
+// search/fetch result) — never one it invents on its own. Doesn't cover
+// images or spreadsheets from a URL — see fetch_url_as_file
+// (lib/ernie/tools.ts) for that gap.
+const WEB_FETCH_TOOL = {
+  type: "web_fetch_20260318",
+  name: "web_fetch",
+  max_uses: 8,
+  citations: { enabled: true },
+  max_content_tokens: 50000,
+};
+
+// Anthropic's hosted code execution tool (added 2026-09-09, see
+// claude/ernie-sandbox-restrictions.md) — Ernie's "create things" sandbox.
+// Runs entirely in Anthropic's own sandboxed container: no FCB
+// infrastructure, no live credentials reachable from inside it, zero
+// network access from inside it, hard resource/time caps, ephemeral by
+// default. A generated file only ever leaves as a file_id in the
+// response — captured below via captureCodeExecutionFile and handed back
+// into this same chat as a download chip, never anywhere else. Paired
+// here with WEB_FETCH_TOOL (a current-enough version) so code execution
+// itself carries no extra charge per Anthropic's pricing rule.
+const CODE_EXECUTION_TOOL = {
+  type: "code_execution_20260120",
+  name: "code_execution",
 };
 
 interface ChatMessage {
@@ -243,7 +275,7 @@ export async function POST(req: NextRequest) {
               model: ANTHROPIC_MODEL,
               max_tokens: 2048,
               system: buildErnieSystemPrompt(role, sections, isSuperAdmin),
-              tools: [...getErnieTools(role, sections, isSuperAdmin), WEB_SEARCH_TOOL],
+              tools: [...getErnieTools(role, sections, isSuperAdmin), WEB_SEARCH_TOOL, WEB_FETCH_TOOL, CODE_EXECUTION_TOOL],
               ...(isLastRound ? { tool_choice: { type: "none" } } : {}),
               messages: anthropicMessages,
             }),
@@ -264,6 +296,62 @@ export async function POST(req: NextRequest) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
           if (content.some((b: any) => b.type === "server_tool_use" && b.name === "web_search")) {
             send({ type: "status", label: "Searching the web" });
+          }
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+          if (content.some((b: any) => b.type === "server_tool_use" && b.name === "web_fetch")) {
+            send({ type: "status", label: "Reading a webpage" });
+          }
+          if (
+            content.some(
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+              (b: any) =>
+                b.type === "server_tool_use" &&
+                (b.name === "bash_code_execution" || b.name === "text_editor_code_execution"),
+            )
+          ) {
+            send({ type: "status", label: "Working in the sandbox" });
+          }
+
+          // Anthropic's server-side tools (web_fetch, code_execution) are
+          // resolved within this same response regardless of whether this
+          // round otherwise stops on tool_use or on a final text answer —
+          // so this runs unconditionally, once per round, rather than only
+          // inside the tool_use branch below. Per
+          // claude/ernie-sandbox-restrictions.md: capture any file the
+          // sandbox produced (the only way it can hand something back) and
+          // log what actually ran (the "log of what ran" restriction) —
+          // logging/capture failures are swallowed rather than breaking
+          // Ernie's actual reply.
+          for (const block of content) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+            const b = block as any;
+            if (b.type === "server_tool_use" && b.name === "web_fetch") {
+              await logErnieToolExecution(supabase, user.id, conversationId, "web_fetch", {
+                url: b.input?.url,
+              });
+            }
+            if (b.type === "server_tool_use" && (b.name === "bash_code_execution" || b.name === "text_editor_code_execution")) {
+              await logErnieToolExecution(supabase, user.id, conversationId, b.name, b.input ?? {});
+            }
+            if (b.type === "bash_code_execution_tool_result") {
+              const result = b.content;
+              const files = result?.type === "bash_code_execution_result" ? result.content ?? [] : [];
+              for (const f of files) {
+                if (!f?.file_id) continue;
+                try {
+                  const captured = await captureCodeExecutionFile(supabase, user.id, f.file_id);
+                  outputFileIds.push(captured.id);
+                  await logErnieToolExecution(supabase, user.id, conversationId, "code_execution_file_created", {
+                    anthropic_file_id: f.file_id,
+                    file_name: captured.file_name,
+                  });
+                } catch {
+                  // A file the sandbox produced couldn't be captured —
+                  // Ernie's text response still comes through; that one
+                  // file just won't show up as a download chip.
+                }
+              }
+            }
           }
 
           if (data.stop_reason === "tool_use") {
@@ -291,13 +379,20 @@ export async function POST(req: NextRequest) {
               if (
                 (block.name === "edit_spreadsheet" ||
                   block.name === "get_file_for_download" ||
-                  block.name === "export_pricing_data_as_spreadsheet") &&
+                  block.name === "export_pricing_data_as_spreadsheet" ||
+                  block.name === "fetch_url_as_file") &&
                 result &&
                 typeof result === "object" &&
                 "id" in result &&
                 typeof (result as { id: unknown }).id === "string"
               ) {
                 outputFileIds.push((result as { id: string }).id);
+              }
+              if (block.name === "fetch_url_as_file") {
+                await logErnieToolExecution(supabase, user.id, conversationId, "fetch_url_as_file", {
+                  url: (block.input as { url?: string } | undefined)?.url,
+                  ok: !(result && typeof result === "object" && "error" in (result as Record<string, unknown>)),
+                });
               }
               toolResults.push({
                 type: "tool_result",

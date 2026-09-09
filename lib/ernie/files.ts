@@ -743,3 +743,233 @@ export async function fetchExternalFileForDownload(
 
   return { ...inserted, note: `Ready to download: "${finalName}".` };
 }
+
+// ---------------------------------------------------------------------
+// Ernie's internet read access and sandbox (added 2026-09-09, see
+// claude/ernie-sandbox-restrictions.md for the full agreed restriction
+// spec this implements). Two separate capabilities:
+//
+// 1. Internet reads — Anthropic's own hosted web_fetch tool (wired in
+//    app/api/ernie/chat/route.ts, resolved server-side same as
+//    web_search) covers ordinary web pages and PDFs. It explicitly does
+//    NOT retrieve images or spreadsheets from a URL. fetchUrlAsFile below
+//    is the deliberate gap-filler for exactly those file types: a plain
+//    read-only GET (never anything else — no cookies, no auth headers,
+//    no way to submit or change anything on the far end) that drops the
+//    result into the same ernie_files/Storage pipeline every uploaded
+//    file already uses, so it's then readable/stageable/editable exactly
+//    like something the user attached by hand.
+//
+// 2. The sandbox — Anthropic's hosted code_execution tool runs entirely
+//    in Anthropic's own sandboxed container: no FCB infrastructure, no
+//    live credentials reachable from inside it, zero network access at
+//    all, hard resource/time caps, ephemeral by default. The only thing
+//    that ever crosses back is a finished file, referenced by a file_id
+//    in Anthropic's Files API — captureCodeExecutionFile downloads it and
+//    drops it into that same ernie_files/Storage pipeline, so it shows up
+//    as an ordinary download chip, exactly like a file edit_spreadsheet
+//    or export_pricing_data_as_spreadsheet would produce. Nothing about
+//    either capability gives Ernie any new way to write to the app's own
+//    database, or to reach or change anything outside this same chat.
+//
+// logErnieToolExecution is the "log of what ran" restriction — a
+// best-effort audit trail (see sql/ernie_tool_execution_log.sql) that
+// never blocks or fails the actual chat response if logging itself has a
+// problem.
+// ---------------------------------------------------------------------
+
+const FETCH_URL_TIMEOUT_MS = 20000;
+
+// Best-effort SSRF guard. This runs on Vercel's own serverless network,
+// not inside FCB's, so the blast radius of a trick is small regardless —
+// but there's no reason to let a URL resolve Ernie's fetch to a loopback,
+// link-local (this range also covers cloud metadata endpoints), or
+// private-range address just because something crafted the link that way.
+function isDisallowedFetchHost(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  if (h === "localhost" || h === "0.0.0.0" || h === "::1") return true;
+  if (/^127\./.test(h)) return true;
+  if (/^10\./.test(h)) return true;
+  if (/^192\.168\./.test(h)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(h)) return true;
+  if (/^169\.254\./.test(h)) return true;
+  return false;
+}
+
+function fileNameFromUrl(url: string, contentDisposition: string | null): string {
+  if (contentDisposition) {
+    const m = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(contentDisposition);
+    if (m?.[1]) {
+      try {
+        return decodeURIComponent(m[1]);
+      } catch {
+        return m[1];
+      }
+    }
+  }
+  try {
+    const u = new URL(url);
+    const last = u.pathname.split("/").filter(Boolean).pop();
+    if (last) return last;
+  } catch {
+    // fall through to the generic default below
+  }
+  return "downloaded-file";
+}
+
+// fetch_url_as_file's implementation (see lib/ernie/tools.ts). GET only,
+// no redirect to a disallowed host, capped at the same ERNIE_MAX_FILE_BYTES
+// every direct upload is capped at.
+export async function fetchUrlAsFile(
+  supabase: SupabaseClient,
+  userId: string,
+  url: string,
+  fileName?: string,
+): Promise<{ id: string; file_name: string; mime_type: string | null; size_bytes: number; note: string }> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`"${url}" isn't a valid URL.`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error("Only http:// and https:// URLs can be fetched.");
+  }
+  if (isDisallowedFetchHost(parsed.hostname)) {
+    throw new Error("That address can't be fetched.");
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(parsed.toString(), {
+      method: "GET",
+      redirect: "follow",
+      signal: AbortSignal.timeout(FETCH_URL_TIMEOUT_MS),
+    });
+  } catch (err) {
+    throw new Error(
+      err instanceof Error && err.name === "TimeoutError"
+        ? "That request took too long and was cancelled."
+        : "Couldn't reach that URL.",
+    );
+  }
+  if (!res.ok) {
+    throw new Error(`That URL returned an error (HTTP ${res.status}).`);
+  }
+
+  const contentLength = res.headers.get("content-length");
+  if (contentLength && Number(contentLength) > ERNIE_MAX_FILE_BYTES) {
+    throw new Error("That file is too large to fetch (over the 20MB limit).");
+  }
+
+  const arrayBuffer = await res.arrayBuffer();
+  if (arrayBuffer.byteLength > ERNIE_MAX_FILE_BYTES) {
+    throw new Error("That file is too large to fetch (over the 20MB limit).");
+  }
+  const buffer = Buffer.from(arrayBuffer);
+
+  const mimeType = res.headers.get("content-type")?.split(";")[0]?.trim() || null;
+  const finalName = fileName?.trim() || fileNameFromUrl(parsed.toString(), res.headers.get("content-disposition"));
+  const path = `${userId}/${storageFileName(finalName)}`;
+
+  const { error: uploadErr } = await supabase.storage.from(ERNIE_FILES_BUCKET).upload(path, buffer, {
+    contentType: mimeType || undefined,
+    upsert: false,
+  });
+  if (uploadErr) throw new Error(`Fetched the file but couldn't save it: ${uploadErr.message}`);
+
+  const { data: inserted, error: insertErr } = await supabase
+    .from("ernie_files")
+    .insert({
+      user_id: userId,
+      direction: "output",
+      source_file_id: null,
+      file_name: finalName,
+      mime_type: mimeType,
+      size_bytes: buffer.length,
+      storage_path: path,
+    })
+    .select("id, file_name, mime_type, size_bytes")
+    .single();
+  if (insertErr) throw new Error(`Fetched the file but couldn't save its record: ${insertErr.message}`);
+
+  return {
+    ...inserted,
+    note: `Fetched "${finalName}" (${mimeType || "unknown type"}) from the web. It's now available like any uploaded file — read_uploaded_file, stage_uploaded_file_for_query, or edit_spreadsheet all work on it.`,
+  };
+}
+
+const ANTHROPIC_FILES_API = "https://api.anthropic.com/v1/files";
+
+// Downloads a file the sandbox (Anthropic's hosted code_execution tool)
+// produced, by the file_id Anthropic's own Files API assigned it, and
+// drops it into the same ernie_files/Storage pipeline as everything else
+// Ernie produces — called from app/api/ernie/chat/route.ts whenever a
+// bash_code_execution_tool_result block reports a generated file.
+export async function captureCodeExecutionFile(
+  supabase: SupabaseClient,
+  userId: string,
+  anthropicFileId: string,
+): Promise<{ id: string; file_name: string; mime_type: string | null; size_bytes: number }> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("Server is missing ANTHROPIC_API_KEY.");
+  const headers = { "x-api-key": apiKey, "anthropic-version": "2023-06-01" };
+
+  const metaRes = await fetch(`${ANTHROPIC_FILES_API}/${anthropicFileId}`, { headers });
+  if (!metaRes.ok) throw new Error(`Couldn't look up the generated file (HTTP ${metaRes.status}).`);
+  const meta = await metaRes.json();
+
+  const contentRes = await fetch(`${ANTHROPIC_FILES_API}/${anthropicFileId}/content`, { headers });
+  if (!contentRes.ok) throw new Error(`Couldn't download the generated file (HTTP ${contentRes.status}).`);
+  const buffer = Buffer.from(await contentRes.arrayBuffer());
+
+  const finalName: string = meta.filename || `generated-file-${anthropicFileId}`;
+  const mimeType: string | null = meta.mime_type || null;
+  const path = `${userId}/${storageFileName(finalName)}`;
+
+  const { error: uploadErr } = await supabase.storage.from(ERNIE_FILES_BUCKET).upload(path, buffer, {
+    contentType: mimeType || undefined,
+    upsert: false,
+  });
+  if (uploadErr) throw new Error(`Sandbox produced a file but it couldn't be saved: ${uploadErr.message}`);
+
+  const { data: inserted, error: insertErr } = await supabase
+    .from("ernie_files")
+    .insert({
+      user_id: userId,
+      direction: "output",
+      source_file_id: null,
+      file_name: finalName,
+      mime_type: mimeType,
+      size_bytes: buffer.length,
+      storage_path: path,
+    })
+    .select("id, file_name, mime_type, size_bytes")
+    .single();
+  if (insertErr) throw new Error(`Sandbox produced a file but its record couldn't be saved: ${insertErr.message}`);
+
+  return inserted;
+}
+
+// Best-effort audit trail for Ernie's internet/sandbox use (see
+// sql/ernie_tool_execution_log.sql) — a logging failure here must never
+// break or block the actual chat response, so every call site swallows
+// its own errors.
+export async function logErnieToolExecution(
+  supabase: SupabaseClient,
+  userId: string,
+  conversationId: string | undefined,
+  toolName: string,
+  detail: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await supabase.from("ernie_tool_execution_log").insert({
+      user_id: userId,
+      conversation_id: conversationId ?? null,
+      tool_name: toolName,
+      detail,
+    });
+  } catch {
+    // Best-effort only — never surface a logging failure to the user.
+  }
+}
