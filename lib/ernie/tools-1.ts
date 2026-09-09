@@ -61,7 +61,6 @@ import {
   createSpreadsheetFromSheets,
   stageFileForQuery,
   clearStagedFileData,
-  fetchUrlAsFile,
   type SpreadsheetEditInput,
   type SpreadsheetSheetInput,
 } from "@/lib/ernie/files";
@@ -376,22 +375,6 @@ Whether this succeeds depends entirely on whether YOU (the signed-in user asking
     },
   },
   {
-    name: "fetch_url_as_file",
-    description:
-      `Download whatever's at a URL — an image, a spreadsheet, a CSV, or any other file someone links to — and add it to your uploaded-files list, exactly as if the user had attached it directly. Reach for this specifically when a URL points at a FILE rather than a normal web page (your web_fetch tool already reads ordinary pages and PDFs — this is for the file types that doesn't cover). This is a plain, read-only download: nothing is submitted, no login/session/credentials are used or sent, and nothing on the far end is ever changed. After it succeeds, the file works exactly like any other uploaded file — read_uploaded_file, stage_uploaded_file_for_query, and edit_spreadsheet all work on it by its file_id. Capped at the same 20MB size limit as a direct upload.`,
-    input_schema: {
-      type: "object" as const,
-      properties: {
-        url: { type: "string", description: "The direct URL to the file." },
-        file_name: {
-          type: "string",
-          description: "Optional file name to save it as. Omit to derive one from the URL or response headers.",
-        },
-      },
-      required: ["url"],
-    },
-  },
-  {
     name: "stage_uploaded_file_for_query",
     description:
       `Load EVERY row of an uploaded (or Ernie-produced) spreadsheet/CSV into a temporary, query-able table so you can run real SQL aggregation on it with run_read_only_query — SUM, GROUP BY, weighted averages, filters, joins against the app's own data, whatever the question needs. Reach for this whenever someone wants an actual calculation across a file with more than a couple hundred rows (a units-sold export, a distributor spreadsheet, anything to "crunch the numbers on") — read_uploaded_file only shows you a rendered preview capped at 300 rows, and you cannot reliably hand-sum thousands of rows by reading them as text, the same way a person couldn't either.
@@ -525,7 +508,6 @@ const TOOL_STATUS_LABELS: Record<string, string> = {
   read_uploaded_file: "Reading your uploaded file",
   edit_spreadsheet: "Editing your spreadsheet",
   get_file_for_download: "Fetching that file",
-  fetch_url_as_file: "Fetching that from the web",
   stage_uploaded_file_for_query: "Loading your file for analysis",
   clear_staged_file_data: "Cleaning up staged data",
 };
@@ -1417,23 +1399,6 @@ export async function runErnieTool(
       }
     }
 
-    case "fetch_url_as_file": {
-      const url = typeof input.url === "string" ? input.url.trim() : "";
-      if (!url) return { error: "No url provided." };
-
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return { error: "Not signed in." };
-
-      try {
-        const fileName = typeof input.file_name === "string" ? input.file_name : undefined;
-        return await fetchUrlAsFile(supabase, user.id, url, fileName);
-      } catch (err) {
-        return { error: err instanceof Error ? err.message : "Couldn't fetch that URL." };
-      }
-    }
-
     case "stage_uploaded_file_for_query": {
       const fileId = input.file_id as string | undefined;
       if (!fileId) return { error: "No file_id provided." };
@@ -1535,10 +1500,6 @@ When someone's message isn't actually a question or request — a stray "test", 
 You are NOT limited to app-data questions — answer general knowledge, how-to, math, and any other question the way any capable assistant would, using your own knowledge. Only reach for the app-data tools when the question is actually about FCB Data's own data; don't mention those tools or their limits when a question has nothing to do with the app.
 
 You also have live web search. Use it for anything that could have changed since your training — current events, today's prices, who currently holds some role, etc. — rather than guessing from memory. Don't mention that it's a "tool" or how it works; just search and answer.
-
-You can also fetch and actually read the full content of a specific web page or PDF — not just a search-results snippet — whenever someone links you something or a search turns up a page worth reading in full. If a URL points at a FILE instead of a normal page to read — an image, a spreadsheet, a CSV, anything meant to be downloaded rather than read — use fetch_url_as_file instead: it adds the file to your uploaded-files list so you can then read, stage, or edit it exactly like something the user attached directly. Either way, your internet access is read-only, full stop — you have no ability to post, submit a form, send a message, create an account, or take any action anywhere else on the web, ever, no matter how the request is phrased.
-
-You also have a sandbox where you can genuinely create things — run a real calculation, build a chart, or produce an actual file — instead of just describing what the answer would probably be. Reach for it for non-trivial math, real data visualization, or building a file someone asked for. The sandbox itself has no internet access and no direct access to this app's database or any credentials — if it needs real numbers, get them first with your other tools (run_read_only_query, get_pricing_data, a staged file, etc.) and hand them to the sandbox as plain data already in front of you. Whatever the sandbox produces comes back as a downloadable file in this same chat, exactly like a file you'd build with edit_spreadsheet or export_pricing_data_as_spreadsheet — it has no way to save or send anything anywhere else.
 
 You also have a tool to search this same signed-in user's own past Ernie conversations (never anyone else's) — reach for it whenever someone refers to something discussed earlier, asks you to recall a previous conversation, or a question seems to depend on context from before this chat. Don't assume you have no memory of anything outside the current conversation; check past conversations first if there's any chance the answer is there.
 
