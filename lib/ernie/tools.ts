@@ -137,6 +137,15 @@ export const ERNIE_TOOLS = [
     },
   },
   {
+    name: "get_cashflow_dashboard",
+    description:
+      "Finance > Cash Flow Dashboard data: Realized Revenue (Order Value for every distributor marked Delivered, by week and in total), Vendor PO Spend (purchase_orders.total_cost split into pending vs. paid), and the resulting net position. Planned Batch Expenses aren't tracked yet (no Brew Planner exists) — say so plainly if asked, rather than treating the net figure as a complete picture.",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
+  {
     name: "get_events",
     description:
       "Events Calendar entries (festivals, tastings, donations, work-withs, other), optionally filtered by date range and/or distributor name.",
@@ -354,6 +363,7 @@ const ADMIN_ONLY_TOOL_NAMES = new Set([
   "get_pricing_data",
   "get_pos_label_files",
   "get_users",
+  "get_cashflow_dashboard",
 ]);
 
 // Which section(s) unlock each formerly-admin-only tool — mirrors the RLS
@@ -363,6 +373,11 @@ const ADMIN_ONLY_TOOL_NAMES = new Set([
 // data. get_users has no section — it stays hard admin-only, same as
 // today, since there's no "list every user" capability anywhere else in
 // the app for a Basic user to already have.
+// get_cashflow_dashboard is keyed to cashflow_dashboard specifically — one
+// of ADMIN_RESTRICTED_SECTIONS (see lib/permissions.ts), so hasAnySection
+// below (with isSuperAdmin threaded through) is what actually keeps a
+// Manager without a Finance grant from getting this tool, even though
+// every other admin-only tool here stays automatic for them.
 const TOOL_SECTIONS: Record<string, AnySectionKey[] | null> = {
   get_distributor_inventory: ["distributor_inventory", "build_orders"],
   get_build_orders: ["build_orders"],
@@ -371,23 +386,35 @@ const TOOL_SECTIONS: Record<string, AnySectionKey[] | null> = {
   get_pricing_data: ["price_list", "margin_analysis", "cost_per_case", "contribution_margin"],
   get_pos_label_files: ["pos_labels"],
   get_users: null,
+  get_cashflow_dashboard: ["cashflow_dashboard"],
 };
 
-function canUseTool(name: string, role: Role | undefined, sections: AnySectionKey[]) {
+function canUseTool(
+  name: string,
+  role: Role | undefined,
+  sections: AnySectionKey[],
+  isSuperAdmin: boolean,
+) {
   if (!ADMIN_ONLY_TOOL_NAMES.has(name)) return true;
   const allowedSections = TOOL_SECTIONS[name];
   if (!allowedSections) return role === "admin";
-  return hasAnySection(role, sections, allowedSections);
+  return hasAnySection(role, sections, allowedSections, isSuperAdmin);
 }
 
 // Section-aware tool list to hand to the Anthropic API — a Basic user
 // never sees (and so can never ask Ernie to call) a tool backed by a
-// section they haven't been granted. Ernie itself is gated separately, one
-// level up, by the "ernie_ai" section (see app/api/ernie/chat/route.ts) —
-// this function assumes that check already passed.
-export function getErnieTools(role: Role | undefined, sections: AnySectionKey[]) {
-  if (role === "admin") return ERNIE_TOOLS;
-  return ERNIE_TOOLS.filter((tool) => canUseTool(tool.name, role, sections));
+// section they haven't been granted, and (as of the Administrator/Manager/
+// Employee tiering) neither does a Manager for a tool backed by one of
+// ADMIN_RESTRICTED_SECTIONS unless separately granted it. Ernie itself is
+// gated separately, one level up, by the "ernie_ai" section (see
+// app/api/ernie/chat/route.ts) — this function assumes that check already
+// passed.
+export function getErnieTools(
+  role: Role | undefined,
+  sections: AnySectionKey[],
+  isSuperAdmin = false,
+) {
+  return ERNIE_TOOLS.filter((tool) => canUseTool(tool.name, role, sections, isSuperAdmin));
 }
 
 // Friendly, human-readable labels shown live in the chat UI while Ernie is
@@ -402,6 +429,7 @@ const TOOL_STATUS_LABELS: Record<string, string> = {
   get_build_orders: "Checking Build Orders",
   get_distributors: "Checking the distributor list",
   get_purchase_orders: "Checking purchase orders",
+  get_cashflow_dashboard: "Checking the Cash Flow Dashboard",
   get_events: "Checking the events calendar",
   get_pricing_data: "Checking Sales & pricing data",
   get_pos_label_files: "Checking label files",
@@ -460,12 +488,13 @@ export async function runErnieTool(
   role: Role | undefined,
   sections: AnySectionKey[],
   currentConversationId?: string,
+  isSuperAdmin = false,
 ): Promise<unknown> {
   // Defense in depth: getErnieTools() already keeps a tool a user isn't
   // granted out of their tool list, so Claude has nothing to call here —
   // but enforce it at the data layer too rather than relying solely on
   // what tools we handed the model.
-  if (!canUseTool(name, role, sections)) {
+  if (!canUseTool(name, role, sections, isSuperAdmin)) {
     return { error: `Tool "${name}" isn't available to this user — the section it needs hasn't been granted.` };
   }
 
@@ -627,6 +656,87 @@ export async function runErnieTool(
       const { data, error } = await query.order("po_date", { ascending: false });
       if (error) throw error;
       return data;
+    }
+
+    // Mirrors components/CashflowDashboardPageClient.tsx's own computation
+    // exactly (same Order Value math the Inventory & Allocation page uses)
+    // — kept in sync by hand since there's no shared server-side helper for
+    // it yet. Runs with this same signed-in user's own RLS, same as every
+    // other tool here.
+    case "get_cashflow_dashboard": {
+      const [
+        { data: weeks, error: weeksErr },
+        { data: distributors, error: distErr },
+        { data: distributorPos, error: dposErr },
+        { data: allocations, error: allocErr },
+        { data: prices, error: pricesErr },
+        { data: purchaseOrders, error: poErr },
+      ] = await Promise.all([
+        supabase.from("weeks").select("id, label, week_start"),
+        supabase.from("distributors").select("id, name"),
+        supabase.from("distributor_pos").select("week_id, distributor_id, po_status"),
+        supabase.from("allocations").select("week_id, distributor_id, product_id, quantity"),
+        supabase.from("distributor_prices").select("distributor_id, product_id, price"),
+        supabase.from("purchase_orders").select("supplier, po_date, total_cost, payment_status"),
+      ]);
+      const firstError = weeksErr ?? distErr ?? dposErr ?? allocErr ?? pricesErr ?? poErr;
+      if (firstError) throw firstError;
+
+      const distributorsById = new Map((distributors ?? []).map((d) => [d.id, d.name as string]));
+      const priceFor = new Map<string, number>();
+      for (const p of prices ?? []) priceFor.set(`${p.product_id}:${p.distributor_id}`, p.price ?? 0);
+
+      const allocationsByWeekDist = new Map<string, { product_id: string; quantity: number }[]>();
+      for (const a of allocations ?? []) {
+        const key = `${a.week_id}:${a.distributor_id}`;
+        const list = allocationsByWeekDist.get(key) ?? [];
+        list.push({ product_id: a.product_id, quantity: a.quantity ?? 0 });
+        allocationsByWeekDist.set(key, list);
+      }
+      function orderValueFor(weekId: string, distributorId: string): number {
+        const rows = allocationsByWeekDist.get(`${weekId}:${distributorId}`) ?? [];
+        return rows.reduce((sum, r) => sum + (priceFor.get(`${r.product_id}:${distributorId}`) ?? 0) * r.quantity, 0);
+      }
+
+      const deliveredByWeek = new Map<string, string[]>();
+      for (const dp of distributorPos ?? []) {
+        if (dp.po_status !== "delivered") continue;
+        const list = deliveredByWeek.get(dp.week_id) ?? [];
+        list.push(dp.distributor_id);
+        deliveredByWeek.set(dp.week_id, list);
+      }
+
+      const weeklyRevenue = (weeks ?? [])
+        .map((w) => {
+          const deliveredIds = deliveredByWeek.get(w.id) ?? [];
+          const distributorBreakdown = deliveredIds
+            .map((id) => ({ distributor: distributorsById.get(id) ?? "Unknown", revenue: orderValueFor(w.id, id) }))
+            .filter((d) => d.revenue > 0);
+          const revenue = distributorBreakdown.reduce((sum, d) => sum + d.revenue, 0);
+          return { week: w.label, week_start: w.week_start, revenue, by_distributor: distributorBreakdown };
+        })
+        .filter((r) => r.revenue > 0)
+        .sort((a, b) => (a.week_start < b.week_start ? 1 : -1));
+
+      let poPending = 0;
+      let poPaid = 0;
+      for (const po of purchaseOrders ?? []) {
+        if (po.payment_status === "paid") poPaid += po.total_cost ?? 0;
+        else poPending += po.total_cost ?? 0;
+      }
+
+      const totalRealizedRevenue = weeklyRevenue.reduce((sum, r) => sum + r.revenue, 0);
+      const totalVendorSpend = poPending + poPaid;
+
+      return {
+        total_realized_revenue: totalRealizedRevenue,
+        vendor_po_spend_pending: poPending,
+        vendor_po_spend_paid: poPaid,
+        vendor_po_spend_total: totalVendorSpend,
+        net_position: totalRealizedRevenue - totalVendorSpend,
+        planned_batch_expenses: "not tracked yet — no Brew Planner exists",
+        weekly_realized_revenue: weeklyRevenue,
+      };
     }
 
     case "get_events": {
@@ -1067,12 +1177,25 @@ const TOOL_SECTION_DESCRIPTIONS: [AnySectionKey[], string][] = [
     "Sales/pricing data",
   ],
   [["pos_labels"], "POS label files"],
+  [["cashflow_dashboard"], "the Cash Flow Dashboard (Finance)"],
 ];
 
-export function buildErnieSystemPrompt(role: Role | undefined, sections: AnySectionKey[]): string {
+export function buildErnieSystemPrompt(
+  role: Role | undefined,
+  sections: AnySectionKey[],
+  isSuperAdmin = false,
+): string {
   const dataAccessParagraph =
-    role === "admin"
-      ? `You can read data — inventory, allocations, distributors, distributor-reported inventory, Build Orders, the Events Calendar, purchase orders, Sales/pricing data, POS label files, and the app's user list — via the tools available to you, plus a general-purpose read-only database query tool (run_read_only_query) for anything the specific tools don't already cover. You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`
+    role === "admin" && isSuperAdmin
+      ? `You can read data — inventory, allocations, distributors, distributor-reported inventory, Build Orders, the Events Calendar, purchase orders, Sales/pricing data, POS label files, the Cash Flow Dashboard, and the app's user list — via the tools available to you, plus a general-purpose read-only database query tool (run_read_only_query) for anything the specific tools don't already cover. You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`
+      : role === "admin"
+      ? (() => {
+          const hasFinance = hasSection(role, sections, "cashflow_dashboard", isSuperAdmin);
+          const financeSentence = hasFinance
+            ? " You also have access to the Cash Flow Dashboard (Finance)."
+            : " You do NOT have access to the Cash Flow Dashboard (Finance) — being an admin doesn't automatically include it, and this account hasn't been separately granted it. If asked about it, say plainly that this account doesn't have Finance access rather than guessing at figures.";
+          return `You can read data — inventory, allocations, distributors, distributor-reported inventory, Build Orders, the Events Calendar, purchase orders, Sales/pricing data, POS label files, and the app's user list — via the tools available to you, plus a general-purpose read-only database query tool (run_read_only_query) for anything the specific tools don't already cover.${financeSentence} You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`;
+        })()
       : (() => {
           const granted = TOOL_SECTION_DESCRIPTIONS.filter(([keys]) =>
             hasAnySection(role, sections, keys),

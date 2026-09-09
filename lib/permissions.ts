@@ -169,6 +169,16 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
   },
 ];
 
+// Sections that a plain admin (Manager tier — role='admin', is_super_admin
+// false) does NOT get automatically, unlike every other section — only an
+// Administrator (role='admin' AND is_super_admin) always has these; a
+// Manager needs the matching row in user_section_access same as an
+// Employee would. Added 2026-09-09, per Chad: "just because you are an
+// admin, doesnt mean you get access [to Finance]... We dont want all our
+// admins to see it." Keep this in sync with has_section()'s restricted-key
+// list in sql/is_super_admin.sql.
+export const ADMIN_RESTRICTED_SECTIONS: AnySectionKey[] = ["cashflow_dashboard"];
+
 export const GROUP_KEYS: GroupKey[] = SECTION_GROUPS.map((g) => g.key);
 
 export const GROUP_LABEL: Record<GroupKey, string> = Object.fromEntries(
@@ -187,26 +197,40 @@ export const SECTION_LABEL: Record<SectionKey, string> = Object.fromEntries(
   SECTION_GROUPS.flatMap((g) => g.items.map((i) => [i.key, i.label] as const)),
 ) as Record<SectionKey, string>;
 
-// True if this person can use the given section — admins always can;
-// a Basic user needs the matching row in user_section_access.
+// True if this person can use the given section — an Administrator
+// (role='admin' AND isSuperAdmin) always can; a Manager (role='admin',
+// isSuperAdmin false/omitted) can too, UNLESS the section is on
+// ADMIN_RESTRICTED_SECTIONS (today just Finance's cashflow_dashboard), in
+// which case a Manager needs the matching row same as an Employee would.
+// isSuperAdmin defaults to false — every pre-existing call site (written
+// before the Administrator/Manager/Employee tiering existed) that only
+// ever passed 3 args keeps behaving exactly as before for every ordinary
+// section; only a restricted section's check actually changes.
 export function hasSection(
   role: Role | undefined,
   sections: AnySectionKey[] | undefined,
   key: AnySectionKey,
+  isSuperAdmin = false,
 ): boolean {
-  if (role === "admin") return true;
+  if (role === "admin") {
+    if (ADMIN_RESTRICTED_SECTIONS.includes(key) && !isSuperAdmin) {
+      return !!sections?.includes(key);
+    }
+    return true;
+  }
   return !!sections?.includes(key);
 }
 
 // True if this person can use ANY of the given sections — for the handful
-// of pages/tools backed by data shared across more than one section.
+// of pages/tools backed by data shared across more than one section. Same
+// isSuperAdmin/ADMIN_RESTRICTED_SECTIONS behavior as hasSection() above.
 export function hasAnySection(
   role: Role | undefined,
   sections: AnySectionKey[] | undefined,
   keys: AnySectionKey[],
+  isSuperAdmin = false,
 ): boolean {
-  if (role === "admin") return true;
-  return keys.some((k) => sections?.includes(k));
+  return keys.some((k) => hasSection(role, sections, k, isSuperAdmin));
 }
 
 // Users > Edit only offers whole-category toggles (see SECTION_GROUPS
@@ -226,9 +250,9 @@ export function hasGroup(
   role: Role | undefined,
   sections: AnySectionKey[] | undefined,
   group: GroupKey,
+  isSuperAdmin = false,
 ): boolean {
-  if (role === "admin") return true;
-  return GROUP_SECTIONS[group].every((k) => sections?.includes(k));
+  return GROUP_SECTIONS[group].every((k) => hasSection(role, sections, k, isSuperAdmin));
 }
 
 // Fetches one user's granted section keys (Ernie included, since it's a row

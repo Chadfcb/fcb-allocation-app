@@ -5,6 +5,17 @@ export interface Profile {
   email: string;
   full_name: string | null;
   role: Role;
+  // Administrator (true) vs Manager (false) — only meaningful when
+  // role === "admin"; ignored for role === "basic" (Employee). Added
+  // 2026-09-09, per Chad: only he and Art are Administrators — everyone
+  // else who's role='admin' is a Manager, who gets everything an
+  // Administrator has today EXCEPT the handful of admin-restricted
+  // sections (see ADMIN_RESTRICTED_SECTIONS in lib/permissions.ts — today
+  // just Finance's Cash Flow Dashboard) unless separately granted one via
+  // Users > Edit. Only an Administrator can flip this or grant/revoke a
+  // restricted section for anyone (enforced in the database, not just the
+  // UI — see sql/is_super_admin.sql).
+  is_super_admin: boolean;
   // True until this person has been through the account-setup flow (set
   // their own password + name) — forces a redirect to /account-setup on
   // every page in the (app) group until they complete it. Defaults true for

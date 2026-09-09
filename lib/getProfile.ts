@@ -34,7 +34,14 @@ export async function getProfile(): Promise<ProfileWithSections | null> {
   if (!data) return null;
 
   const profile = data as Profile;
-  const sections = profile.role === "admin" ? [] : await getUserSections(supabase, user.id);
+  // Administrators (role='admin' AND is_super_admin) never need rows —
+  // hasSection()/hasAnySection() already short-circuit true for them on
+  // every section. A Manager (role='admin', is_super_admin false) DOES need
+  // real sections fetched now, unlike before the Administrator/Manager/
+  // Employee tiering — they can hold an actual cashflow_dashboard grant row
+  // (one of the ADMIN_RESTRICTED_SECTIONS), which only matters if this
+  // fetch doesn't skip them. Employees (role='basic') are unchanged.
+  const sections = profile.is_super_admin ? [] : await getUserSections(supabase, user.id);
 
   const lastActive = profile.last_active_at ? new Date(profile.last_active_at).getTime() : 0;
   if (Date.now() - lastActive > LAST_ACTIVE_UPDATE_INTERVAL_MS) {

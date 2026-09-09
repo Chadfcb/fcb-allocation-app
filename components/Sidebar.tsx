@@ -344,9 +344,15 @@ function upcDescendantIds(): string[] {
 export default function Sidebar({
   role,
   sections,
+  isSuperAdmin,
 }: {
   role: Role | undefined;
   sections: AnySectionKey[];
+  // Administrator (true) vs Manager (false/undefined) — only matters for
+  // ADMIN_RESTRICTED_SECTIONS (today just Finance's cashflow_dashboard, see
+  // lib/permissions.ts). Added 2026-09-09, per Chad: being an admin no
+  // longer automatically shows Finance in the sidebar.
+  isSuperAdmin?: boolean;
 }) {
   const pathname = usePathname();
   const [hidden, setHidden] = useState(false);
@@ -585,7 +591,7 @@ export default function Sidebar({
   }
 
   function can(section: SectionKey | typeof ERNIE_SECTION) {
-    return hasSection(role, sections, section);
+    return hasSection(role, sections, section, isSuperAdmin);
   }
 
   // Site-wide active-page highlight: a green left border + green text

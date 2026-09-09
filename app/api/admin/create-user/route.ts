@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { ALL_SECTION_KEYS, ERNIE_SECTION, type AnySectionKey } from "@/lib/permissions";
+import {
+  ALL_SECTION_KEYS,
+  ERNIE_SECTION,
+  ADMIN_RESTRICTED_SECTIONS,
+  type AnySectionKey,
+} from "@/lib/permissions";
 
 const VALID_SECTIONS = new Set<AnySectionKey>([...ALL_SECTION_KEYS, ERNIE_SECTION]);
 
@@ -33,7 +38,7 @@ export async function POST(req: NextRequest) {
 
     const { data: profile } = await supabase
       .from("profiles")
-      .select("role")
+      .select("role, is_super_admin")
       .eq("id", user.id)
       .single();
 
@@ -43,11 +48,13 @@ export async function POST(req: NextRequest) {
         { status: 403 },
       );
     }
+    const requesterIsSuperAdmin = profile.is_super_admin === true;
 
-    const { email, password, role, sections } = (await req.json()) as {
+    const { email, password, role, is_super_admin, sections } = (await req.json()) as {
       email?: string;
       password?: string;
       role?: string;
+      is_super_admin?: boolean;
       sections?: string[];
     };
 
@@ -66,9 +73,23 @@ export async function POST(req: NextRequest) {
     if (role !== undefined && role !== "admin" && role !== "basic") {
       return NextResponse.json({ error: "Role must be admin or basic" }, { status: 400 });
     }
+
+    // Only an Administrator can create a Manager/Administrator account, or
+    // grant a Finance-restricted section to anyone — a Manager creating a
+    // user always gets an Employee account with only ordinary sections,
+    // regardless of what the request body claims (defense in depth; the
+    // client already hides these controls from a Manager).
+    const effectiveRole: "admin" | "basic" = requesterIsSuperAdmin
+      ? (role === "admin" ? "admin" : "basic")
+      : "basic";
+    const effectiveIsSuperAdmin = requesterIsSuperAdmin && effectiveRole === "admin" && is_super_admin === true;
+
     const requestedSections = (sections ?? []).filter((s): s is AnySectionKey =>
       VALID_SECTIONS.has(s as AnySectionKey),
     );
+    const allowedSections = requesterIsSuperAdmin
+      ? requestedSections
+      : requestedSections.filter((s) => !ADMIN_RESTRICTED_SECTIONS.includes(s));
 
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
       // This is the most likely real-world cause of this route failing —
@@ -98,15 +119,21 @@ export async function POST(req: NextRequest) {
     const newUserId = created.user?.id;
 
     if (newUserId) {
-      if (role === "admin") {
-        await adminClient.from("profiles").update({ role: "admin" }).eq("id", newUserId);
+      if (effectiveRole === "admin") {
+        await adminClient
+          .from("profiles")
+          .update({ role: "admin", is_super_admin: effectiveIsSuperAdmin })
+          .eq("id", newUserId);
       }
-      // role === "basic" needs no update — the handle_new_user trigger
-      // already defaults every new profile to basic.
-      if (role !== "admin" && requestedSections.length > 0) {
+      // effectiveRole === "basic" needs no role update — the
+      // handle_new_user trigger already defaults every new profile to
+      // basic/is_super_admin=false. An Administrator account has no
+      // sections to grant (hasSection() already short-circuits true for
+      // them everywhere); a Manager or Employee gets whatever was checked.
+      if (!effectiveIsSuperAdmin && allowedSections.length > 0) {
         await adminClient
           .from("user_section_access")
-          .insert(requestedSections.map((section_key) => ({ user_id: newUserId, section_key })));
+          .insert(allowedSections.map((section_key) => ({ user_id: newUserId, section_key })));
       }
     }
 

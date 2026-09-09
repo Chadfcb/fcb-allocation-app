@@ -74,12 +74,17 @@ export async function POST(req: NextRequest) {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select("role, is_super_admin")
     .eq("id", user.id)
     .single();
 
   const role = profile?.role;
-  const sections = role === "admin" ? [] : await getUserSections(supabase, user.id);
+  const isSuperAdmin = profile?.is_super_admin === true;
+  // Administrators never need rows fetched (hasSection() short-circuits
+  // true for them everywhere); a Manager (role='admin', not super) DOES
+  // need real sections now, in case they hold an actual cashflow_dashboard
+  // grant — see lib/getProfile.ts's matching comment.
+  const sections = isSuperAdmin ? [] : await getUserSections(supabase, user.id);
 
   // Ernie is itself a grantable section (see lib/permissions.ts) — an admin
   // always has it; a Basic user needs it explicitly checked from Users >
@@ -237,8 +242,8 @@ export async function POST(req: NextRequest) {
             body: JSON.stringify({
               model: ANTHROPIC_MODEL,
               max_tokens: 2048,
-              system: buildErnieSystemPrompt(role, sections),
-              tools: [...getErnieTools(role, sections), WEB_SEARCH_TOOL],
+              system: buildErnieSystemPrompt(role, sections, isSuperAdmin),
+              tools: [...getErnieTools(role, sections, isSuperAdmin), WEB_SEARCH_TOOL],
               ...(isLastRound ? { tool_choice: { type: "none" } } : {}),
               messages: anthropicMessages,
             }),
@@ -271,7 +276,7 @@ export async function POST(req: NextRequest) {
               send({ type: "status", label: describeErnieToolCall(block.name) });
               let result: unknown;
               try {
-                result = await runErnieTool(supabase, block.name, block.input ?? {}, role, sections, conversationId);
+                result = await runErnieTool(supabase, block.name, block.input ?? {}, role, sections, conversationId, isSuperAdmin);
               } catch (toolErr) {
                 result = {
                   error:
