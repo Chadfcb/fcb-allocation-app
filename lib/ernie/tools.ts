@@ -59,6 +59,8 @@ import {
   applySpreadsheetEdits,
   fetchExternalFileForDownload,
   createSpreadsheetFromSheets,
+  stageFileForQuery,
+  clearStagedFileData,
   type SpreadsheetEditInput,
   type SpreadsheetSheetInput,
 } from "@/lib/ernie/files";
@@ -270,6 +272,8 @@ Sales section tables (all admin-only, folded in from the old FCB Pricing desktop
 - batch_recipe_items(id, brand_id, ingredient_key, qty_per_bbl, unit, sort_order) — one row per ingredient in a brand's batch recipe, quantity per BBL of batch. This is Sales > Cost Per Case > Batch Ingredients: to answer "what are the batch ingredients and costs for N bbls of <brand>," join batch_recipe_items to ingredient_costs on ingredient_key, multiply qty_per_bbl * N * ingredient_costs.price for each ingredient's cost, and sum across a brand's rows for the batch total — N is whatever batch size was asked about, it does not have to match that brand's usual margin_analyses.yield_bbls
 - contribution_margin_lines(id, brand_id, package_key, revenue_per_ce) — revenue per case-equivalent, the one user-edited figure Contribution Margin needs; everything else there is computed from Cost Per Case's and Margin Analysis's tables
 
+- ernie_staged_rows(id, user_id, file_id, sheet_name, row_index, data jsonb) — scratch rows loaded from an uploaded/produced spreadsheet or CSV via stage_uploaded_file_for_query (call that FIRST; this table starts out empty for every file). Always filter by file_id. Each row's real columns live inside the jsonb "data" field, named exactly as that file's header row — read one with data->>'ColumnName' (text) and cast numeric ones, e.g. (data->>'Quantity')::numeric, before summing/averaging/comparing. This is how you do real bulk arithmetic (filter, group, weighted-average) on a file someone hands you, joined or compared against any other table above in the same query if needed.
+
 Two Postgres functions already implement the exact packaging/label bill-of-materials math the Inventory & Allocation page uses — call them from SQL rather than re-deriving the recipe yourself: classify_product_packaging(product_name text) returns one of can_19_2oz/can_16oz/can_12oz/keg_1_2bbl/keg_1_6bbl/tap_handle/unrecognized; packaging_consumed_for_week(week_id uuid) returns a table(item_key, consumed) of total packaging consumed by that week's allocations (every distributor combined — join allocations yourself, filtered by distributor_id, if you need one distributor's share instead).
 
 Any table above with a storage_path column (event_materials, pos_library, pos_label_files today — there may be more as the app grows) is describing a real file, not just data. Querying one of those only tells you the file EXISTS — to actually hand it to the user as a download, call get_file_for_download with that row's storage_path and its bucket (event-materials for event_materials/pos_library, pos-label-files for pos_label_files). Whenever someone asks you to pull up, send them, or let them download a specific file — not just tell them about it — that's the tool to reach for.`,
@@ -367,6 +371,41 @@ Whether this succeeds depends entirely on whether YOU (the signed-in user asking
         },
       },
       required: ["bucket", "path"],
+    },
+  },
+  {
+    name: "stage_uploaded_file_for_query",
+    description:
+      `Load EVERY row of an uploaded (or Ernie-produced) spreadsheet/CSV into a temporary, query-able table so you can run real SQL aggregation on it with run_read_only_query — SUM, GROUP BY, weighted averages, filters, joins against the app's own data, whatever the question needs. Reach for this whenever someone wants an actual calculation across a file with more than a couple hundred rows (a units-sold export, a distributor spreadsheet, anything to "crunch the numbers on") — read_uploaded_file only shows you a rendered preview capped at 300 rows, and you cannot reliably hand-sum thousands of rows by reading them as text, the same way a person couldn't either.
+
+After this succeeds, query the ernie_staged_rows table with run_read_only_query, filtered to this file's file_id. Each staged row's fields live in a jsonb "data" column — read a field with data->>'ColumnName' (returns text) and cast numeric ones before summing/averaging/comparing, e.g.: select data->>'Brand' as brand, sum((data->>'Quantity')::numeric) from ernie_staged_rows where file_id = '<file_id>' group by 1 order by 2 desc. The exact column names available come back in this tool's response — use those exactly (they match the file's header row).
+
+Only spreadsheets/CSVs can be staged (not images or PDFs), capped at 20,000 data rows per file — if a file is bigger than that, say so and ask whether a filtered export would work instead. Re-staging the same file replaces its previously-staged rows rather than duplicating them, so it's safe to call again after the user re-attaches an updated version.`,
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        file_id: {
+          type: "string",
+          description: "The spreadsheet or CSV file's id to stage (from list_uploaded_files, or from earlier in this conversation).",
+        },
+        sheet: {
+          type: "string",
+          description: "Exact sheet name to stage (.xlsx only). Omit to use the file's first sheet. Ignored for CSV.",
+        },
+      },
+      required: ["file_id"],
+    },
+  },
+  {
+    name: "clear_staged_file_data",
+    description:
+      "Remove a file's previously-staged rows from ernie_staged_rows (see stage_uploaded_file_for_query) once you're done querying it. Not required — re-staging the same file already replaces its old rows — but good tidiness to call once an analysis is finished, especially for a large file.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        file_id: { type: "string", description: "The file_id whose staged rows should be removed." },
+      },
+      required: ["file_id"],
     },
   },
 ];
@@ -468,6 +507,8 @@ const TOOL_STATUS_LABELS: Record<string, string> = {
   read_uploaded_file: "Reading your uploaded file",
   edit_spreadsheet: "Editing your spreadsheet",
   get_file_for_download: "Fetching that file",
+  stage_uploaded_file_for_query: "Loading your file for analysis",
+  clear_staged_file_data: "Cleaning up staged data",
 };
 
 export function describeErnieToolCall(name: string): string {
@@ -1357,6 +1398,42 @@ export async function runErnieTool(
       }
     }
 
+    case "stage_uploaded_file_for_query": {
+      const fileId = input.file_id as string | undefined;
+      if (!fileId) return { error: "No file_id provided." };
+      const { data: file, error } = await supabase
+        .from("ernie_files")
+        .select("id, file_name, mime_type, size_bytes, storage_path")
+        .eq("id", fileId)
+        .maybeSingle();
+      if (error) throw error;
+      if (!file) {
+        return { error: "No file found with that id (it may not exist, or belong to someone else)." };
+      }
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return { error: "Not signed in." };
+
+      try {
+        const sheet = typeof input.sheet === "string" ? input.sheet : undefined;
+        return await stageFileForQuery(supabase, user.id, file, sheet);
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : "Couldn't stage that file." };
+      }
+    }
+
+    case "clear_staged_file_data": {
+      const fileId = input.file_id as string | undefined;
+      if (!fileId) return { error: "No file_id provided." };
+      try {
+        return await clearStagedFileData(supabase, fileId);
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : "Couldn't clear staged data." };
+      }
+    }
+
     default:
       return { error: `Unknown tool "${name}"` };
   }
@@ -1430,6 +1507,8 @@ On the Inventory & Allocation tools: each product (at the whole-inventory level)
 You also have run_read_only_query, a general-purpose tool that runs any read-only SQL SELECT against the app's own database — reach for it whenever a question isn't already covered by one of the specific tools above (for example: "do we have enough cans and lids on hand to cover this week's whole 16oz can order across every distributor", or any other cross-table or aggregate question) rather than guessing, refusing, or claiming you have no way to find out. Its own description lists the real table and column names to use, and two existing database functions (classify_product_packaging, packaging_consumed_for_week) that already implement the same packaging bill-of-materials math the Inventory page itself uses — call those instead of re-deriving the recipe from scratch. If a query comes back with zero rows for something that plausibly exists, that most often means this account doesn't have permission to see that data (see above), not that the data doesn't exist — say so rather than concluding there's nothing there. If a query is rejected outright (a database error message about what's not allowed), rewrite it as a single plain read-only SELECT and try again before giving up.
 
 Anyone can attach files to a message (drag-and-drop onto the chat, or the attach button) — a freshly-attached file's contents are included automatically, with no tool call needed. Images, PDFs, spreadsheets (.xlsx), CSV, and plain text files are all read directly; any other file type can still be uploaded but you can't read its contents yet, so say that plainly rather than guessing what's in it. If someone refers to a file from earlier without re-attaching it, use list_uploaded_files to find it and read_uploaded_file to pull its contents back up (this works for everything except PDFs — ask for a PDF to be re-attached instead). For spreadsheets and CSV specifically, you can also edit them with edit_spreadsheet: read the file first so you know its real sheet names and current cell values, then give it the exact cells to change — it edits that file in place (preserving everything else: formatting, other sheets, formulas) and hands back a new file to download. Never claim you've edited or analyzed a file without actually having its contents in front of you.
+
+The automatic preview of an attached spreadsheet/CSV is capped at 300 rows — fine for looking at or editing a file, but NOT enough to actually calculate anything across a bigger one. Whenever someone wants a real calculation over a file with more rows than that — total units sold by product, a weighted average, matching it against another dataset, anything you'd normally reach for a spreadsheet formula or a SQL query to get right — call stage_uploaded_file_for_query first. That loads every row into a table you can then query for real with run_read_only_query (filtered to that file's file_id), so the arithmetic is done by the database, not guessed at by reading rows as text. This is also how to combine an uploaded file with the app's own data in one answer — e.g. matching an Ekos sales export against Contribution Margin figures — since both live in tables run_read_only_query can join in a single query. Call clear_staged_file_data when you're done with a file's staged data, as good tidiness (not required — re-staging the same file already replaces its old rows automatically).
 
 You can also pull up and hand over files that already exist elsewhere in the app — not just files someone uploaded directly to you. If a question is really "get me this file" (e.g. POS materials for a brand, an event's attached files) rather than "look up this data," use run_read_only_query to find the matching row(s) in whatever table holds that library (see the schema notes on run_read_only_query for which tables have files and what bucket each uses), then call get_file_for_download with that row's bucket and storage_path to actually hand it over as a download — don't just describe that the file exists. Whether that succeeds depends on your own access to that file, exactly like every other data lookup; an error back from it means access is restricted for this account, not that something is broken.
 

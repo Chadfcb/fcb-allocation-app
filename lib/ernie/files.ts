@@ -171,6 +171,223 @@ function renderCsv(buffer: Buffer): string {
   return renderGrid('Sheet "Sheet1"', rowCount, colCount, (r, c) => String(rows[r - 1]?.[c - 1] ?? ""));
 }
 
+// ---------------------------------------------------------------------
+// Staging a file's rows for real analysis (stage_uploaded_file_for_query,
+// added 2026-09-09 — see sql/ernie_staged_rows.sql for the full writeup of
+// why this exists). Unlike renderXlsx/renderCsv above (capped at
+// RENDER_MAX_ROWS, meant for Ernie to just look at/edit a file), this reads
+// EVERY row up to STAGING_MAX_ROWS and keeps each cell's real type (numbers
+// stay numbers) so the rows can be inserted as JSONB and actually summed/
+// grouped/filtered with real SQL via run_read_only_query, instead of Ernie
+// trying to eyeball-aggregate thousands of rows of rendered text.
+// ---------------------------------------------------------------------
+
+export const STAGING_MAX_ROWS = 20000;
+
+export type StagedCellValue = string | number | boolean | null;
+
+export interface StagedRow {
+  rowIndex: number;
+  data: Record<string, StagedCellValue>;
+}
+
+export interface StagingResult {
+  sheetName: string;
+  headers: string[];
+  rows: StagedRow[];
+  totalRowsInSheet: number;
+  truncated: boolean;
+}
+
+function cellTypedValue(cell: ExcelJS.Cell): StagedCellValue {
+  const v = cell.value;
+  if (v === null || v === undefined) return null;
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (typeof v === "number" || typeof v === "boolean") return v;
+  if (typeof v === "object") {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see cellDisplayValue above for why
+    const obj = v as any;
+    if (Array.isArray(obj.richText)) {
+      return (obj.richText as { text: string }[]).map((t) => t.text).join("");
+    }
+    if ("result" in obj) {
+      const r = obj.result;
+      return typeof r === "number" ? r : r == null ? null : String(r);
+    }
+    if ("text" in obj) return String(obj.text ?? "");
+    return null;
+  }
+  return String(v);
+}
+
+// A blank or repeated header would silently clobber a JSONB key (two
+// columns both named "Total" would leave only the second one queryable) —
+// dedupe defensively rather than let that happen invisibly.
+function dedupeHeaders(raw: string[]): string[] {
+  const seen = new Map<string, number>();
+  return raw.map((h, i) => {
+    const label = h.trim() || `Column${i + 1}`;
+    const count = seen.get(label) ?? 0;
+    seen.set(label, count + 1);
+    return count === 0 ? label : `${label}_${count + 1}`;
+  });
+}
+
+async function parseXlsxRowsForStaging(buffer: Buffer, sheetName?: string): Promise<StagingResult> {
+  const workbook = new ExcelJS.Workbook();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see renderXlsx above
+  await workbook.xlsx.load(buffer as any);
+  let sheet: ExcelJS.Worksheet | undefined;
+  if (sheetName) {
+    sheet = workbook.getWorksheet(sheetName);
+    if (!sheet) {
+      throw new Error(
+        `No sheet named "${sheetName}" in this file. Sheets in this file: ${workbook.worksheets.map((s) => s.name).join(", ")}.`,
+      );
+    }
+  } else {
+    sheet = workbook.worksheets[0];
+  }
+  if (!sheet) throw new Error("This file has no sheets.");
+
+  const colCount = sheet.columnCount;
+  const headerRow = sheet.getRow(1);
+  const headers = dedupeHeaders(
+    Array.from({ length: colCount }, (_, i) => cellDisplayValue(headerRow.getCell(i + 1))),
+  );
+
+  const totalRowsInSheet = Math.max(sheet.rowCount - 1, 0);
+  const lastRowToRead = 1 + Math.min(totalRowsInSheet, STAGING_MAX_ROWS);
+  const rows: StagedRow[] = [];
+  for (let r = 2; r <= lastRowToRead; r++) {
+    const data: Record<string, StagedCellValue> = {};
+    let blank = true;
+    for (let c = 1; c <= colCount; c++) {
+      const val = cellTypedValue(sheet.getRow(r).getCell(c));
+      if (val !== null && val !== "") blank = false;
+      data[headers[c - 1]] = val;
+    }
+    if (blank) continue;
+    rows.push({ rowIndex: r - 1, data });
+  }
+  return { sheetName: sheet.name, headers, rows, totalRowsInSheet, truncated: totalRowsInSheet > STAGING_MAX_ROWS };
+}
+
+function parseCsvRowsForStaging(buffer: Buffer): StagingResult {
+  const raw = csvRows(buffer);
+  if (!raw.length) throw new Error("This file has no rows.");
+  const headers = dedupeHeaders(raw[0].map((h) => h ?? ""));
+  const totalRowsInSheet = Math.max(raw.length - 1, 0);
+  const lastIndexToRead = Math.min(totalRowsInSheet, STAGING_MAX_ROWS);
+  const rows: StagedRow[] = [];
+  for (let i = 0; i < lastIndexToRead; i++) {
+    const rawRow = raw[i + 1] ?? [];
+    const data: Record<string, StagedCellValue> = {};
+    let blank = true;
+    headers.forEach((h, ci) => {
+      const trimmed = String(rawRow[ci] ?? "").trim();
+      let val: StagedCellValue = trimmed === "" ? null : trimmed;
+      // CSV has no cell types of its own — coerce anything that reads as a
+      // plain number so SUM/AVG/comparisons work without a cast in every
+      // query. Anything with formatting (commas, $, %) stays text on
+      // purpose; ask Ernie to strip that in the SQL (e.g. replace(...)) —
+      // guessing at it here risks silently mis-parsing real text data.
+      if (val !== null && /^-?\d+(\.\d+)?$/.test(val)) val = Number(val);
+      if (val !== null) blank = false;
+      data[h] = val;
+    });
+    if (blank) continue;
+    rows.push({ rowIndex: i + 1, data });
+  }
+  return { sheetName: "Sheet1", headers, rows, totalRowsInSheet, truncated: totalRowsInSheet > STAGING_MAX_ROWS };
+}
+
+// stage_uploaded_file_for_query's implementation — downloads the user's
+// actual uploaded file, parses every row (see above), replaces any
+// previously-staged rows for this same file (so re-staging after Ernie
+// re-reads an updated attach doesn't duplicate), and inserts the new rows
+// into ernie_staged_rows in chunks (Supabase/PostgREST caps how much a
+// single insert() call can carry).
+const STAGING_INSERT_CHUNK_SIZE = 500;
+
+export async function stageFileForQuery(
+  supabase: SupabaseClient,
+  userId: string,
+  file: ErnieFileRow,
+  sheetName?: string,
+): Promise<{
+  file_id: string;
+  file_name: string;
+  sheet_name: string;
+  row_count: number;
+  columns: string[];
+  truncated: boolean;
+  note: string;
+}> {
+  const kind = classifyErnieFile(file.file_name, file.mime_type);
+  if (kind !== "spreadsheet_xlsx" && kind !== "spreadsheet_csv") {
+    throw new Error(`"${file.file_name}" isn't a spreadsheet or CSV — only those file types can be staged for query.`);
+  }
+
+  const { data, error } = await supabase.storage.from(ERNIE_FILES_BUCKET).download(file.storage_path);
+  if (error || !data) throw new Error(`Couldn't read "${file.file_name}" from storage.`);
+  const buffer = Buffer.from(await data.arrayBuffer());
+
+  const result =
+    kind === "spreadsheet_xlsx" ? await parseXlsxRowsForStaging(buffer, sheetName) : parseCsvRowsForStaging(buffer);
+
+  if (!result.rows.length) {
+    throw new Error(`"${file.file_name}" (sheet "${result.sheetName}") has no data rows to stage.`);
+  }
+
+  // Replace, don't append — re-staging the same file should reflect its
+  // current contents, not pile up duplicates from earlier attempts.
+  const { error: deleteErr } = await supabase.from("ernie_staged_rows").delete().eq("file_id", file.id);
+  if (deleteErr) throw new Error(`Couldn't clear previously-staged rows for this file: ${deleteErr.message}`);
+
+  for (let i = 0; i < result.rows.length; i += STAGING_INSERT_CHUNK_SIZE) {
+    const chunk = result.rows.slice(i, i + STAGING_INSERT_CHUNK_SIZE).map((row) => ({
+      user_id: userId,
+      file_id: file.id,
+      sheet_name: result.sheetName,
+      row_index: row.rowIndex,
+      data: row.data,
+    }));
+    const { error: insertErr } = await supabase.from("ernie_staged_rows").insert(chunk);
+    if (insertErr) throw new Error(`Staged ${i} of ${result.rows.length} row(s), then failed: ${insertErr.message}`);
+  }
+
+  const truncNote = result.truncated
+    ? ` Only the first ${STAGING_MAX_ROWS} of ${result.totalRowsInSheet} rows were staged (the rest were left out — ask if you need a higher cap).`
+    : "";
+  return {
+    file_id: file.id,
+    file_name: file.file_name,
+    sheet_name: result.sheetName,
+    row_count: result.rows.length,
+    columns: result.headers,
+    truncated: result.truncated,
+    note:
+      `Staged ${result.rows.length} row(s) from "${file.file_name}" (sheet "${result.sheetName}") into ` +
+      `ernie_staged_rows, file_id="${file.id}". Query it with run_read_only_query, e.g.: ` +
+      `select data->>'${result.headers[0]}' as ${JSON.stringify(result.headers[0]).replace(/"/g, "")}, count(*) from ernie_staged_rows where file_id = '${file.id}' group by 1. ` +
+      `Each row's fields live in the jsonb "data" column — read a field as data->>'ColumnName' (text) and cast ` +
+      `numeric ones with (data->>'ColumnName')::numeric before summing/averaging/comparing.${truncNote}`,
+  };
+}
+
+// clear_staged_file_data's implementation — lets Ernie (or a natural
+// end-of-analysis tidy-up) remove rows it staged once they're no longer
+// needed, rather than leaving scratch data to pile up indefinitely.
+export async function clearStagedFileData(
+  supabase: SupabaseClient,
+  fileId: string,
+): Promise<{ deleted: boolean }> {
+  const { error } = await supabase.from("ernie_staged_rows").delete().eq("file_id", fileId);
+  if (error) throw new Error(`Couldn't clear staged data: ${error.message}`);
+  return { deleted: true };
+}
+
 export interface SpreadsheetEditInput {
   sheet?: string;
   cell: string;
