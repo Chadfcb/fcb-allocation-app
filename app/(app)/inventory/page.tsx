@@ -2508,28 +2508,26 @@ export default function InventoryPage() {
                     style={{ color: d.color ?? undefined }}
                   >
                     <span className="inline-flex items-center justify-end gap-1">
-                      {isAdmin ? (
-                        <button
-                          onClick={() => handleToggleDistributorLock(d.id)}
-                          title={
-                            d.allocations_locked
-                              ? "Locked for editing — every other distributor is dimmed and locked out until you unlock this one."
-                              : "Click to lock — dims and locks every other distributor so only this one can be edited."
-                          }
-                          className="text-xs leading-none opacity-80 hover:opacity-100"
-                        >
-                          {d.allocations_locked ? "🔒" : "🔓"}
-                        </button>
-                      ) : (
-                        d.allocations_locked && (
-                          <span
-                            className="text-xs leading-none"
-                            title="Locked for editing right now."
-                          >
-                            🔒
-                          </span>
-                        )
-                      )}
+                      {/* Anyone who can see this page at all — admin or a
+                          Basic/Employee user granted Inventory & Allocation —
+                          can lock and unlock a distributor, opened up
+                          2026-09-09 per Chad: "basics need the ability to
+                          lock and unlock if they have access to this
+                          section." Previously this toggle was admin-only; a
+                          non-admin only ever saw a static icon once
+                          something was already locked, with no way to lock
+                          or unlock it themselves. */}
+                      <button
+                        onClick={() => handleToggleDistributorLock(d.id)}
+                        title={
+                          d.allocations_locked
+                            ? "Locked for editing — every other distributor is dimmed and locked out until you unlock this one."
+                            : "Click to lock — dims and locks every other distributor so only this one can be edited."
+                        }
+                        className="text-xs leading-none opacity-80 hover:opacity-100"
+                      >
+                        {d.allocations_locked ? "🔒" : "🔓"}
+                      </button>
                       {d.name}
                     </span>
                   </th>
