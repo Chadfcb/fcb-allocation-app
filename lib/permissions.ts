@@ -15,13 +15,13 @@ import type { Role } from "@/lib/types/db";
 // hard admin-only regardless of any section grant, unchanged from how the
 // app already works.
 export type SectionKey =
+  | "cashflow_dashboard"
   | "purchase_orders"
   | "inventory_allocation"
   | "distributor_inventory"
   | "build_orders"
   | "distributor_pricing"
   | "weeks"
-  | "upcs"
   | "audit_log"
   | "price_list"
   | "margin_analysis"
@@ -29,10 +29,7 @@ export type SectionKey =
   | "contribution_margin"
   | "events_calendar"
   | "pos_labels"
-  | "tasks"
-  | "chain_authorizations"
-  | "chain_mandates"
-  | "football_pos";
+  | "tasks";
 
 // Ernie AI is deliberately its own grantable section, separate from every
 // page section above — an admin may want someone to have, say, Purchase
@@ -71,9 +68,20 @@ export interface SectionInfo {
 // edits a new top-level category needs.
 //
 // Order here is also the display order in the Users > Edit checklist.
-export type GroupKey = "operations" | "sales" | "events_calendar" | "pos_labels" | "tasks" | "audit_log";
+export type GroupKey = "finance" | "operations" | "sales" | "events_calendar" | "pos_labels" | "tasks";
 
 export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[] }[] = [
+  {
+    // New top-level category, added 2026-09-09 per Chad — sits above
+    // Operations in the sidebar. First page under it is the Cash Flow
+    // Dashboard (a placeholder shell for now — see
+    // components/CashflowDashboardPageClient.tsx — the real numbers get
+    // wired in as a follow-up once Brew Planner and the rest of the data
+    // plumbing exist). More Finance pages will likely get added here later.
+    key: "finance",
+    label: "Finance",
+    items: [{ key: "cashflow_dashboard", label: "Cash Flow Dashboard" }],
+  },
   {
     key: "operations",
     label: "Operations",
@@ -91,10 +99,7 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
       // top-level Users > Edit toggle grants it has changed — checking
       // Operations now also grants this page.
       { key: "pos_labels", label: "Labels" },
-      // Added 2026-09-05, just above where Audit Log used to sit — per
-      // Chad, right before he asked to move Audit Log out of Operations
-      // entirely (see the new "audit_log" group below).
-      { key: "upcs", label: "UPC's" },
+      { key: "audit_log", label: "Audit Log" },
     ],
   },
   {
@@ -105,14 +110,6 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
       { key: "margin_analysis", label: "Margin Analysis" },
       { key: "cost_per_case", label: "Cost Per Case" },
       { key: "contribution_margin", label: "Contribution Margin" },
-      // Added 2026-09-05, per Chad — imported from a chain
-      // authorizations/mandates spreadsheet. Per Chad: "only the main
-      // category is gated for access... if someone is given access to
-      // Sales, they have access to all sub categories" — these are NOT
-      // their own Users > Edit toggle, they just ride along with Sales,
-      // same as every other item in this group.
-      { key: "chain_authorizations", label: "Chain Authorizations" },
-      { key: "chain_mandates", label: "Chain Mandates" },
     ],
   },
   {
@@ -130,31 +127,18 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
   },
   {
     key: "pos_labels",
-    // Was left empty per Chad, 2026-09-05: "remove it from POS and leave
-    // POS empty for now" — Labels had moved to Operations. Now has its
-    // first real item: Football POS (2026-09-05), a flat file library of
-    // football-season point-of-sale art (posters, table tents, stickers,
-    // distributor strips), set up just like POS > Labels' file cards
-    // (preview + download) but with no brand/size nesting — it's one
-    // shared pool, not per-brand artwork.
+    // Left empty for now, per Chad, 2026-09-05: "remove it from POS and
+    // leave POS empty for now" — Labels moved to Operations above. A
+    // group with no items is hidden from the Users > Edit checklist and
+    // access summary (see app/(app)/admin/users/page.tsx) rather than
+    // showing a checkbox that would always read as checked.
     label: "POS",
-    items: [{ key: "football_pos", label: "Football POS" }],
+    items: [],
   },
   {
     key: "tasks",
     label: "Tasks",
     items: [{ key: "tasks", label: "Tasks" }],
-  },
-  {
-    key: "audit_log",
-    // Moved out of Operations into its own top-level category — per Chad,
-    // 2026-09-05: "lets move audit log to a main category, below Users,
-    // and out of operations." The underlying SectionKey value is
-    // unchanged ("audit_log"), so existing grants and RLS keep working —
-    // only which Users > Edit toggle it lives under (and where it shows
-    // up in the Sidebar) changed.
-    label: "Audit Log",
-    items: [{ key: "audit_log", label: "Audit Log" }],
   },
 ];
 
