@@ -122,5 +122,9 @@ export async function POST(req: NextRequest) {
     syncedCount += 1;
   }
 
+  // Stamp "Last Ekos sync" for the Dashboard — see the matching comment in
+  // app/api/purchase-orders/sync/route.ts. Added 2026-09-09.
+  await supabase.from("ekos_sync_status").upsert({ id: 1, last_synced_at: new Date().toISOString() });
+
   return NextResponse.json({ syncedCount, errors });
 }

@@ -22,6 +22,27 @@ export default async function DashboardPage() {
     .limit(1)
     .maybeSingle();
 
+  // "Last Ekos sync" — added 2026-09-09 so Chad can tell at a glance,
+  // without opening Purchase Orders or Distributor Inventory, whether the
+  // Mon-Fri 5am scheduled Ekos sync (or a live sync) actually ran. Stamped
+  // by both app/api/purchase-orders/sync and
+  // app/api/distributor-inventory/sync onto the single-row
+  // ekos_sync_status table (sql/ekos_sync_status.sql) — whichever kind of
+  // sync ran most recently wins.
+  const { data: syncStatus } = await supabase
+    .from("ekos_sync_status")
+    .select("last_synced_at")
+    .eq("id", 1)
+    .maybeSingle();
+
+  const lastSyncLabel = syncStatus?.last_synced_at
+    ? new Date(syncStatus.last_synced_at).toLocaleString("en-US", {
+        timeZone: "America/Los_Angeles",
+        dateStyle: "medium",
+        timeStyle: "short",
+      })
+    : null;
+
   return (
     <div className="space-y-6">
       <div>
@@ -30,6 +51,12 @@ export default async function DashboardPage() {
         </h1>
         <p className="text-sm text-neutral-400">
           Current week: <span className="font-medium text-neutral-300">{currentWeek?.label ?? "No week started yet"}</span>
+        </p>
+        <p className="text-sm text-neutral-400">
+          Last Ekos sync:{" "}
+          <span className="font-medium text-neutral-300">
+            {lastSyncLabel ? `${lastSyncLabel} PT` : "Never synced yet"}
+          </span>
         </p>
       </div>
 

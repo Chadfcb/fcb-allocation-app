@@ -157,6 +157,13 @@ export async function POST(req: NextRequest) {
     syncedCount += 1;
   }
 
+  // Stamp "Last Ekos sync" for the Dashboard — the sync running at all is
+  // the event Chad wants to see, so this is unconditional (not gated on
+  // syncedCount>0): a run that finds nothing changed still counts as a
+  // completed sync. Added 2026-09-09 alongside the Distributor Inventory
+  // sync route and the new ekos_sync_status table.
+  await supabase.from("ekos_sync_status").upsert({ id: 1, last_synced_at: new Date().toISOString() });
+
   return NextResponse.json({
     syncedCount,
     movedToHoldingCount: toHold.length,
