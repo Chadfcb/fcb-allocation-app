@@ -13,6 +13,13 @@
 //                    spreadsheet's own Running Total was a plain typed
 //                    number, never actually computed — this version
 //                    computes a real cumulative sum)
+//
+//   Column range for the four rows above, per Chad 2026-09-09: built like
+//   the spreadsheet — the current week (the most recent real week on
+//   file, highlighted with a ★, matching the spreadsheet's own Wk37 ★),
+//   the previous 3 real weeks before it, then extended forward with
+//   placeholder weeks out to 18 months (no real data exists for those yet
+//   — same "—" placeholder treatment as the Timing Summary below).
 //   CASH FLOW TIMING SUMMARY — a weekly-rows table (Week Start / Cash In /
 //                    Cumulative In / Cash Out / Cumulative Out / Net Cash)
 //                    running 18 months out (not 13 weeks — Chad's boss Art
@@ -264,6 +271,70 @@ export default function CashflowDashboardPageClient() {
     [weeks],
   );
 
+  // Column set for Revenue In / Expenses Out / Net Cash Flow / Running
+  // Total: the current week (most recent real week on file) plus its
+  // previous 3 real weeks, then the same 18-month run of placeholder
+  // future weeks used below for the Timing Summary — built like the
+  // spreadsheet, current week highlighted, extended out per Chad/Art.
+  interface GridColumn {
+    key: string;
+    weekId: string | null; // null for a placeholder future week
+    dateIso: string;
+    topLabel: string;
+    isCurrent: boolean;
+    isPlaceholder: boolean;
+  }
+
+  const displayColumns = useMemo<GridColumn[]>(() => {
+    const currentWeekId = weeks.length ? weeks[weeks.length - 1].id : null;
+    const realCols: GridColumn[] = weeks.slice(Math.max(0, weeks.length - 4)).map((w) => ({
+      key: w.id,
+      weekId: w.id,
+      dateIso: w.week_start,
+      topLabel: w.label,
+      isCurrent: w.id === currentWeekId,
+      isPlaceholder: false,
+    }));
+    const placeholderCols: GridColumn[] = timingWeeks.map((iso) => ({
+      key: iso,
+      weekId: null,
+      dateIso: iso,
+      topLabel: shortDate(iso),
+      isCurrent: false,
+      isPlaceholder: true,
+    }));
+    return [...realCols, ...placeholderCols];
+  }, [weeks, timingWeeks]);
+
+  const lastRealRunningTotal = weeks.length ? runningTotalByWeek.get(weeks[weeks.length - 1].id) ?? 0 : 0;
+
+  function revenueCell(distributorId: string, col: GridColumn): number {
+    if (col.isPlaceholder || !col.weekId) return 0;
+    return revenueGrid.get(distributorId)?.get(col.weekId) ?? 0;
+  }
+  function expenseCell(vendor: string, col: GridColumn): number {
+    if (col.isPlaceholder || !col.weekId) return 0;
+    return expenseGrid.get(vendor)?.get(col.weekId) ?? 0;
+  }
+  function totalRevenueCell(col: GridColumn): number {
+    if (col.isPlaceholder || !col.weekId) return 0;
+    return totalRevenueByWeek.get(col.weekId) ?? 0;
+  }
+  function totalExpenseCell(col: GridColumn): number {
+    if (col.isPlaceholder || !col.weekId) return 0;
+    return totalExpensesByWeek.get(col.weekId) ?? 0;
+  }
+  function netCell(col: GridColumn): number {
+    if (col.isPlaceholder || !col.weekId) return 0;
+    return netByWeek.get(col.weekId) ?? 0;
+  }
+  function runningTotalCell(col: GridColumn): number {
+    if (!col.isPlaceholder && col.weekId) return runningTotalByWeek.get(col.weekId) ?? 0;
+    // Placeholder future weeks: carry the last real cumulative total flat
+    // until this is wired to a real forward-looking projection.
+    return lastRealRunningTotal;
+  }
+
   const rowLabelCellClass =
     "sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 text-left text-neutral-300";
   const weekHeaderCellClass =
@@ -304,11 +375,21 @@ export default function CashflowDashboardPageClient() {
                 <thead>
                   <tr>
                     <th className={`${weekHeaderCellClass} sticky left-0 z-20 text-left`}>Distributor</th>
-                    {weeks.map((w) => (
-                      <th key={w.id} className={weekHeaderCellClass}>
-                        {w.label}
-                        <br />
-                        <span className="font-normal normal-case text-neutral-500">{shortDate(w.week_start)}</span>
+                    {displayColumns.map((col) => (
+                      <th
+                        key={col.key}
+                        className={`${weekHeaderCellClass} ${col.isCurrent ? "bg-[#6ABC46]/10 text-[#6ABC46]" : ""} ${col.isPlaceholder ? "text-neutral-600" : ""}`}
+                      >
+                        {col.isPlaceholder ? (
+                          shortDate(col.dateIso)
+                        ) : (
+                          <>
+                            {col.topLabel}
+                            {col.isCurrent && <span className="ml-1">★</span>}
+                            <br />
+                            <span className="font-normal normal-case text-neutral-500">{shortDate(col.dateIso)}</span>
+                          </>
+                        )}
                       </th>
                     ))}
                   </tr>
@@ -317,18 +398,18 @@ export default function CashflowDashboardPageClient() {
                   {distributors.map((d) => (
                     <tr key={d.id} className="hover:bg-neutral-900/40">
                       <td className={rowLabelCellClass}>{d.name}</td>
-                      {weeks.map((w) => (
-                        <td key={w.id} className={valueCellClass}>
-                          <Money value={revenueGrid.get(d.id)?.get(w.id) ?? 0} />
+                      {displayColumns.map((col) => (
+                        <td key={col.key} className={valueCellClass}>
+                          <Money value={revenueCell(d.id, col)} />
                         </td>
                       ))}
                     </tr>
                   ))}
                   <tr className="border-t-2 border-neutral-800 font-semibold text-neutral-100">
                     <td className={`${rowLabelCellClass} bg-neutral-900`}>Total Revenue</td>
-                    {weeks.map((w) => (
-                      <td key={w.id} className={`${valueCellClass} bg-neutral-900`}>
-                        <Money value={totalRevenueByWeek.get(w.id) ?? 0} className="text-[#6ABC46]" />
+                    {displayColumns.map((col) => (
+                      <td key={col.key} className={`${valueCellClass} bg-neutral-900`}>
+                        <Money value={totalRevenueCell(col)} className="text-[#6ABC46]" />
                       </td>
                     ))}
                   </tr>
@@ -347,11 +428,21 @@ export default function CashflowDashboardPageClient() {
                 <thead>
                   <tr>
                     <th className={`${weekHeaderCellClass} sticky left-0 z-20 text-left`}>Vendor</th>
-                    {weeks.map((w) => (
-                      <th key={w.id} className={weekHeaderCellClass}>
-                        {w.label}
-                        <br />
-                        <span className="font-normal normal-case text-neutral-500">{shortDate(w.week_start)}</span>
+                    {displayColumns.map((col) => (
+                      <th
+                        key={col.key}
+                        className={`${weekHeaderCellClass} ${col.isCurrent ? "bg-[#6ABC46]/10 text-[#6ABC46]" : ""} ${col.isPlaceholder ? "text-neutral-600" : ""}`}
+                      >
+                        {col.isPlaceholder ? (
+                          shortDate(col.dateIso)
+                        ) : (
+                          <>
+                            {col.topLabel}
+                            {col.isCurrent && <span className="ml-1">★</span>}
+                            <br />
+                            <span className="font-normal normal-case text-neutral-500">{shortDate(col.dateIso)}</span>
+                          </>
+                        )}
                       </th>
                     ))}
                   </tr>
@@ -359,7 +450,7 @@ export default function CashflowDashboardPageClient() {
                 <tbody className="divide-y divide-neutral-900">
                   {vendors.length === 0 ? (
                     <tr>
-                      <td colSpan={weeks.length + 1} className="px-4 py-4 text-center text-neutral-500">
+                      <td colSpan={displayColumns.length + 1} className="px-4 py-4 text-center text-neutral-500">
                         No vendor purchase orders on file.
                       </td>
                     </tr>
@@ -367,9 +458,9 @@ export default function CashflowDashboardPageClient() {
                     vendors.map((vendor) => (
                       <tr key={vendor} className="hover:bg-neutral-900/40">
                         <td className={rowLabelCellClass}>{vendor}</td>
-                        {weeks.map((w) => (
-                          <td key={w.id} className={valueCellClass}>
-                            <Money value={expenseGrid.get(vendor)?.get(w.id) ?? 0} />
+                        {displayColumns.map((col) => (
+                          <td key={col.key} className={valueCellClass}>
+                            <Money value={expenseCell(vendor, col)} />
                           </td>
                         ))}
                       </tr>
@@ -377,9 +468,9 @@ export default function CashflowDashboardPageClient() {
                   )}
                   <tr className="border-t-2 border-neutral-800 font-semibold text-neutral-100">
                     <td className={`${rowLabelCellClass} bg-neutral-900`}>Total Expenses</td>
-                    {weeks.map((w) => (
-                      <td key={w.id} className={`${valueCellClass} bg-neutral-900`}>
-                        <Money value={totalExpensesByWeek.get(w.id) ?? 0} />
+                    {displayColumns.map((col) => (
+                      <td key={col.key} className={`${valueCellClass} bg-neutral-900`}>
+                        <Money value={totalExpenseCell(col)} />
                       </td>
                     ))}
                   </tr>
@@ -394,9 +485,17 @@ export default function CashflowDashboardPageClient() {
                 <thead>
                   <tr>
                     <th className={`${weekHeaderCellClass} sticky left-0 z-20 text-left`}></th>
-                    {weeks.map((w) => (
-                      <th key={w.id} className={weekHeaderCellClass}>
-                        {w.label}
+                    {displayColumns.map((col) => (
+                      <th
+                        key={col.key}
+                        className={`${weekHeaderCellClass} ${col.isCurrent ? "bg-[#6ABC46]/10 text-[#6ABC46]" : ""} ${col.isPlaceholder ? "text-neutral-600" : ""}`}
+                      >
+                        {col.isPlaceholder ? shortDate(col.dateIso) : (
+                          <>
+                            {col.topLabel}
+                            {col.isCurrent && <span className="ml-1">★</span>}
+                          </>
+                        )}
                       </th>
                     ))}
                   </tr>
@@ -404,17 +503,17 @@ export default function CashflowDashboardPageClient() {
                 <tbody className="divide-y divide-neutral-900">
                   <tr className="font-semibold">
                     <td className={rowLabelCellClass}>Net Cash Flow</td>
-                    {weeks.map((w) => (
-                      <td key={w.id} className={valueCellClass}>
-                        <Money value={netByWeek.get(w.id) ?? 0} className="text-[#6ABC46]" />
+                    {displayColumns.map((col) => (
+                      <td key={col.key} className={valueCellClass}>
+                        <Money value={netCell(col)} className="text-[#6ABC46]" />
                       </td>
                     ))}
                   </tr>
                   <tr className="font-semibold">
                     <td className={rowLabelCellClass}>Running Total</td>
-                    {weeks.map((w) => (
-                      <td key={w.id} className={valueCellClass}>
-                        <Money value={runningTotalByWeek.get(w.id) ?? 0} className="text-[#6ABC46]" />
+                    {displayColumns.map((col) => (
+                      <td key={col.key} className={valueCellClass}>
+                        <Money value={runningTotalCell(col)} className="text-[#6ABC46]" />
                       </td>
                     ))}
                   </tr>
