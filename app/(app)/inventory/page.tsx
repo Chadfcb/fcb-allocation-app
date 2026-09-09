@@ -1708,6 +1708,7 @@ export default function InventoryPage() {
         distributor_id: distributorId,
         po_number: value,
         po_status: existing?.po_status ?? null,
+        delivery_date: existing?.delivery_date ?? null,
         updated_by: userId,
         updated_at: new Date().toISOString(),
       },
@@ -1721,6 +1722,7 @@ export default function InventoryPage() {
           distributor_id: distributorId,
           po_number: value,
           po_status: existing?.po_status ?? null,
+          delivery_date: existing?.delivery_date ?? null,
           updated_by: userId,
           updated_at: new Date().toISOString(),
         },
@@ -1752,6 +1754,12 @@ export default function InventoryPage() {
 
     const existing = pos[distributorId];
     const oldValue = existing?.po_status ?? "";
+    const oldDeliveryDate = existing?.delivery_date ?? null;
+    // Delivery Date (added 2026-09-09): auto-fills to today the first time
+    // a PO is marked Delivered, clears if flipped away from Delivered —
+    // same pattern as Purchase Orders' Paid Date.
+    const newDeliveryDate =
+      value === "delivered" ? oldDeliveryDate ?? new Date().toISOString().slice(0, 10) : null;
     setPos((prev) => ({
       ...prev,
       [distributorId]: {
@@ -1760,6 +1768,7 @@ export default function InventoryPage() {
         distributor_id: distributorId,
         po_number: existing?.po_number ?? null,
         po_status: value,
+        delivery_date: newDeliveryDate,
         updated_by: userId,
         updated_at: new Date().toISOString(),
       },
@@ -1773,6 +1782,7 @@ export default function InventoryPage() {
           distributor_id: distributorId,
           po_number: existing?.po_number ?? null,
           po_status: value,
+          delivery_date: newDeliveryDate,
           updated_by: userId,
           updated_at: new Date().toISOString(),
         },
@@ -1790,6 +1800,74 @@ export default function InventoryPage() {
         fieldName: "po_status",
         oldValue,
         newValue: value ?? "",
+        changedBy: userId,
+      });
+      if (oldDeliveryDate !== newDeliveryDate) {
+        await logChange(supabase, {
+          weekId: week.id,
+          tableName: "distributor_pos",
+          recordId: data.id,
+          fieldName: "delivery_date",
+          oldValue: oldDeliveryDate,
+          newValue: newDeliveryDate,
+          changedBy: userId,
+        });
+      }
+    }
+
+    setSavingKey(null);
+  }
+
+  // Manual edit/backdate of Delivery Date, independent of flipping PO
+  // Status itself — admin-only, same restriction the database enforces.
+  async function handleDeliveryDateChange(distributorId: string, value: string) {
+    if (!week || !userId || !isAdmin) return;
+    const key = `deliverydate:${distributorId}`;
+    setSavingKey(key);
+
+    const existing = pos[distributorId];
+    const oldValue = existing?.delivery_date ?? null;
+    const newValue = value || null;
+    setPos((prev) => ({
+      ...prev,
+      [distributorId]: {
+        id: existing?.id ?? "",
+        week_id: week.id,
+        distributor_id: distributorId,
+        po_number: existing?.po_number ?? null,
+        po_status: existing?.po_status ?? null,
+        delivery_date: newValue,
+        updated_by: userId,
+        updated_at: new Date().toISOString(),
+      },
+    }));
+
+    const { data, error } = await supabase
+      .from("distributor_pos")
+      .upsert(
+        {
+          week_id: week.id,
+          distributor_id: distributorId,
+          po_number: existing?.po_number ?? null,
+          po_status: existing?.po_status ?? null,
+          delivery_date: newValue,
+          updated_by: userId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "week_id,distributor_id" }
+      )
+      .select()
+      .single();
+
+    if (!error && data) {
+      setPos((prev) => ({ ...prev, [distributorId]: data as DistributorPO }));
+      await logChange(supabase, {
+        weekId: week.id,
+        tableName: "distributor_pos",
+        recordId: data.id,
+        fieldName: "delivery_date",
+        oldValue,
+        newValue,
         changedBy: userId,
       });
     }
@@ -2564,6 +2642,35 @@ export default function InventoryPage() {
                 );
               })}
               <th className="sticky top-[88px] right-0 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+            </tr>
+            <tr className="h-7 text-[10px] uppercase tracking-wide text-neutral-600">
+              <th className="sticky top-[116px] left-0 z-20 h-7 whitespace-nowrap bg-neutral-900 px-3 text-left font-normal">
+                Delivery Date
+              </th>
+              <th className="sticky top-[116px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+              <th className="sticky top-[116px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+              <th className="sticky top-[116px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+              <th className="sticky top-[116px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
+              {distributors.map((d) => {
+                const dimmed = isDistributorDimmed(d);
+                return (
+                  <th
+                    key={d.id}
+                    className={`sticky top-[116px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2 text-right ${
+                      dimmed ? "opacity-25" : ""
+                    }`}
+                  >
+                    <input
+                      type="date"
+                      value={pos[d.id]?.delivery_date ?? ""}
+                      disabled={!isAdmin || dimmed}
+                      onChange={(e) => handleDeliveryDateChange(d.id, e.target.value)}
+                      className="w-28 rounded border border-neutral-700 bg-neutral-900 px-1 py-0.5 text-right text-[11px] font-normal normal-case text-neutral-100 disabled:opacity-70"
+                    />
+                  </th>
+                );
+              })}
+              <th className="sticky top-[116px] right-0 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-900">

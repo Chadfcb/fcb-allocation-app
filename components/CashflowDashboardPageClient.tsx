@@ -39,6 +39,20 @@
 // distributor's price, summed across every product) the Inventory &
 // Allocation page itself uses.
 //
+// Revenue In — TIMING rule, reworked 2026-09-09 (this used to just land in
+// the week the order itself was in, gated only on po_status === 'delivered'):
+//   - Still only counts once a distributor's order is marked Delivered —
+//     Approved does NOT count as revenue.
+//   - WHICH column it lands in is no longer "that order's own week" — it's
+//     that order's Delivery Date (set on the Inventory & Allocations page
+//     the moment a distributor's status flips to Delivered, editable/
+//     backdatable after) plus that distributor's payment Terms (in days,
+//     see Finance > Distributor Data — 0 means due on delivery/COD, 30
+//     means net-30, etc.). Delivery Date + Terms is bucketed into a column
+//     the same way Expenses Out buckets a PO — via columnIndexForDate — so
+//     a distributor's revenue can now land in a placeholder (future)
+//     column, same as a rolled-forward pending expense can.
+//
 // Expenses Out — bucketing rule, added 2026-09-09 (this used to just be
 // po_date for every PO, regardless of paid/pending):
 //   - A Paid PO lands in whichever week its Paid Date falls in (the date
@@ -64,8 +78,14 @@
 // (inventory_allocation / purchase_orders) OR by cashflow_dashboard itself
 // (see sql/is_super_admin.sql) — so this works standalone for someone who
 // has ONLY been granted Finance.
+//
+// Live via Supabase Realtime, added 2026-09-09 — this page used to only
+// load once and never update again while you were looking at it, unlike
+// the rest of the app. Now it reloads on any change to weeks, distributors
+// (Terms), distributor_pos (status/Delivery Date), allocations,
+// distributor_prices, or purchase_orders.
 
-import { useMemo, useEffect, useState } from "react";
+import { useMemo, useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { PO_PAYMENT_STATUS_COLORS } from "@/lib/types/db";
 
@@ -78,6 +98,14 @@ interface WeekRow {
 interface DistributorRow {
   id: string;
   name: string;
+  payment_terms_days: number;
+}
+
+interface DistributorPoRow {
+  week_id: string;
+  distributor_id: string;
+  po_status: string | null;
+  delivery_date: string | null;
 }
 
 interface PoRow {
@@ -191,104 +219,98 @@ export default function CashflowDashboardPageClient() {
 
   const [weeks, setWeeks] = useState<WeekRow[]>([]);
   const [distributors, setDistributors] = useState<DistributorRow[]>([]);
-  const [revenueGrid, setRevenueGrid] = useState<Map<string, Map<string, number>>>(new Map());
+  const [distributorPoRows, setDistributorPoRows] = useState<DistributorPoRow[]>([]);
+  const [orderValueByWeekDist, setOrderValueByWeekDist] = useState<Map<string, number>>(new Map());
   const [purchaseOrderRows, setPurchaseOrderRows] = useState<PoRow[]>([]);
 
-  useEffect(() => {
-    let cancelled = false;
+  const load = useCallback(async () => {
+    setErrorMsg(null);
+    try {
+      const [
+        { data: weeksData, error: weeksErr },
+        { data: distributorsData, error: distErr },
+        { data: distributorPos, error: dposErr },
+        { data: allocations, error: allocErr },
+        { data: prices, error: pricesErr },
+        { data: purchaseOrders, error: poErr },
+      ] = await Promise.all([
+        supabase.from("weeks").select("id, label, week_start").order("week_start", { ascending: true }),
+        supabase
+          .from("distributors")
+          .select("id, name, active, sort_order, payment_terms_days")
+          .eq("active", true)
+          .order("sort_order", { ascending: true, nullsFirst: false }),
+        supabase.from("distributor_pos").select("week_id, distributor_id, po_status, delivery_date"),
+        supabase.from("allocations").select("week_id, distributor_id, product_id, quantity"),
+        supabase.from("distributor_prices").select("distributor_id, product_id, price"),
+        supabase
+          .from("purchase_orders")
+          .select("supplier, po_date, total_cost, payment_status, paid_date"),
+      ]);
 
-    async function load() {
-      setLoading(true);
-      setErrorMsg(null);
-      try {
-        const [
-          { data: weeksData, error: weeksErr },
-          { data: distributorsData, error: distErr },
-          { data: distributorPos, error: dposErr },
-          { data: allocations, error: allocErr },
-          { data: prices, error: pricesErr },
-          { data: purchaseOrders, error: poErr },
-        ] = await Promise.all([
-          supabase.from("weeks").select("id, label, week_start").order("week_start", { ascending: true }),
-          supabase
-            .from("distributors")
-            .select("id, name, active, sort_order")
-            .eq("active", true)
-            .order("sort_order", { ascending: true, nullsFirst: false }),
-          supabase.from("distributor_pos").select("week_id, distributor_id, po_status"),
-          supabase.from("allocations").select("week_id, distributor_id, product_id, quantity"),
-          supabase.from("distributor_prices").select("distributor_id, product_id, price"),
-          supabase
-            .from("purchase_orders")
-            .select("supplier, po_date, total_cost, payment_status, paid_date"),
-        ]);
+      const firstError = weeksErr ?? distErr ?? dposErr ?? allocErr ?? pricesErr ?? poErr;
+      if (firstError) throw firstError;
 
-        const firstError = weeksErr ?? distErr ?? dposErr ?? allocErr ?? pricesErr ?? poErr;
-        if (firstError) throw firstError;
-        if (cancelled) return;
+      const weekRows = (weeksData ?? []) as WeekRow[];
+      const distributorRows = (distributorsData ?? []) as DistributorRow[];
 
-        const weekRows = (weeksData ?? []) as WeekRow[];
-        const distributorRows = (distributorsData ?? []) as DistributorRow[];
+      // Order Value per (week, distributor) — quantity × that
+      // distributor's price, summed across every product. Used to look up
+      // the dollar amount for a delivered order once we know which column
+      // its Delivery Date + Terms lands it in.
+      const priceFor = new Map<string, number>();
+      for (const p of prices ?? []) priceFor.set(`${p.product_id}:${p.distributor_id}`, p.price ?? 0);
 
-        // --- Revenue In: distributor x week, Order Value where Delivered ---
-        const priceFor = new Map<string, number>();
-        for (const p of prices ?? []) priceFor.set(`${p.product_id}:${p.distributor_id}`, p.price ?? 0);
-
-        const allocationsByWeekDist = new Map<string, { product_id: string; quantity: number }[]>();
-        for (const a of allocations ?? []) {
-          const key = `${a.week_id}:${a.distributor_id}`;
-          const list = allocationsByWeekDist.get(key) ?? [];
-          list.push({ product_id: a.product_id, quantity: a.quantity ?? 0 });
-          allocationsByWeekDist.set(key, list);
-        }
-        function orderValueFor(weekId: string, distributorId: string): number {
-          const rows = allocationsByWeekDist.get(`${weekId}:${distributorId}`) ?? [];
-          return rows.reduce((sum, r) => sum + (priceFor.get(`${r.product_id}:${distributorId}`) ?? 0) * r.quantity, 0);
-        }
-        const deliveredSet = new Set<string>();
-        for (const dp of distributorPos ?? []) {
-          if (dp.po_status === "delivered") deliveredSet.add(`${dp.week_id}:${dp.distributor_id}`);
-        }
-        const revGrid = new Map<string, Map<string, number>>();
-        for (const d of distributorRows) {
-          const byWeek = new Map<string, number>();
-          for (const w of weekRows) {
-            const key = `${w.id}:${d.id}`;
-            byWeek.set(w.id, deliveredSet.has(key) ? orderValueFor(w.id, d.id) : 0);
-          }
-          revGrid.set(d.id, byWeek);
-        }
-
-        setWeeks(weekRows);
-        setDistributors(distributorRows);
-        setRevenueGrid(revGrid);
-        setPurchaseOrderRows((purchaseOrders ?? []) as PoRow[]);
-      } catch (err) {
-        if (!cancelled) {
-          setErrorMsg(
-            err instanceof Error ? err.message : "Couldn't load Cash Flow Dashboard data.",
-          );
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
+      const allocationsByWeekDist = new Map<string, { product_id: string; quantity: number }[]>();
+      for (const a of allocations ?? []) {
+        const key = `${a.week_id}:${a.distributor_id}`;
+        const list = allocationsByWeekDist.get(key) ?? [];
+        list.push({ product_id: a.product_id, quantity: a.quantity ?? 0 });
+        allocationsByWeekDist.set(key, list);
       }
-    }
+      const orderValueMap = new Map<string, number>();
+      for (const w of weekRows) {
+        for (const d of distributorRows) {
+          const key = `${w.id}:${d.id}`;
+          const rows = allocationsByWeekDist.get(key) ?? [];
+          const value = rows.reduce(
+            (sum, r) => sum + (priceFor.get(`${r.product_id}:${d.id}`) ?? 0) * r.quantity,
+            0,
+          );
+          orderValueMap.set(key, value);
+        }
+      }
 
-    load();
-    return () => {
-      cancelled = true;
-    };
+      setWeeks(weekRows);
+      setDistributors(distributorRows);
+      setDistributorPoRows((distributorPos ?? []) as DistributorPoRow[]);
+      setOrderValueByWeekDist(orderValueMap);
+      setPurchaseOrderRows((purchaseOrders ?? []) as PoRow[]);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : "Couldn't load Cash Flow Dashboard data.");
+    } finally {
+      setLoading(false);
+    }
   }, [supabase]);
 
-  const totalRevenueByWeek = useMemo(() => {
-    const totals = new Map<string, number>();
-    for (const w of weeks) {
-      let sum = 0;
-      for (const byWeek of revenueGrid.values()) sum += byWeek.get(w.id) ?? 0;
-      totals.set(w.id, sum);
-    }
-    return totals;
-  }, [weeks, revenueGrid]);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional fetch-on-mount
+    load();
+
+    const channel = supabase
+      .channel("cashflow-dashboard-live")
+      .on("postgres_changes", { event: "*", schema: "public", table: "weeks" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "distributors" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "distributor_pos" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "allocations" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "distributor_prices" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "purchase_orders" }, load)
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [supabase, load]);
 
   const timingWeeks = useMemo(
     () => buildTimingSummaryWeeks(weeks.length ? weeks[weeks.length - 1].week_start : null),
@@ -320,6 +342,38 @@ export default function CashflowDashboardPageClient() {
     }));
     return [...realCols, ...placeholderCols];
   }, [weeks, timingWeeks]);
+
+  // --- Revenue In: distributor x column, Order Value for each delivered
+  // order, bucketed by that order's Delivery Date + the distributor's
+  // payment Terms (see file header comment for the full rule). ---
+  const revenueGrid = useMemo(() => {
+    const grid = new Map<string, Map<string, number>>();
+    for (const d of distributors) {
+      const byCol = new Map<string, number>();
+      for (const col of displayColumns) byCol.set(col.key, 0);
+      grid.set(d.id, byCol);
+    }
+    if (displayColumns.length === 0) return grid;
+
+    for (const dp of distributorPoRows) {
+      if (dp.po_status !== "delivered" || !dp.delivery_date) continue;
+      const byCol = grid.get(dp.distributor_id);
+      if (!byCol) continue;
+
+      const distributor = distributors.find((d) => d.id === dp.distributor_id);
+      const terms = distributor?.payment_terms_days ?? 0;
+      const targetDate = new Date(dp.delivery_date);
+      targetDate.setDate(targetDate.getDate() + terms);
+
+      const colIndex = columnIndexForDate(displayColumns, targetDate.toISOString());
+      const col = displayColumns[colIndex];
+      if (!col) continue;
+
+      const value = orderValueByWeekDist.get(`${dp.week_id}:${dp.distributor_id}`) ?? 0;
+      byCol.set(col.key, (byCol.get(col.key) ?? 0) + value);
+    }
+    return grid;
+  }, [distributors, displayColumns, distributorPoRows, orderValueByWeekDist]);
 
   // --- Expenses Out: vendor x column, paid/pending split, with pending
   // POs whose own week has passed rolling forward to the current
@@ -371,7 +425,8 @@ export default function CashflowDashboardPageClient() {
   const columnTotals = useMemo(() => {
     let cumulative = 0;
     return displayColumns.map((col) => {
-      const revenue = col.weekId ? totalRevenueByWeek.get(col.weekId) ?? 0 : 0;
+      let revenue = 0;
+      for (const byCol of revenueGrid.values()) revenue += byCol.get(col.key) ?? 0;
       let expensePaid = 0;
       let expensePending = 0;
       for (const byCol of expenseGrid.values()) {
@@ -385,7 +440,7 @@ export default function CashflowDashboardPageClient() {
       cumulative += net;
       return { key: col.key, revenue, expensePaid, expensePending, net, runningTotal: cumulative };
     });
-  }, [displayColumns, expenseGrid, totalRevenueByWeek]);
+  }, [displayColumns, expenseGrid, revenueGrid]);
 
   const columnTotalsByKey = useMemo(() => new Map(columnTotals.map((c) => [c.key, c])), [columnTotals]);
 
@@ -446,7 +501,9 @@ export default function CashflowDashboardPageClient() {
             <div className="border-b border-neutral-900 px-4 py-3">
               <h2 className="text-sm font-semibold text-neutral-100">Revenue In</h2>
               <p className="text-xs text-neutral-500">
-                Order Value for each distributor, weeks where that order is marked Delivered
+                Order Value for each distributor&apos;s Delivered orders, landing in whichever
+                week is Delivery Date + that distributor&apos;s payment Terms (see Finance &gt;
+                Distributor Data)
               </p>
             </div>
             <div className="max-h-[420px] overflow-auto">
@@ -463,7 +520,7 @@ export default function CashflowDashboardPageClient() {
                       <td className={rowLabelCellClass}>{d.name}</td>
                       {displayColumns.map((col) => (
                         <td key={col.key} className={valueCellClass}>
-                          <Money value={col.weekId ? revenueGrid.get(d.id)?.get(col.weekId) ?? 0 : 0} />
+                          <Money value={revenueGrid.get(d.id)?.get(col.key) ?? 0} />
                         </td>
                       ))}
                     </tr>

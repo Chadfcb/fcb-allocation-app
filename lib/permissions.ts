@@ -16,6 +16,7 @@ import type { Role } from "@/lib/types/db";
 // app already works.
 export type SectionKey =
   | "cashflow_dashboard"
+  | "distributor_data"
   | "purchase_orders"
   | "inventory_allocation"
   | "distributor_inventory"
@@ -77,13 +78,16 @@ export type GroupKey = "finance" | "operations" | "sales" | "events_calendar" | 
 export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[] }[] = [
   {
     // New top-level category, added 2026-09-09 per Chad — sits above
-    // Operations. First (and so far only) page under it is the Cash Flow
-    // Dashboard (a placeholder shell for now — real numbers get wired in
-    // as a follow-up once a Brew Planner and the rest of the data
-    // plumbing exist).
+    // Operations. Distributor Data (added same day) holds each
+    // distributor's payment terms and any other distributor-level finance
+    // data that comes up later — Chad's call that this kind of setting
+    // belongs in Finance, not Operations or Sales.
     key: "finance",
     label: "Finance",
-    items: [{ key: "cashflow_dashboard", label: "Cash Flow Dashboard" }],
+    items: [
+      { key: "cashflow_dashboard", label: "Cash Flow Dashboard" },
+      { key: "distributor_data", label: "Distributor Data" },
+    ],
   },
   {
     key: "operations",
@@ -177,7 +181,7 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
 // admin, doesnt mean you get access [to Finance]... We dont want all our
 // admins to see it." Keep this in sync with has_section()'s restricted-key
 // list in sql/is_super_admin.sql.
-export const ADMIN_RESTRICTED_SECTIONS: AnySectionKey[] = ["cashflow_dashboard"];
+export const ADMIN_RESTRICTED_SECTIONS: AnySectionKey[] = ["cashflow_dashboard", "distributor_data"];
 
 export const GROUP_KEYS: GroupKey[] = SECTION_GROUPS.map((g) => g.key);
 

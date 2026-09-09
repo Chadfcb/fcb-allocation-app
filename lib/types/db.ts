@@ -56,6 +56,12 @@ export interface Distributor {
   // disabled. Lets an admin freeze a distributor so the team can't
   // accidentally type a quantity into the wrong one (Chad, 2026-09-08).
   allocations_locked: boolean;
+  // Payment terms in days (0 = due on delivery/COD, 30 = net-30, etc.) —
+  // added 2026-09-09, editable on Finance > Distributor Data. Combined
+  // with a delivered order's Delivery Date (see DistributorPO below),
+  // this decides which week that order's revenue lands in on the Cash
+  // Flow Dashboard.
+  payment_terms_days: number;
 }
 
 export interface Product {
@@ -150,6 +156,13 @@ export interface DistributorPO {
   // Whether the distributor has approved this PO. Blank until set; admin-only
   // to change (enforced in the database, not just the UI).
   po_status: PoStatus;
+  // The date this PO was actually marked Delivered — added 2026-09-09.
+  // Auto-set to today when po_status flips to 'delivered', admin-only to
+  // change (same trigger that protects po_status), always
+  // editable/backdatable. Combined with the distributor's own payment
+  // terms (see Distributor above), this is what the Cash Flow Dashboard
+  // uses to decide which week a delivered order's revenue lands in.
+  delivery_date: string | null;
   updated_by: string | null;
   updated_at: string;
 }

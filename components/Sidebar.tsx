@@ -105,6 +105,8 @@ const NEW_SIDEBAR_IDS: string[] = [
   "/pos/football",
   // Cash Flow Dashboard — new Finance section, added 2026-09-09, per Chad.
   "/finance/cashflow-dashboard",
+  // Distributor Data — new Finance sub-link, added 2026-09-09, per Chad.
+  "/finance/distributor-data",
 ];
 
 function NewBadge() {
@@ -116,9 +118,12 @@ function NewBadge() {
 }
 
 // Finance — new top-level category, added 2026-09-09, sits above
-// Operations. First (and so far only) sub-item is the Cash Flow Dashboard.
+// Operations. Distributor Data (added same day) holds each distributor's
+// payment terms and any other distributor-level finance data that comes
+// up later.
 const FINANCE_LINKS: { href: string; label: string; section: SectionKey }[] = [
   { href: "/finance/cashflow-dashboard", label: "Cash Flow Dashboard", section: "cashflow_dashboard" },
+  { href: "/finance/distributor-data", label: "Distributor Data", section: "distributor_data" },
 ];
 
 const OPERATIONS_LINKS: { href: string; label: string; section: SectionKey }[] = [
