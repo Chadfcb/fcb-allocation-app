@@ -1,0 +1,152 @@
+"use client";
+
+// Left-hand navigation sidebar. Every link below is shown based on the
+// signed-in person's per-section access (see lib/permissions.ts) — an admin
+// sees everything unconditionally; a Basic user sees exactly the sections
+// an admin has granted them from Users > Edit, nothing more. Dashboard and
+// Users management are the two exceptions: they stay admin-only, full
+// stop, same as always — they aren't grantable sections.
+//
+// Three independent bits of UI state:
+// - Whether Operations/Sales/Calendars are expanded — remembered per-browser
+//   via localStorage, so collapsing one stays collapsed next time you load
+//   the app. Calendars (added 2026-09-04) holds just Events Calendar today,
+//   structured as an expandable parent rather than a flat link since more
+//   calendar types are expected to land under it later.
+// - Whether the whole sidebar is hidden — NOT persisted; it always starts
+//   visible on a fresh page load, per Chad's request.
+// - Nothing about WHICH links show is persisted — that comes fresh from
+//   the server on every load via the `sections` prop.
+//
+// "New!" badges (added 2026-09-05, per Chad): when a brand-new section or
+// sub-link is added to the sidebar, it can carry a small green "New!" tag
+// lined up on the right, so people notice it landed. Add its id to
+// NEW_SIDEBAR_IDS below when you add the item — a genuine sub-tree parent
+// (like a brand under Labels/UPC's) uses a synthetic "section:<name>" id
+// since it has no href of its own; a regular link just uses its href. A
+// TOP-LEVEL parent (Operations, Sales, Calendars, Labels, UPC's) does NOT
+// need an entry here at all — sectionShowsNew() (defined further down,
+// inside the component) computes its badge automatically from whatever's
+// still unseen underneath it, so there's nothing to remember when you add
+// a new sub-item. (This replaced an earlier manual-only version of this
+// system, after Operations shipped a new sub-tree without its own button
+// ever lighting up — see sectionShowsNew()'s comment for the story.) The
+// badge disappears the first time that person clicks it and never comes
+// back — remembered server-side per signed-in person (sidebar_new_seen
+// table), not just in this browser, so it stays dismissed on every device
+// they log in from. Nothing existing today is flagged; per Chad, this is
+// only for things added from here forward, not retroactive for Chain
+// Calendar/Social Media Calendar/etc. which already existed before this
+// feature shipped. Once something's been out for a while, just delete its
+// id from the list below — no need to keep it around forever.
+
+import { useState, useEffect } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import type { Role } from "@/lib/types/db";
+import { hasSection, ERNIE_SECTION, type AnySectionKey, type SectionKey } from "@/lib/permissions";
+import { createClient } from "@/lib/supabase/client";
+
+const NEW_SIDEBAR_IDS: string[] = [
+  // Only actual leaf pages and true sub-tree parents (like a brand under
+  // Labels/UPC's) need to go in this list. A top-level parent — Calendars,
+  // Operations, Labels, UPC's, Sales — does NOT need its own entry
+  // anymore: sectionShowsNew() (below, in the component) computes those
+  // automatically from whatever's still unseen underneath them. That's a
+  // 2026-09-05 fix, per Chad, after Operations shipped the Labels
+  // Oobli/Ugly Fresca brands and the whole UPC's tree without its own
+  // button ever lighting up — it had needed a manually-added
+  // "section:operations" entry here that nobody remembered to add. Same
+  // fix applies to Calendars/Labels/UPC's/Sales so it can't happen again
+  // anywhere in the tree, not just Operations.
+  "/chain-calendar",
+  "/social-media-calendar",
+  // Oobli and Ugly Fresca — new brands added under Labels (2026-09-05),
+  // per Chad: "remember, these will be new to everyone."
+  "section:pos-labels-oobli",
+  "/pos/labels/oobli/16oz",
+  "section:pos-labels-ugly-fresca",
+  "/pos/labels/ugly-fresca/19-2oz",
+  "/pos/labels/ugly-fresca/16oz",
+  "/pos/labels/ugly-fresca/12oz",
+  // Other — new catch-all brand under Labels (2026-09-05), per Chad, for
+  // one-off custom labels like Spartan Ale.
+  "section:pos-labels-other",
+  "/pos/labels/other/12oz",
+  // UPC's — new expandable brand+size tree added under Operations
+  // (2026-09-05), set up exactly like Labels. Every page under it is brand
+  // new, so every brand and every size leaf are flagged (the UPC's parent
+  // itself picks this up automatically, per the note above). (Audit Log
+  // moved the same day too, but that's a relocation of something that
+  // already existed, not new content, so it isn't flagged.)
+  "section:upc-fcb",
+  "/upcs/fcb/19-2oz",
+  "/upcs/fcb/16oz",
+  "/upcs/fcb/12oz",
+  "section:upc-speakeasy",
+  "/upcs/speakeasy/19-2oz",
+  "/upcs/speakeasy/16oz",
+  "/upcs/speakeasy/12oz",
+  "section:upc-sonoma-cider",
+  "/upcs/sonoma-cider/19-2oz",
+  "/upcs/sonoma-cider/16oz",
+  "/upcs/sonoma-cider/12oz",
+  "section:upc-oobli",
+  "/upcs/oobli/16oz",
+  "section:upc-ugly-fresca",
+  "/upcs/ugly-fresca/19-2oz",
+  "/upcs/ugly-fresca/16oz",
+  "/upcs/ugly-fresca/12oz",
+  // Chain Authorizations / Chain Mandates — new Sales sub-links, added
+  // 2026-09-05, per Chad.
+  "/sales/chain-authorizations",
+  "/sales/chain-mandates",
+  // Football POS — new POS sub-link, added 2026-09-05, per Chad.
+  "/pos/football",
+];
+
+function NewBadge() {
+  return (
+    <span className="ml-auto shrink-0 rounded-full bg-[#6ABC46] px-1.5 py-0.5 text-[9px] font-bold leading-none text-black">
+      New!
+    </span>
+  );
+}
+
+const OPERATIONS_LINKS: { href: string; label: string; section: SectionKey }[] = [
+  { href: "/purchase-orders", label: "Purchase Orders", section: "purchase_orders" },
+  { href: "/inventory", label: "Inventory & Allocation", section: "inventory_allocation" },
+  { href: "/distributor-inventory", label: "Distributor Inventory", section: "distributor_inventory" },
+  { href: "/build-orders", label: "Build Orders", section: "build_orders" },
+  { href: "/pricing", label: "Distributor Pricing", section: "distributor_pricing" },
+  { href: "/admin/weeks", label: "Weeks", section: "weeks" },
+  // Audit Log used to be last here — moved out to its own top-level nav
+  // entry below Users (see the standalone Link further down), per Chad,
+  // 2026-09-05: "lets move audit log to a main category, below Users, and
+  // out of operations." UPC's (new, same date) is no longer a flat link
+  // here either — like Labels, it's now its own expandable brand tree
+  // (see UPC_BRANDS / showUpcTree below) rendered right after Labels.
+];
+
+// Sales sub-links get added here one at a time as each piece of the old FCB
+// Pricing desktop app is folded in — Price List first, then Margin Analysis,
+// Cost Per Case, and Contribution Margin.
+const SALES_LINKS: { href: string; label: string; section: SectionKey }[] = [
+  { href: "/sales/pricing", label: "Price List", section: "price_list" },
+  { href: "/sales/margin-analysis", label: "Margin Analysis", section: "margin_analysis" },
+  { href: "/sales/cost-per-case", label: "Cost Per Case", section: "cost_per_case" },
+  { href: "/sales/contribution-margin", label: "Contribution Margin", section: "contribution_margin" },
+  // Added 2026-09-05, per Chad, imported from a chain authorizations/
+  // mandates spreadsheet. Not their own Users > Edit toggle — they ride
+  // along with Sales access, same as every other link in this list (see
+  // lib/permissions.ts SECTION_GROUPS).
+  { href: "/sales/chain-authorizations", label: "Chain Authorizations", section: "chain_authorizations" },
+  { href: "/sales/chain-mandates", label: "Chain Mandates", section: "chain_mandates" },
+];
+
+// Calendars — currently just Events Calendar, structured as an expandable
+// parent (like Operations/Sales) rather than a flat link, since Chad plans
+// to add more calendar types under this same category later.
+const CALENDARS_LINKS: { href: string; label: string; section: SectionKey }[] = [
+  { href: "/events", label: "Events Calendar", section: "events_calendar" },
+  { href: 
