@@ -283,12 +283,15 @@ export async function POST(req: NextRequest) {
                     toolErr instanceof Error ? toolErr.message : "Tool lookup failed",
                 };
               }
-              // edit_spreadsheet and get_file_for_download both hand back
+              // edit_spreadsheet, get_file_for_download, and (added
+              // 2026-09-09) export_pricing_data_as_spreadsheet all hand back
               // { id, file_name, ... } for a file now sitting in ernie_files
               // — capture that id so it can be surfaced as a download chip
               // instead of silently existing only in the database.
               if (
-                (block.name === "edit_spreadsheet" || block.name === "get_file_for_download") &&
+                (block.name === "edit_spreadsheet" ||
+                  block.name === "get_file_for_download" ||
+                  block.name === "export_pricing_data_as_spreadsheet") &&
                 result &&
                 typeof result === "object" &&
                 "id" in result &&

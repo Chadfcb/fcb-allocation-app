@@ -390,6 +390,77 @@ export async function applySpreadsheetEdits(
   return { ...inserted, note };
 }
 
+// export_pricing_data_as_spreadsheet's implementation (added 2026-09-09,
+// Chad: "give me the contribution margin page in a spreadsheet, and remove
+// labor cost from the calculations" — Ernie had get_pricing_data to READ
+// this data and edit_spreadsheet to mutate a file the user already
+// uploaded, but nothing that could build a brand-new file out of live app
+// data. This is that missing piece: given one or more named sheets (each a
+// header row + data rows, already computed by the caller — see
+// buildPricingSpreadsheetSheets in lib/ernie/tools.ts), writes a real .xlsx
+// with ExcelJS and saves it as a new ernie_files row (direction: "output",
+// source_file_id: null — this file didn't come from an edit of anything),
+// same download-chip mechanism edit_spreadsheet already uses.
+export interface SpreadsheetSheetInput {
+  name: string;
+  header: string[];
+  rows: (string | number | null)[][];
+}
+
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+export async function createSpreadsheetFromSheets(
+  supabase: SupabaseClient,
+  userId: string,
+  fileName: string,
+  sheets: SpreadsheetSheetInput[],
+): Promise<{ id: string; file_name: string; mime_type: string | null; size_bytes: number; note: string }> {
+  if (!sheets.length) throw new Error("No sheet data to write.");
+
+  const workbook = new ExcelJS.Workbook();
+  for (const sheet of sheets) {
+    // Sheet names can't be blank, exceed 31 chars, or repeat — all three
+    // are already true of the fixed names buildPricingSpreadsheetSheets
+    // passes in, but truncate defensively in case that ever changes.
+    const ws = workbook.addWorksheet(sheet.name.slice(0, 31) || "Sheet1");
+    ws.addRow(sheet.header);
+    ws.getRow(1).font = { bold: true };
+    for (const row of sheet.rows) ws.addRow(row);
+    ws.columns.forEach((col) => {
+      col.width = 18;
+    });
+  }
+
+  const out = await workbook.xlsx.writeBuffer();
+  const buffer = Buffer.from(out);
+
+  const finalName = fileName.trim() || "export.xlsx";
+  const path = `${userId}/${storageFileName(finalName)}`;
+
+  const { error: uploadErr } = await supabase.storage.from(ERNIE_FILES_BUCKET).upload(path, buffer, {
+    contentType: XLSX_MIME,
+    upsert: false,
+  });
+  if (uploadErr) throw new Error(`Couldn't save the new spreadsheet: ${uploadErr.message}`);
+
+  const { data: inserted, error: insertErr } = await supabase
+    .from("ernie_files")
+    .insert({
+      user_id: userId,
+      direction: "output",
+      source_file_id: null,
+      file_name: finalName,
+      mime_type: XLSX_MIME,
+      size_bytes: buffer.length,
+      storage_path: path,
+    })
+    .select("id, file_name, mime_type, size_bytes")
+    .single();
+  if (insertErr) throw new Error(`Built the spreadsheet but couldn't save its record: ${insertErr.message}`);
+
+  return { ...inserted, note: `Built "${finalName}" with ${sheets.length} sheet(s).` };
+}
+
 // get_file_for_download's implementation (added 2026-08-31, Chad: "pos may
 // not be the only place we end up having files stored... but either way,
 // we need ernie to have the ability to pull files and present them if
