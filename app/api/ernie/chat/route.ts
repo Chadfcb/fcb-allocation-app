@@ -129,6 +129,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Private per-user notes (see sql/ernie_user_notes.sql) — RLS scopes this
+  // to the signed-in user's own row with no admin bypass at all, so this
+  // plain select naturally only ever returns this same user's notes, never
+  // anyone else's. Missing row (brand-new user) is expected, not an error.
+  const { data: personNotesRow } = await supabase
+    .from("ernie_user_notes")
+    .select("notes")
+    .eq("user_id", user.id)
+    .maybeSingle();
+  const personNotes = personNotesRow?.notes ?? null;
+
   const body = (await req.json()) as { conversationId?: string; message?: string; fileIds?: string[] };
   const newMessageText = body.message?.trim() ?? "";
   const fileIds = Array.isArray(body.fileIds)
@@ -274,7 +285,7 @@ export async function POST(req: NextRequest) {
             body: JSON.stringify({
               model: ANTHROPIC_MODEL,
               max_tokens: 2048,
-              system: buildErnieSystemPrompt(role, sections, isSuperAdmin),
+              system: buildErnieSystemPrompt(role, sections, isSuperAdmin, personNotes),
               tools: [...getErnieTools(role, sections, isSuperAdmin), WEB_SEARCH_TOOL, WEB_FETCH_TOOL, CODE_EXECUTION_TOOL],
               ...(isLastRound ? { tool_choice: { type: "none" } } : {}),
               messages: anthropicMessages,
@@ -364,7 +375,7 @@ export async function POST(req: NextRequest) {
               send({ type: "status", label: describeErnieToolCall(block.name) });
               let result: unknown;
               try {
-                result = await runErnieTool(supabase, block.name, block.input ?? {}, role, sections, conversationId, isSuperAdmin);
+                result = await runErnieTool(supabase, block.name, block.input ?? {}, role, sections, conversationId, isSuperAdmin, user.id);
               } catch (toolErr) {
                 result = {
                   error:

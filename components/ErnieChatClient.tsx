@@ -138,6 +138,53 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
   const [history, setHistory] = useState<ConversationSummary[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
+  // "What Ernie knows about you" — private per-user notes Ernie builds up
+  // on its own (see lib/ernie/tools.ts's update_person_notes tool and
+  // sql/ernie_user_notes.sql). RLS scopes every query here to the
+  // signed-in user's own row automatically — nobody else, not even an
+  // admin, can read or write it, so this panel never needs a user id
+  // filter or a server route of its own.
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [notesText, setNotesText] = useState("");
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [notesSaving, setNotesSaving] = useState(false);
+  const [notesError, setNotesError] = useState<string | null>(null);
+  const [notesSavedAt, setNotesSavedAt] = useState<number | null>(null);
+
+  async function openNotes() {
+    setNotesOpen(true);
+    setNotesError(null);
+    setNotesLoading(true);
+    const { data, error: notesErr } = await supabase
+      .from("ernie_user_notes")
+      .select("notes")
+      .maybeSingle();
+    setNotesLoading(false);
+    if (notesErr) {
+      setNotesError("Couldn't load your notes — try again in a moment.");
+      return;
+    }
+    setNotesText(data?.notes ?? "");
+  }
+
+  async function saveNotes() {
+    setNotesSaving(true);
+    setNotesError(null);
+    const trimmed = notesText.trim();
+    const { error: saveErr } = trimmed
+      ? await supabase
+          .from("ernie_user_notes")
+          .upsert({ user_id: userId, notes: trimmed, updated_at: new Date().toISOString() }, { onConflict: "user_id" })
+      : await supabase.from("ernie_user_notes").delete().eq("user_id", userId ?? "");
+    setNotesSaving(false);
+    if (saveErr) {
+      setNotesError("Couldn't save — try again.");
+      return;
+    }
+    setNotesText(trimmed);
+    setNotesSavedAt(Date.now());
+  }
+
   const [userId, setUserId] = useState<string | null>(null);
   const [pendingFiles, setPendingFiles] = useState<ErnieFile[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -594,14 +641,84 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
           <h1 className="font-[family-name:var(--font-archivo)] text-lg font-bold tracking-tight text-[#eef1e9]">
             Ernie AI
           </h1>
-          <button
-            type="button"
-            onClick={startNewConversation}
-            className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
-          >
-            New Conversation
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={openNotes}
+              className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+            >
+              What Ernie Knows About You
+            </button>
+            <button
+              type="button"
+              onClick={startNewConversation}
+              className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+            >
+              New Conversation
+            </button>
+          </div>
         </div>
+
+        {notesOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+            <div className="w-full max-w-lg rounded-xl border border-[#262c1f] bg-[#12150e] p-5 shadow-xl">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="font-[family-name:var(--font-archivo)] text-base font-bold text-[#eef1e9]">
+                  What Ernie Knows About You
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setNotesOpen(false)}
+                  className="text-[#8a9282] hover:text-[#eef1e9]"
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
+              </div>
+              <p className="mb-3 font-[family-name:var(--font-plex-sans)] text-xs text-[#8a9282]">
+                Private to you — only you can see or change this, not even an admin. Ernie updates it on its own
+                as you talk (how you like it to communicate, and relevant context about your role), but you can
+                edit or clear it any time.
+              </p>
+              {notesLoading ? (
+                <p className="py-6 text-center text-sm text-[#8a9282]">Loading…</p>
+              ) : (
+                <>
+                  <textarea
+                    value={notesText}
+                    onChange={(e) => setNotesText(e.target.value)}
+                    rows={8}
+                    placeholder="Nothing here yet — Ernie will start filling this in as you chat."
+                    className="w-full resize-none rounded-lg border border-[#262c1f] bg-[#181c13] p-3 font-[family-name:var(--font-plex-sans)] text-sm text-[#eef1e9] outline-none focus:border-[#6ABC46]/50"
+                  />
+                  {notesError && <p className="mt-2 text-xs text-red-400">{notesError}</p>}
+                  <div className="mt-3 flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={() => setNotesText("")}
+                      className="font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#8a9282] hover:text-[#eef1e9]"
+                    >
+                      Clear
+                    </button>
+                    <div className="flex items-center gap-3">
+                      {notesSavedAt && !notesSaving && (
+                        <span className="font-[family-name:var(--font-plex-sans)] text-xs text-[#6ABC46]">Saved</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={saveNotes}
+                        disabled={notesSaving}
+                        className="rounded-full bg-[#6ABC46] px-4 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-semibold text-[#12150e] transition-opacity hover:opacity-90 disabled:opacity-50"
+                      >
+                        {notesSaving ? "Saving…" : "Save"}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 font-[family-name:var(--font-plex-sans)]">
           {initializing

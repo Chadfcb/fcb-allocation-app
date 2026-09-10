@@ -459,6 +459,25 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
       required: ["path"],
     },
   },
+  {
+    name: "update_person_notes",
+    description:
+      `Update your running private notes on the person you're currently talking to — how they like you to communicate (tone, brevity, format), and durable work context about them that's come up naturally (their role, what they handle in the app, whether they're new to it, etc.). These notes are private to this one person: only they can ever see or edit them (not even an admin can), and you only ever read/write the CURRENT signed-in user's own notes — you have no way to see or affect anyone else's.
+
+Your system prompt already shows you this person's current notes in full (or says there are none yet). When you learn something new or something changes, call this with the COMPLETE updated notes text — this REPLACES whatever was stored before, so include everything still worth keeping, not just what's new. Keep it short and factual (a few sentences, plain language, no more than roughly 500 words) — condense rather than letting it grow indefinitely. Only store communication style and work context; never store personal, sensitive, or health-related information, even if it's mentioned to you.
+
+Call this proactively when it's clearly warranted (someone states a preference directly — "keep it brief", "don't use bullet points" — or a durable work fact comes up naturally) — don't ask permission first, and don't call it for every small thing or restate something already captured. If someone asks what you know about them, tell them in plain language rather than reciting the raw stored text.`,
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        notes: {
+          type: "string",
+          description: "The complete, updated notes text for this person — replaces whatever was stored before. Plain language, communication style + relevant work context only.",
+        },
+      },
+      required: ["notes"],
+    },
+  },
 ];
 
 // Tools whose underlying tables are admin-only in the app's own RLS policies
@@ -563,6 +582,7 @@ const TOOL_STATUS_LABELS: Record<string, string> = {
   clear_staged_file_data: "Cleaning up staged data",
   list_app_files: "Browsing the app's code",
   read_app_file: "Reading the app's code",
+  update_person_notes: "Updating what I know about you",
 };
 
 export function describeErnieToolCall(name: string): string {
@@ -971,6 +991,7 @@ export async function runErnieTool(
   sections: AnySectionKey[],
   currentConversationId?: string,
   isSuperAdmin = false,
+  userId?: string,
 ): Promise<unknown> {
   // Defense in depth: getErnieTools() already keeps a tool a user isn't
   // granted out of their tool list, so Claude has nothing to call here —
@@ -1366,6 +1387,25 @@ export async function runErnieTool(
       return data;
     }
 
+    case "update_person_notes": {
+      // Private per-user notes, fully self-scoped — no admin bypass exists
+      // anywhere for this table (see sql/ernie_user_notes.sql's RLS), and
+      // this case only ever writes the CURRENT signed-in user's own row:
+      // userId comes from the server-verified session in
+      // app/api/ernie/chat/route.ts, never from model input.
+      const notes = typeof input.notes === "string" ? input.notes.trim() : "";
+      if (!notes) return { error: "notes must be non-empty text." };
+      if (!userId) return { error: "No signed-in user to attach these notes to." };
+      if (notes.length > 4000) {
+        return { error: "That's too long — condense to under 4000 characters rather than appending everything." };
+      }
+      const { error } = await supabase
+        .from("ernie_user_notes")
+        .upsert({ user_id: userId, notes, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+      if (error) throw error;
+      return { ok: true };
+    }
+
     case "list_uploaded_files": {
       // RLS on ernie_files already scopes this to the signed-in user's own
       // files, same pattern as search_past_conversations above.
@@ -1559,6 +1599,7 @@ export function buildErnieSystemPrompt(
   role: Role | undefined,
   sections: AnySectionKey[],
   isSuperAdmin = false,
+  personNotes?: string | null,
 ): string {
   const dataAccessParagraph =
     role === "admin" && isSuperAdmin
@@ -1603,6 +1644,12 @@ You can also fetch and actually read the full content of a specific web page or 
 You also have a sandbox where you can genuinely create things — run a real calculation, build a chart, or produce an actual file — instead of just describing what the answer would probably be. Reach for it for non-trivial math, real data visualization, or building a file someone asked for. The sandbox itself has no internet access and no direct access to this app's database or any credentials — if it needs real numbers, get them first with your other tools (run_read_only_query, get_pricing_data, a staged file, etc.) and hand them to the sandbox as plain data already in front of you. Whatever the sandbox produces comes back as a downloadable file in this same chat, exactly like a file you'd build with edit_spreadsheet or export_pricing_data_as_spreadsheet — it has no way to save or send anything anywhere else.
 
 You also have a tool to search this same signed-in user's own past Ernie conversations (never anyone else's) — reach for it whenever someone refers to something discussed earlier, asks you to recall a previous conversation, or a question seems to depend on context from before this chat. Don't assume you have no memory of anything outside the current conversation; check past conversations first if there's any chance the answer is there.
+
+${
+  personNotes && personNotes.trim()
+    ? `What you've learned about THIS person so far, from past conversations (private to them — never shared with or shown to anyone else, not even an admin): ${personNotes.trim()}\n\nUse this to shape how you talk to them right now (tone, brevity, format) without ever mentioning that you're doing so or reciting it back unprompted. Call update_person_notes whenever something new or changed is clearly worth keeping.`
+    : `You don't have any notes on this person yet. As you talk with them, notice how they like you to communicate (tone, brevity, format — e.g. if they ask for shorter answers, or push back on a style) and any durable work context that comes up naturally (their role, what they handle in the app, whether they're new to it). Call update_person_notes once something like that is clear — don't force it or ask permission first, but don't invent anything either.`
+}
 
 On the Inventory & Allocation tools: each product (at the whole-inventory level) and each distributor's allocation of that product carries a status_flag — one of good_confirmed (on hand, confirmed), dont_have, have_some, need_to_package, need_pakteks, need_labels, need_cans, or need_kegs. This is the direct, already-tracked answer to "what does distributor X's order still need" or "what needs to be packaged for X" — filter that distributor's allocations by status_flag rather than trying to infer a shortfall yourself from on-hand/remaining numbers, and say plainly if nothing is currently flagged that way rather than treating an empty result as a failure to answer.
 
