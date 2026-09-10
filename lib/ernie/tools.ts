@@ -65,6 +65,8 @@ import {
   type SpreadsheetEditInput,
   type SpreadsheetSheetInput,
 } from "@/lib/ernie/files";
+import { listRepoPath, readRepoFile } from "@/lib/github";
+import { isBlockedPath, canAccessRepoPath } from "@/lib/ernie/fileAccessMap";
 
 // Several Sales pages show numbers that are NOT stored in the database —
 // they're computed live in the browser from several tables at once (see
@@ -426,6 +428,37 @@ Only spreadsheets/CSVs can be staged (not images or PDFs), capped at 20,000 data
       required: ["file_id"],
     },
   },
+  {
+    name: "list_app_files",
+    description:
+      `List the real, current files and folders in this app's own codebase (the same repo "git push" deploys from), read live from GitHub — not a snapshot, not a note anyone wrote down. Use this to browse the folder structure and find the exact path of the file you actually want, then call read_app_file on it. Listing a folder's names is always allowed for any signed-in user with Ernie access — it's read_app_file (actual file CONTENT) that's restricted to the areas this account has access to elsewhere in the app; a name showing up in a listing here doesn't mean read_app_file will let you read it.`,
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        path: {
+          type: "string",
+          description: 'Repo-relative folder path, e.g. "lib" or "app/(app)/sales/contribution-margin". Omit for the repo root.',
+        },
+      },
+    },
+  },
+  {
+    name: "read_app_file",
+    description:
+      `Read a specific file's real, current content directly from this app's own GitHub repo — the actual source code/SQL, not a description of it. Use list_app_files first if you don't already know the exact path. This is how you answer "what does the code actually do/say" questions precisely — reading a fixed constant, a formula, a comment explaining a quirk, an RLS policy — instead of guessing or relying on a pre-written note.
+
+Access mirrors this account's real permissions elsewhere in the app: a file under a page/section this account has been granted works; core security/permission/Ernie-internals code and anything that could hold a secret (.env files, etc.) is refused regardless of role, except an admin account can read any non-secret file. A refusal means access is restricted for this account (or the path genuinely holds something off-limits, like a .env file) — say so plainly rather than guessing at the content. Files over 300KB are refused too big to read in one call — ask about a more specific path instead.`,
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        path: {
+          type: "string",
+          description: 'Exact repo-relative file path, e.g. "lib/contributionMargin.ts". From list_app_files or from earlier in this conversation.',
+        },
+      },
+      required: ["path"],
+    },
+  },
 ];
 
 // Tools whose underlying tables are admin-only in the app's own RLS policies
@@ -528,6 +561,8 @@ const TOOL_STATUS_LABELS: Record<string, string> = {
   fetch_url_as_file: "Fetching that from the web",
   stage_uploaded_file_for_query: "Loading your file for analysis",
   clear_staged_file_data: "Cleaning up staged data",
+  list_app_files: "Browsing the app's code",
+  read_app_file: "Reading the app's code",
 };
 
 export function describeErnieToolCall(name: string): string {
@@ -1470,6 +1505,33 @@ export async function runErnieTool(
       }
     }
 
+    case "list_app_files": {
+      const path = typeof input.path === "string" ? input.path : "";
+      if (isBlockedPath(path)) {
+        return { error: "That path isn't something these tools can show, regardless of access level." };
+      }
+      try {
+        return await listRepoPath(path);
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : "Couldn't list that path." };
+      }
+    }
+
+    case "read_app_file": {
+      const path = typeof input.path === "string" ? input.path.trim() : "";
+      if (!path) return { error: "No path provided." };
+      if (!canAccessRepoPath(path, role, sections)) {
+        return {
+          error: `Access to "${path}" is restricted for this account — either it needs a page/section this account hasn't been granted, or it's core security/internal code (or a secret) that's off-limits regardless of role.`,
+        };
+      }
+      try {
+        return await readRepoFile(path);
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : "Couldn't read that file." };
+      }
+    }
+
     default:
       return { error: `Unknown tool "${name}"` };
   }
@@ -1546,6 +1608,8 @@ On the Inventory & Allocation tools: each product (at the whole-inventory level)
 
 You also have run_read_only_query, a general-purpose tool that runs any read-only SQL SELECT against the app's own database — reach for it whenever a question isn't already covered by one of the specific tools above (for example: "do we have enough cans and lids on hand to cover this week's whole 16oz can order across every distributor", or any other cross-table or aggregate question) rather than guessing, refusing, or claiming you have no way to find out. Its own description lists the real table and column names to use, and two existing database functions (classify_product_packaging, packaging_consumed_for_week) that already implement the same packaging bill-of-materials math the Inventory page itself uses — call those instead of re-deriving the recipe from scratch. If a query comes back with zero rows for something that plausibly exists, that most often means this account doesn't have permission to see that data (see above), not that the data doesn't exist — say so rather than concluding there's nothing there. If a query is rejected outright (a database error message about what's not allowed), rewrite it as a single plain read-only SELECT and try again before giving up.
 
+Before you ever tell someone something "isn't tracked," "doesn't exist," or "has no data source in this app" — for ANY concept, not just files — check TWO things first, not just the database: (1) select file_name, description from ernie_reference_documents (it's small, read the whole table, don't try to filter by keyword) and actually look for it in the description text; (2) consider whether it might be a fixed value computed in code rather than stored data — if so, use read_app_file on the relevant lib/ file (lib/contributionMargin.ts, lib/marginAnalysis.ts, lib/costPerCase.ts, lib/pallets.ts, lib/packaging.ts are the ones that hold fixed constants/formulas behind the Sales and Inventory pages) and read the real number straight from the source, which is a better answer than a reference note anyway. Checking the database schema for a matching column/table name is NOT the same check and does not satisfy either of these — a concept like "excise tax" will never be a column name even when a real, on-the-record answer exists as a note or in the code itself. Only say something isn't tracked anywhere after all of this has also come back empty.
+
 Anyone can attach files to a message (drag-and-drop onto the chat, or the attach button) — a freshly-attached file's contents are included automatically, with no tool call needed. Images, PDFs, spreadsheets (.xlsx), CSV, and plain text files are all read directly; any other file type can still be uploaded but you can't read its contents yet, so say that plainly rather than guessing what's in it. If someone refers to a file from earlier without re-attaching it, use list_uploaded_files to find it and read_uploaded_file to pull its contents back up (this works for everything except PDFs — ask for a PDF to be re-attached instead). For spreadsheets and CSV specifically, you can also edit them with edit_spreadsheet: read the file first so you know its real sheet names and current cell values, then give it the exact cells to change — it edits that file in place (preserving everything else: formatting, other sheets, formulas) and hands back a new file to download. Never claim you've edited or analyzed a file without actually having its contents in front of you.
 
 The automatic preview of an attached spreadsheet/CSV is capped at 300 rows — fine for looking at or editing a file, but NOT enough to actually calculate anything across a bigger one. Whenever someone wants a real calculation over a file with more rows than that — total units sold by product, a weighted average, matching it against another dataset, anything you'd normally reach for a spreadsheet formula or a SQL query to get right — call stage_uploaded_file_for_query first. That loads every row into a table you can then query for real with run_read_only_query (filtered to that file's file_id), so the arithmetic is done by the database, not guessed at by reading rows as text. This is also how to combine an uploaded file with the app's own data in one answer — e.g. matching an Ekos sales export against Contribution Margin figures — since both live in tables run_read_only_query can join in a single query. Call clear_staged_file_data when you're done with a file's staged data, as good tidiness (not required — re-staging the same file already replaces its old rows automatically).
@@ -1553,6 +1617,8 @@ The automatic preview of an attached spreadsheet/CSV is capped at 300 rows — f
 You can also pull up and hand over files that already exist elsewhere in the app — not just files someone uploaded directly to you. If a question is really "get me this file" (e.g. POS materials for a brand, an event's attached files) rather than "look up this data," use run_read_only_query to find the matching row(s) in whatever table holds that library (see the schema notes on run_read_only_query for which tables have files and what bucket each uses), then call get_file_for_download with that row's bucket and storage_path to actually hand it over as a download — don't just describe that the file exists. Whether that succeeds depends on your own access to that file, exactly like every other data lookup; an error back from it means access is restricted for this account, not that something is broken.
 
 There's also a running library of reference documents — ernie_reference_documents — that Chad and Claude add to directly whenever something new gets built or changes in the app: specs, decisions, screenshots, anything that's context about the app itself rather than app data. Query it with run_read_only_query (it's small — read the whole thing, description column included, rather than guessing at a filter) whenever a question could use background beyond what the live data tables tell you, not only when someone names a specific document by name. Use get_file_for_download (bucket "reference-docs") to actually hand one over if someone wants the file itself.
+
+Beyond that, you can read this app's own real source code directly — list_app_files to browse the actual folder structure, read_app_file to pull a specific file's real, current content straight from the live repo. Reach for this for anything about how the app actually works or calculates something that isn't a live data value — a fixed constant, a formula, a business rule, why something is computed the way it is. This is a stronger source than ernie_reference_documents: a reference doc is someone's written note about the code, this IS the code, always current, nothing pre-written required. Prefer it over a reference doc when both could answer the same question. Your access to a given file mirrors this account's real permissions elsewhere in the app — you may see a folder listed that you then can't read the contents of; that's expected, not a bug, and the tool will say so plainly when it happens.
 
 Be direct and brief. Answer exactly what was asked — a specific question gets a specific, short answer, not a full data dump of everything related to it. Only include extra context (other SKUs, other distributors, caveats, etc.) if it's clearly relevant to what they're trying to find out, or if they asked for a fuller breakdown. When asked a question, use the tools to pull real current data rather than guessing. Cite specific numbers/names from the tool results. If a question is ambiguous about which week it refers to, use the current open week by default and say which week you used. If you genuinely can't find an answer after checking, say so plainly and suggest what to try instead — don't go quiet.
 
