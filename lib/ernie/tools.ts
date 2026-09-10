@@ -305,7 +305,7 @@ Any table above with a storage_path column (event_materials, pos_library, pos_la
   {
     name: "read_uploaded_file",
     description:
-      "Read the contents of a previously-uploaded (or previously Ernie-produced) file again, by file_id — for when someone refers to a file from earlier in this or a past conversation without re-attaching it. Use list_uploaded_files first if you don't already have the file_id. Spreadsheets, CSV, plain text, and images all work; a PDF can't be re-read this way — ask the user to re-attach it instead.",
+      "Read the contents of a previously-uploaded (or previously Ernie-produced) file again, by file_id — for when someone refers to a file from earlier in this or a past conversation without re-attaching it, OR a file get_file_for_download just fetched from elsewhere in the app (e.g. an Ernie Project's file library) — call this right after with the same file_id to actually read it, not just hand over a download link. Spreadsheets (.xlsx), CSV, Word documents (.docx), plain text, and images all work; a PDF can't be re-read this way — ask the user to re-attach it instead.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -358,7 +358,9 @@ Each edit is {sheet, cell, value}: sheet is the exact sheet name (omit for a CSV
     description:
       `Fetch a file that already exists somewhere else in the app — found via run_read_only_query against a table with a storage_path column (event_materials, pos_library, pos_label_files, ernie_reference_documents, ernie_project_files today) — and hand it to the user as a real downloadable attachment in this chat, instead of just describing that it exists. Pass the exact bucket and storage_path from that row.
 
-Whether this succeeds depends entirely on whether YOU (the signed-in user asking) actually have access to that file, same as everywhere else in the app — an error back from this tool means access is restricted, not that anything is broken, so explain it that way rather than guessing at a bug. Use this any time someone asks you to pull up, send, or let them download a specific file.`,
+This only creates the download chip — it does NOT read the file's content for you. If the user (or the task) needs to know what's actually IN the file — a Project's spreadsheet, PDF, or Word doc, not just a link to it — call read_uploaded_file with the same file_id right after this succeeds; skipping that step and only describing the download chip is not the same as having read it.
+
+Whether this succeeds depends entirely on whether YOU (the signed-in user asking) actually have access to that file, same as everywhere else in the app — an error back from this tool means access is restricted, not that anything is broken, so explain it that way rather than guessing at a bug. Use this any time someone asks you to pull up, send, analyze, or let them download a specific file.`,
     input_schema: {
       type: "object" as const,
       properties: {
@@ -1424,7 +1426,7 @@ export async function runErnieTool(
       if (!fileId) return { error: "No file_id provided." };
       const { data: file, error } = await supabase
         .from("ernie_files")
-        .select("id, file_name, mime_type, size_bytes, storage_path")
+        .select("id, file_name, mime_type, size_bytes, storage_path, source_bucket")
         .eq("id", fileId)
         .maybeSingle();
       if (error) throw error;
@@ -1448,7 +1450,7 @@ export async function runErnieTool(
 
       const { data: file, error } = await supabase
         .from("ernie_files")
-        .select("id, file_name, mime_type, size_bytes, storage_path")
+        .select("id, file_name, mime_type, size_bytes, storage_path, source_bucket")
         .eq("id", fileId)
         .maybeSingle();
       if (error) throw error;
@@ -1515,7 +1517,7 @@ export async function runErnieTool(
       if (!fileId) return { error: "No file_id provided." };
       const { data: file, error } = await supabase
         .from("ernie_files")
-        .select("id, file_name, mime_type, size_bytes, storage_path")
+        .select("id, file_name, mime_type, size_bytes, storage_path, source_bucket")
         .eq("id", fileId)
         .maybeSingle();
       if (error) throw error;

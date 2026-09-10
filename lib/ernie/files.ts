@@ -21,6 +21,7 @@
 
 import ExcelJS from "exceljs";
 import Papa from "papaparse";
+import mammoth from "mammoth";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { storageFileName } from "@/lib/events";
 import { ERNIE_FILES_BUCKET, ERNIE_MAX_FILE_BYTES } from "@/lib/ernie/fileLimits";
@@ -30,6 +31,7 @@ export type ErnieFileKind =
   | "pdf"
   | "spreadsheet_xlsx"
   | "spreadsheet_csv"
+  | "word_docx"
   | "text"
   | "unsupported";
 
@@ -39,6 +41,27 @@ export interface ErnieFileRow {
   mime_type: string | null;
   size_bytes: number | null;
   storage_path: string;
+  // Which Storage bucket storage_path actually lives in. Null/undefined
+  // means the default "ernie-files" bucket (an ordinary uploaded or
+  // Ernie-produced file) — set only when this row came from
+  // get_file_for_download fetching a file that lives somewhere ELSE in the
+  // app (e.g. an Ernie Project's own library, a POS label file). Every
+  // function below that downloads a file's actual bytes MUST resolve the
+  // bucket from this field (falling back to ERNIE_FILES_BUCKET), never
+  // hardcode ERNIE_FILES_BUCKET — fixed 2026-09-10 after Ernie could
+  // create a download chip for an Ernie Project file (via
+  // get_file_for_download) but then failed to actually read its content
+  // ("couldn't be read from storage") because read_uploaded_file was
+  // always looking in ERNIE_FILES_BUCKET regardless of where the file
+  // really lived.
+  source_bucket?: string | null;
+}
+
+// Resolves which Storage bucket a given ErnieFileRow's bytes actually live
+// in — see the source_bucket doc comment above. Always use this instead of
+// referencing ERNIE_FILES_BUCKET directly when downloading a file's bytes.
+function bucketFor(file: Pick<ErnieFileRow, "source_bucket">): string {
+  return file.source_bucket || ERNIE_FILES_BUCKET;
 }
 
 const IMAGE_EXT = ["png", "jpg", "jpeg", "gif", "webp"];
@@ -62,6 +85,12 @@ export function classifyErnieFile(fileName: string, mimeType: string | null): Er
   if (mime === "application/pdf" || ext === "pdf") return "pdf";
   if (ext === "xlsx" || ext === "xlsm" || mime.includes("spreadsheetml")) return "spreadsheet_xlsx";
   if (ext === "csv" || ext === "tsv" || mime === "text/csv") return "spreadsheet_csv";
+  // .docx only (mammoth can't read the legacy binary .doc format) —
+  // added 2026-09-10, per Chad: "He needs to be able to read spreadsheets,
+  // pdf's, doc's ect." Word's real MIME type is the long
+  // "wordprocessingml.document" string; check that rather than a generic
+  // "application/msword" (which also covers .doc, which this can't parse).
+  if (ext === "docx" || mime.includes("wordprocessingml")) return "word_docx";
   if (mime.startsWith("text/") || TEXT_EXT.includes(ext)) return "text";
   return "unsupported";
 }
@@ -329,7 +358,7 @@ export async function stageFileForQuery(
     throw new Error(`"${file.file_name}" isn't a spreadsheet or CSV — only those file types can be staged for query.`);
   }
 
-  const { data, error } = await supabase.storage.from(ERNIE_FILES_BUCKET).download(file.storage_path);
+  const { data, error } = await supabase.storage.from(bucketFor(file)).download(file.storage_path);
   if (error || !data) throw new Error(`Couldn't read "${file.file_name}" from storage.`);
   const buffer = Buffer.from(await data.arrayBuffer());
 
@@ -474,11 +503,11 @@ const TEXT_CHAR_CAP = 20000;
 // accepts a "document" block in a user message, but not reliably inside a
 // tool_result, so forToolResult mode asks for a re-attach instead of
 // risking a malformed request.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shape varies by type (text/image/document)
 export async function buildFileContentBlocks(
   supabase: SupabaseClient,
   file: ErnieFileRow,
   opts: { forToolResult?: boolean } = {},
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shape varies by type (text/image/document)
 ): Promise<any[]> {
   const header = `Attached file: "${file.file_name}"`;
 
@@ -488,7 +517,7 @@ export async function buildFileContentBlocks(
 
   const kind = classifyErnieFile(file.file_name, file.mime_type);
 
-  const { data, error } = await supabase.storage.from(ERNIE_FILES_BUCKET).download(file.storage_path);
+  const { data, error } = await supabase.storage.from(bucketFor(file)).download(file.storage_path);
   if (error || !data) {
     return [{ type: "text", text: `${header} — couldn't be read from storage (it may have been removed).` }];
   }
@@ -520,6 +549,33 @@ export async function buildFileContentBlocks(
     return [{ type: "text", text: `${header} (spreadsheet):\n\n${text}` }];
   }
 
+  if (kind === "word_docx") {
+    try {
+      const { value } = await mammoth.extractRawText({ buffer });
+      let text = value.trim();
+      let truncated = false;
+      if (text.length > TEXT_CHAR_CAP) {
+        text = text.slice(0, TEXT_CHAR_CAP);
+        truncated = true;
+      }
+      return [
+        {
+          type: "text",
+          text: `${header} (Word document):\n\n${text || "(this document appears to be empty)"}${
+            truncated ? "\n\n... (truncated — the file is longer than shown)" : ""
+          }`,
+        },
+      ];
+    } catch {
+      return [
+        {
+          type: "text",
+          text: `${header} — couldn't be parsed as a Word document (it may be corrupted, password-protected, or the older .doc format, which isn't supported — only .docx is).`,
+        },
+      ];
+    }
+  }
+
   if (kind === "text") {
     let text = buffer.toString("utf-8");
     let truncated = false;
@@ -538,7 +594,7 @@ export async function buildFileContentBlocks(
   return [
     {
       type: "text",
-      text: `${header} — this file type (${file.mime_type || "unknown"}) can't be read for analysis yet. Only images, PDFs, spreadsheets (.xlsx), CSV, and plain text files are supported right now.`,
+      text: `${header} — this file type (${file.mime_type || "unknown"}) can't be read for analysis yet. Only images, PDFs, spreadsheets (.xlsx), CSV, Word documents (.docx), and plain text files are supported right now.`,
     },
   ];
 }
@@ -561,7 +617,7 @@ export async function applySpreadsheetEdits(
   }
   if (!edits.length) throw new Error("No edits provided.");
 
-  const { data, error } = await supabase.storage.from(ERNIE_FILES_BUCKET).download(file.storage_path);
+  const { data, error } = await supabase.storage.from(bucketFor(file)).download(file.storage_path);
   if (error || !data) throw new Error(`Couldn't read the original file "${file.file_name}" from storage.`);
   const buffer = Buffer.from(await data.arrayBuffer());
 

@@ -1242,7 +1242,11 @@ export default function ErnieChatClient({
                 Delete Project
               </button>
             )}
-            {!isPopup && (
+            {/* Pop Out and "What Ernie Knows About You" only belong to a
+                personal, General conversation — per Chad (2026-09-10, "we
+                only need those to exist in personal conversations with
+                ernie"), hidden entirely once a Project is active. */}
+            {!isPopup && !activeProject && (
               <button
                 type="button"
                 onClick={openPopout}
@@ -1252,7 +1256,7 @@ export default function ErnieChatClient({
                 Pop Out ↗
               </button>
             )}
-            {!isPopup && (
+            {!isPopup && !activeProject && (
               <button
                 type="button"
                 onClick={openNotes}
