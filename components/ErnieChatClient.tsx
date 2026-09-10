@@ -320,7 +320,32 @@ export default function ErnieChatClient({
     }
     updateHeight();
     window.addEventListener("resize", updateHeight);
-    return () => window.removeEventListener("resize", updateHeight);
+
+    // Fixed 2026-09-10, per Chad ("the ernie chat area, continues to go on
+    // down past the screen... we want it to stop once it gets to the
+    // bottom of the window size, and a scroll bar used to scroll back up
+    // to the conversation history"). This panel's top offset isn't fixed —
+    // it moves whenever whatever sits ABOVE it changes height (the
+    // Project square-tile row wrapping to more rows, the Projects list
+    // loading in asynchronously after mount, switching General <-> a
+    // Project). The old code only ever measured "top" once on mount plus
+    // on a window resize, so once anything above grew taller, panelHeight
+    // went stale and the panel (and the message list / Past Conversations
+    // list inside it) just grew past the bottom of the screen instead of
+    // scrolling internally. A ResizeObserver on this panel's own parent
+    // (whose total height is "everything above" + this panel) re-measures
+    // any time that changes, whatever the cause.
+    const parent = panelRef.current?.parentElement ?? null;
+    let observer: ResizeObserver | null = null;
+    if (parent && typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(() => updateHeight());
+      observer.observe(parent);
+    }
+
+    return () => {
+      window.removeEventListener("resize", updateHeight);
+      observer?.disconnect();
+    };
   }, []);
 
   // Restore whichever conversation this tab was last looking at (or the
