@@ -14,7 +14,7 @@ import { createClient } from "@/lib/supabase/server";
 // creator is automatically granted access too, so their own new project
 // tab shows up immediately rather than requiring a separate self-grant.
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -24,10 +24,26 @@ export async function GET() {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
 
+  // ?status=completed lists closed Projects instead of active ones (see
+  // the close/reopen PATCH in ./[id]/route.ts). Admin-only — Completed
+  // Projects is an Administrator/Manager management view, not something a
+  // Basic user's tab row ever shows.
+  const wantCompleted = req.nextUrl.searchParams.get("status") === "completed";
+
+  if (wantCompleted) {
+    const { data: profile } = await supabase.from("profiles").select("role").eq("id", user.id).single();
+    if (profile?.role !== "admin") {
+      return NextResponse.json(
+        { error: "Only Administrators and Managers can view Completed Projects." },
+        { status: 403 },
+      );
+    }
+  }
+
   const { data, error } = await supabase
     .from("ernie_projects")
     .select("id, name, description, created_by, created_at")
-    .eq("active", true)
+    .eq("active", !wantCompleted)
     .order("name", { ascending: true });
 
   if (error) {

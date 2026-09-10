@@ -183,7 +183,6 @@ export default function ErnieChatClient({
 
   const [projectFiles, setProjectFiles] = useState<ProjectFile[]>([]);
   const [projectFilesLoading, setProjectFilesLoading] = useState(false);
-  const [filesOpen, setFilesOpen] = useState(false);
   const [projectFileUploading, setProjectFileUploading] = useState(false);
   const [projectFileUploadError, setProjectFileUploadError] = useState<string | null>(null);
   const projectFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -193,6 +192,16 @@ export default function ErnieChatClient({
   const [accessLoading, setAccessLoading] = useState(false);
   const [accessSavingId, setAccessSavingId] = useState<string | null>(null);
   const [accessError, setAccessError] = useState<string | null>(null);
+
+  // Completed Projects (added 2026-09-10, Chad: "the ability to close a
+  // project which goes into a completed Projects section... or brought
+  // back to an active project if needed") — closing/reopening/permanently
+  // deleting a Project all live in app/api/ernie/projects/[id]/route.ts.
+  const [completedProjects, setCompletedProjects] = useState<ErnieProject[]>([]);
+  const [completedOpen, setCompletedOpen] = useState(false);
+  const [completedLoading, setCompletedLoading] = useState(false);
+  const [projectActionError, setProjectActionError] = useState<string | null>(null);
+  const [projectActionBusyId, setProjectActionBusyId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   // Live "what Ernie is doing right now" label (e.g. "Checking inventory &
@@ -468,7 +477,6 @@ export default function ErnieChatClient({
     setMessages([]);
     setConversationId(null);
     setError(null);
-    setFilesOpen(false);
     setProjectFiles([]);
     setHistoryLoading(true);
     await refreshHistory(projectId);
@@ -504,6 +512,107 @@ export default function ErnieChatClient({
       setCreateProjectError("Couldn't reach the server — try again.");
     } finally {
       setCreatingProject(false);
+    }
+  }
+
+  async function loadCompletedProjects() {
+    setCompletedLoading(true);
+    try {
+      const res = await fetch("/api/ernie/projects?status=completed");
+      if (res.ok) {
+        const data = await res.json();
+        setCompletedProjects(data.projects ?? []);
+      }
+    } finally {
+      setCompletedLoading(false);
+    }
+  }
+
+  function openCompletedProjects() {
+    setCompletedOpen(true);
+    setProjectActionError(null);
+    loadCompletedProjects();
+  }
+
+  // Close: non-destructive — moves a Project out of the active tab row and
+  // into Completed Projects. Reopen is the exact inverse. Both admin-only,
+  // enforced here and by ernie_projects' own RLS write policy.
+  async function closeProject(projectId: string) {
+    setProjectActionBusyId(projectId);
+    setProjectActionError(null);
+    try {
+      const res = await fetch(`/api/ernie/projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ active: false }),
+      });
+      const data = await res.json().catch(() => ({}) as { error?: string });
+      if (!res.ok) {
+        setProjectActionError(data.error ?? "Couldn't close that Project.");
+        return;
+      }
+      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      if (activeProjectId === projectId) switchToProject(null);
+      if (completedOpen) loadCompletedProjects();
+    } catch {
+      setProjectActionError("Couldn't reach the server — try again.");
+    } finally {
+      setProjectActionBusyId(null);
+    }
+  }
+
+  async function reopenProject(projectId: string) {
+    setProjectActionBusyId(projectId);
+    setProjectActionError(null);
+    try {
+      const res = await fetch(`/api/ernie/projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ active: true }),
+      });
+      const data = await res.json().catch(() => ({}) as { error?: string; project?: ErnieProject });
+      if (!res.ok) {
+        setProjectActionError(data.error ?? "Couldn't reopen that Project.");
+        return;
+      }
+      setCompletedProjects((prev) => prev.filter((p) => p.id !== projectId));
+      if (data.project) {
+        setProjects((prev) => [...prev, data.project as ErnieProject].sort((a, b) => a.name.localeCompare(b.name)));
+      }
+    } catch {
+      setProjectActionError("Couldn't reach the server — try again.");
+    } finally {
+      setProjectActionBusyId(null);
+    }
+  }
+
+  // Permanent delete — the one hard-delete exception in this app (mirrors
+  // Purchase Orders Holding's own permanent-delete precedent), so it's
+  // confirm-gated and irreversible.
+  async function deleteProjectForever(project: ErnieProject) {
+    if (
+      !window.confirm(
+        `Permanently delete "${project.name}"? This cannot be undone. Its files and access grants will be deleted; past conversations are kept but unlinked from it.`,
+      )
+    ) {
+      return;
+    }
+    setProjectActionBusyId(project.id);
+    setProjectActionError(null);
+    try {
+      const res = await fetch(`/api/ernie/projects/${project.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}) as { error?: string });
+        setProjectActionError(data.error ?? "Couldn't delete that Project.");
+        return;
+      }
+      setProjects((prev) => prev.filter((p) => p.id !== project.id));
+      setCompletedProjects((prev) => prev.filter((p) => p.id !== project.id));
+      if (activeProjectId === project.id) switchToProject(null);
+    } catch {
+      setProjectActionError("Couldn't reach the server — try again.");
+    } finally {
+      setProjectActionBusyId(null);
     }
   }
 
@@ -915,14 +1024,18 @@ export default function ErnieChatClient({
     <div className={`${archivo.variable} ${plexSans.variable} ${plexMono.variable} mx-auto flex w-full flex-col ${isPopup ? "max-w-full gap-2 p-3" : "max-w-[1600px] gap-3 p-6"}`}>
       {/* Ernie Project tabs — General plus one per Project this user has
           access to (RLS already limits the list — see sql/ernie_projects.sql).
-          Hidden in the pop-out window, same reasoning as the history sidebar
-          below: that window is sized for a narrow chat panel. */}
+          Resized larger per Chad (2026-09-10, "i need the projects folders
+          to be larger, and above like i have in the screenshot") — bigger
+          tiles in the same row above the panel, rather than the earlier
+          small pill buttons. Hidden in the pop-out window, same reasoning as
+          the history sidebar below: that window is sized for a narrow chat
+          panel. */}
       {!isPopup && (
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-stretch gap-2">
           <button
             type="button"
             onClick={() => switchToProject(null)}
-            className={`rounded-full border px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium transition-colors ${
+            className={`rounded-2xl border px-5 py-3 font-[family-name:var(--font-plex-sans)] text-sm font-semibold transition-colors ${
               activeProjectId === null
                 ? "border-[#6ABC46]/60 bg-[#6ABC46] text-[#0b0e09]"
                 : "border-[#262c1f] bg-[#181c13] text-[#eef1e9] hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
@@ -930,13 +1043,29 @@ export default function ErnieChatClient({
           >
             General
           </button>
+          {/* Completed Projects — lives right next to General, same font
+              and button styling as every other tab here, per Chad
+              (2026-09-10, "i want the completed projects button, to live
+              next to the General button you have. same font same button
+              design"). Admin/Manager only: closing, reopening, and viewing
+              a closed Project are all admin actions (see
+              app/api/ernie/projects/[id]/route.ts). */}
+          {canManageProjects && (
+            <button
+              type="button"
+              onClick={openCompletedProjects}
+              className="rounded-2xl border border-[#262c1f] bg-[#181c13] px-5 py-3 font-[family-name:var(--font-plex-sans)] text-sm font-semibold text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+            >
+              Completed Projects
+            </button>
+          )}
           {projects.map((p) => (
             <button
               key={p.id}
               type="button"
               onClick={() => switchToProject(p.id)}
               title={p.description ?? undefined}
-              className={`max-w-[220px] truncate rounded-full border px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium transition-colors ${
+              className={`max-w-[240px] truncate rounded-2xl border px-5 py-3 font-[family-name:var(--font-plex-sans)] text-sm font-semibold transition-colors ${
                 activeProjectId === p.id
                   ? "border-[#6ABC46]/60 bg-[#6ABC46] text-[#0b0e09]"
                   : "border-[#262c1f] bg-[#181c13] text-[#eef1e9] hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
@@ -950,7 +1079,7 @@ export default function ErnieChatClient({
               type="button"
               onClick={() => setCreateProjectOpen(true)}
               title="Create a new Ernie Project"
-              className="rounded-full border border-dashed border-[#262c1f] bg-transparent px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#8f9885] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+              className="rounded-2xl border border-dashed border-[#262c1f] bg-transparent px-5 py-3 font-[family-name:var(--font-plex-sans)] text-sm font-semibold text-[#8f9885] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
             >
               + New Project
             </button>
@@ -975,6 +1104,60 @@ export default function ErnieChatClient({
         </div>
       )}
 
+      {/* This Project's file library — persistent left-side panel (added
+          2026-09-10, per Chad's red-box annotation: "over here in the red
+          square area... thats where i want the files that have been added
+          to a project to live"), mirroring the right-hand conversation
+          panel's styling. Replaces the earlier "Files (n)" popup. */}
+      {!isPopup && activeProject && (
+        <div className="flex w-72 shrink-0 flex-col overflow-hidden rounded-2xl border border-[#262c1f] bg-[#12150f] shadow-[0_0_0_1px_rgba(0,0,0,0.4)]">
+          <div className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[#4c8a32] via-[#6ABC46] to-[#7fce5c]" />
+          <div className="flex items-center justify-between gap-2 border-b border-[#1c2117] px-4 py-4">
+            <h2 className="min-w-0 truncate font-[family-name:var(--font-archivo)] text-sm font-bold tracking-tight text-[#eef1e9]">
+              {activeProject.name} — Files
+            </h2>
+            {canManageProjects && (
+              <button
+                type="button"
+                onClick={() => projectFileInputRef.current?.click()}
+                disabled={projectFileUploading}
+                title="Add files to this Project"
+                className="shrink-0 rounded-full border border-[#262c1f] bg-[#181c13] px-2.5 py-1 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c] disabled:opacity-50"
+              >
+                {projectFileUploading ? "…" : "+ Add"}
+              </button>
+            )}
+          </div>
+          {projectFileUploadError && (
+            <p className="border-b border-[#1c2117] px-4 py-2 text-xs text-red-400">{projectFileUploadError}</p>
+          )}
+          <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto p-3 font-[family-name:var(--font-plex-sans)]">
+            {projectFilesLoading ? (
+              <p className="px-1 py-3 text-sm text-[#8f9885]">Loading…</p>
+            ) : projectFiles.length === 0 ? (
+              <p className="px-1 py-3 text-sm text-[#8f9885]">
+                No files yet.{canManageProjects && " Use “+ Add” to add some."}
+              </p>
+            ) : (
+              projectFiles.map((f) => (
+                <FileChip
+                  key={f.id}
+                  f={{
+                    id: f.id,
+                    file_name: f.file_name,
+                    mime_type: f.mime_type,
+                    size_bytes: f.size_bytes,
+                    storage_path: f.storage_path,
+                  }}
+                  onDownload={() => handleDownloadProjectFile(f)}
+                  onRemove={canManageProjects ? () => removeProjectFile(f) : undefined}
+                />
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[#262c1f] bg-[#12150f] shadow-[0_0_0_1px_rgba(0,0,0,0.4)]">
         {/* Thin brand-green gradient accent line along the top of the panel */}
         <div className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[#4c8a32] via-[#6ABC46] to-[#7fce5c]" />
@@ -991,14 +1174,22 @@ export default function ErnieChatClient({
             )}
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            {activeProject && (
-              <button
-                type="button"
-                onClick={() => setFilesOpen(true)}
-                className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
-              >
-                Files ({projectFiles.length})
-              </button>
+            {/* This Project's files now live in the persistent left-side
+                panel (added 2026-09-10, per Chad's red-box annotation)
+                instead of a popup — see that panel below, next to the main
+                chat column. The hidden file input it uses stays mounted
+                here regardless of which panel is showing. */}
+            {activeProject && canManageProjects && (
+              <input
+                ref={projectFileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files?.length) handleProjectFiles(e.target.files);
+                  e.target.value = "";
+                }}
+              />
             )}
             {activeProject && canManageProjects && (
               <button
@@ -1010,26 +1201,26 @@ export default function ErnieChatClient({
               </button>
             )}
             {activeProject && canManageProjects && (
-              <>
-                <input
-                  ref={projectFileInputRef}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => {
-                    if (e.target.files?.length) handleProjectFiles(e.target.files);
-                    e.target.value = "";
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() => projectFileInputRef.current?.click()}
-                  disabled={projectFileUploading}
-                  className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c] disabled:opacity-50"
-                >
-                  {projectFileUploading ? "Uploading…" : "Add Files"}
-                </button>
-              </>
+              <button
+                type="button"
+                onClick={() => closeProject(activeProject.id)}
+                disabled={projectActionBusyId === activeProject.id}
+                title="Move this Project to Completed Projects — reversible any time"
+                className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c] disabled:opacity-50"
+              >
+                {projectActionBusyId === activeProject.id ? "Closing…" : "Close Project"}
+              </button>
+            )}
+            {activeProject && canManageProjects && (
+              <button
+                type="button"
+                onClick={() => deleteProjectForever(activeProject)}
+                disabled={projectActionBusyId === activeProject.id}
+                title="Permanently delete this Project — cannot be undone"
+                className="rounded-full border border-red-900/50 bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-red-400 transition-colors hover:border-red-500/60 hover:text-red-300 disabled:opacity-50"
+              >
+                Delete Project
+              </button>
             )}
             {!isPopup && (
               <button
@@ -1059,6 +1250,10 @@ export default function ErnieChatClient({
             </button>
           </div>
         </div>
+
+        {projectActionError && !completedOpen && (
+          <p className="border-b border-[#1c2117] px-5 py-2 text-xs text-red-400">{projectActionError}</p>
+        )}
 
         {notesOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
@@ -1172,46 +1367,6 @@ export default function ErnieChatClient({
           </div>
         )}
 
-        {filesOpen && activeProject && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-            <div className="flex max-h-[80vh] w-full max-w-lg flex-col rounded-xl border border-[#262c1f] bg-[#12150e] p-5 shadow-xl">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="font-[family-name:var(--font-archivo)] text-base font-bold text-[#eef1e9]">
-                  {activeProject.name} — Files
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => setFilesOpen(false)}
-                  className="text-[#8a9282] hover:text-[#eef1e9]"
-                  aria-label="Close"
-                >
-                  ✕
-                </button>
-              </div>
-              {projectFileUploadError && <p className="mb-2 text-xs text-red-400">{projectFileUploadError}</p>}
-              <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
-                {projectFilesLoading ? (
-                  <p className="py-6 text-center text-sm text-[#8a9282]">Loading…</p>
-                ) : projectFiles.length === 0 ? (
-                  <p className="py-6 text-center text-sm text-[#8a9282]">
-                    No files in this Project yet.
-                    {canManageProjects && " Use “Add Files” to add some."}
-                  </p>
-                ) : (
-                  projectFiles.map((f) => (
-                    <FileChip
-                      key={f.id}
-                      f={{ id: f.id, file_name: f.file_name, mime_type: f.mime_type, size_bytes: f.size_bytes, storage_path: f.storage_path }}
-                      onDownload={() => handleDownloadProjectFile(f)}
-                      onRemove={canManageProjects ? () => removeProjectFile(f) : undefined}
-                    />
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
         {manageAccessOpen && activeProject && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
             <div className="flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-[#262c1f] bg-[#12150e] p-5 shadow-xl">
@@ -1257,6 +1412,67 @@ export default function ErnieChatClient({
                         </span>
                       </span>
                     </label>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {completedOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+            <div className="flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-[#262c1f] bg-[#12150e] p-5 shadow-xl">
+              <div className="mb-1 flex items-center justify-between">
+                <h2 className="font-[family-name:var(--font-archivo)] text-base font-bold text-[#eef1e9]">
+                  Completed Projects
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setCompletedOpen(false)}
+                  className="text-[#8a9282] hover:text-[#eef1e9]"
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
+              </div>
+              <p className="mb-3 font-[family-name:var(--font-plex-sans)] text-xs text-[#8a9282]">
+                Closed Projects — reopen one to bring it back to the active tab row, or delete it for good.
+              </p>
+              {projectActionError && <p className="mb-2 text-xs text-red-400">{projectActionError}</p>}
+              <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
+                {completedLoading ? (
+                  <p className="py-6 text-center text-sm text-[#8a9282]">Loading…</p>
+                ) : completedProjects.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-[#8a9282]">No completed Projects.</p>
+                ) : (
+                  completedProjects.map((p) => (
+                    <div
+                      key={p.id}
+                      className="flex items-center justify-between gap-2 rounded-lg border border-[#262c1f] bg-[#181c13] px-3 py-2.5"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm text-[#eef1e9]">{p.name}</p>
+                        {p.description && <p className="truncate text-xs text-[#8f9885]">{p.description}</p>}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => reopenProject(p.id)}
+                          disabled={projectActionBusyId === p.id}
+                          className="rounded-full border border-[#262c1f] bg-[#12150e] px-2.5 py-1 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] hover:border-[#6ABC46]/50 hover:text-[#7fce5c] disabled:opacity-50"
+                        >
+                          {projectActionBusyId === p.id ? "…" : "Reopen"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteProjectForever(p)}
+                          disabled={projectActionBusyId === p.id}
+                          className="rounded-full border border-red-900/50 bg-[#12150e] px-2.5 py-1 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-red-400 hover:border-red-500/60 hover:text-red-300 disabled:opacity-50"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
                   ))
                 )}
               </div>
