@@ -2,7 +2,7 @@
 
 ## What it does
 
-Every day, the app checks for open tasks that are due tomorrow or due today, and emails whoever is assigned to each one. Each task only ever gets emailed once per milestone (once for "due tomorrow," once for "due today") — no repeat nagging. As of 2026-09-10, the "due today" check also catches anything overdue that was never notified yet (not just an exact "due today" match) — see the comment at the top of `app/api/cron/task-reminders/route.ts` for why.
+Every day, the app checks for open tasks that are due tomorrow or due today, and emails whoever is assigned to each one — exactly those two days, never before or after a task's due date. Each task only ever gets emailed once per milestone (once for "due tomorrow," once for "due today") — no repeat nagging.
 
 ## Trigger — reworked 2026-09-10, no longer Vercel Cron
 
@@ -35,8 +35,8 @@ These steps were completed when the feature was first built and shouldn't need r
 ```powershell
 cd "C:\Users\C Lizzel\OneDrive\Desktop\FCB-Allocations\fcb-allocation-app"
 git add .
-git commit -m "Stop relying on Vercel Cron for task reminders; add catch-up + logging"
+git commit -m "Revert due-day catch-up; keep exact day-before/day-of matching plus send-failure logging"
 git push
 ```
 
-No SQL needed for this change — it's a code-only fix (the catch-up logic + error logging) plus the external scheduler setup above, which happens entirely on cron-job.org's site, not in this repo.
+No SQL needed for this change — it's a code-only fix (exact day-before/day-of matching, kept exactly as originally specified, plus error logging on a failed send) plus the external scheduler setup above, which happens entirely on cron-job.org's site, not in this repo.

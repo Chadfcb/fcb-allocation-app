@@ -28,21 +28,25 @@ import { sendMail } from "@/lib/email/sendMail";
 // notified_day_before_at / notified_due_day_at record that it's been sent,
 // checked before sending and set right after (sql/task_due_reminders.sql).
 //
-// Catch-up, added 2026-09-10: the ORIGINAL version of this route only ever
-// matched a task whose due_date was EXACTLY today (or exactly tomorrow,
-// for the day-before heads-up). That meant a single missed invocation on
-// the one exact calendar day a task's milestone landed on lost that
-// reminder forever — once "today" moves past the due date, "due_date =
-// today" can never be true again for that task. The "due today" check
-// below is now "due today OR EARLIER, and still open, and never
-// notified" — so a task that slipped through on its actual due day still
-// gets its "due" email the next time this runs, just later than
-// intended, instead of never. The day-before heads-up is deliberately
-// LEFT as an exact match (a "due tomorrow" nudge doesn't make sense to
-// send after the fact) — the due-day catch-up is the real safety net.
-// This also makes it safe to invoke this route more than once a day (e.g.
-// an external scheduler running every few hours as extra insurance):
-// once a task is marked notified, every later run skips it.
+// Exact-day match, deliberately, both milestones (revisited 2026-09-10):
+// an earlier version of this fix widened "due today" to "due today OR
+// EARLIER" as a catch-up net, in case a missed invocation lost a task's
+// one exact-day window forever. Per Chad, that's NOT what was asked for —
+// the spec is exactly "the day before, and the day of," never a nudge
+// after the due date has passed. Reverted back to an exact match on both
+// milestones. The reasoning that made the catch-up net feel necessary
+// (Vercel Cron running only once a day, so one missed run loses the
+// whole window) no longer applies now that this route is triggered by an
+// external scheduler hitting it multiple times a day (see above) — it
+// only takes ONE successful check landing on the actual due date, at any
+// hour, to fire correctly, so the exact-day match is safe again in
+// practice. It's still possible (if unlikely) for every check on a given
+// day to fail; if that ever becomes a real problem, the catch-up
+// approach is there to revisit, but it's an explicit tradeoff, not the
+// default anymore.
+//
+// It's still safe to invoke this route more than once a day: once a task
+// is marked notified, every later run that day just skips it.
 //
 // Recipients are whoever is assigned to the task (task_item_assignees) —
 // per Chad, not a single admin summary. A task with no assignees is simply
@@ -82,20 +86,15 @@ async function notifyBatch(
   const notifiedColumn = milestone === "day_before" ? "notified_day_before_at" : "notified_due_day_at";
   const whenPhrase = milestone === "day_before" ? "due tomorrow" : "due today";
 
-  let query = supabase
+  // Exact match on both milestones — see the file-level comment above for
+  // why this isn't a "due today or earlier" catch-up.
+  const { data: tasks, error } = await supabase
     .from("task_items")
     .select("id, title, due_date, task_item_assignees(profiles(email, full_name))")
     .eq("status", "open")
-    .is(notifiedColumn, null);
-
-  // "day_before" stays an exact match — a "due tomorrow" heads-up sent
-  // after the fact doesn't make sense. "due_day" is a catch-up match (due
-  // today OR earlier) so a task whose exact due-day run got missed still
-  // gets emailed, once, the next time this route runs — see the file-level
-  // comment above for why that matters.
-  query = milestone === "day_before" ? query.eq("due_date", dueDate) : query.lte("due_date", dueDate);
-
-  const { data: tasks, error } = await query.returns<TaskRow[]>();
+    .eq("due_date", dueDate)
+    .is(notifiedColumn, null)
+    .returns<TaskRow[]>();
 
   if (error) {
     return { milestone, error: error.message, sent: 0 };
