@@ -185,6 +185,29 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
     setNotesSavedAt(Date.now());
   }
 
+  // Pop-out window support (added 2026-09-10, Chad: "if i ask him something
+  // then want to go look in the app, i cant do both at once, i have to swap
+  // back and forth"). window.opener is only set on a window that was itself
+  // opened via window.open from another window/tab of this same app, so it
+  // doubles as a reliable "am I the popup right now" flag — no separate
+  // route or query param needed. Conversation history already lives in the
+  // database (see the load-on-mount effect above), and sessionStorage is
+  // shared between an opener and the popup it spawns, so the popup picks up
+  // the exact same conversation you were already in rather than starting a
+  // blank one.
+  const [isPopup, setIsPopup] = useState(false);
+  useEffect(() => {
+    setIsPopup(typeof window !== "undefined" && !!window.opener);
+  }, []);
+
+  function openPopout() {
+    window.open(
+      "/ernie",
+      "ernie-popup",
+      "width=440,height=760,resizable=yes,menubar=no,toolbar=no,location=no,status=no",
+    );
+  }
+
   const [userId, setUserId] = useState<string | null>(null);
   const [pendingFiles, setPendingFiles] = useState<ErnieFile[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -619,7 +642,9 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
     <div
       ref={panelRef}
       style={panelHeight != null ? { height: panelHeight } : undefined}
-      className={`${archivo.variable} ${plexSans.variable} ${plexMono.variable} relative mx-auto flex w-full max-w-[1600px] gap-4 overflow-hidden p-6`}
+      className={`${archivo.variable} ${plexSans.variable} ${plexMono.variable} relative mx-auto flex w-full ${
+        isPopup ? "max-w-full gap-0 p-3" : "max-w-[1600px] gap-4 p-6"
+      } overflow-hidden`}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -642,13 +667,25 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
             Ernie AI
           </h1>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={openNotes}
-              className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
-            >
-              What Ernie Knows About You
-            </button>
+            {!isPopup && (
+              <button
+                type="button"
+                onClick={openPopout}
+                title="Open Ernie in a separate window you can keep alongside the rest of the app"
+                className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+              >
+                Pop Out ↗
+              </button>
+            )}
+            {!isPopup && (
+              <button
+                type="button"
+                onClick={openNotes}
+                className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+              >
+                What Ernie Knows About You
+              </button>
+            )}
             <button
               type="button"
               onClick={startNewConversation}
@@ -859,7 +896,10 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
       </div>
 
       {/* Conversation list — replaces the old History dropdown with an
-          always-visible sidebar, per Chad's request. */}
+          always-visible sidebar, per Chad's request. Hidden in the pop-out
+          window: that window is sized for a narrow chat panel, and the full
+          history is always one click away in the main window. */}
+      {!isPopup && (
       <div className="flex w-72 shrink-0 flex-col overflow-hidden rounded-2xl border border-[#262c1f] bg-[#12150f] shadow-[0_0_0_1px_rgba(0,0,0,0.4)]">
         <div className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[#4c8a32] via-[#6ABC46] to-[#7fce5c]" />
         <div className="border-b border-[#1c2117] px-4 py-4">
@@ -896,6 +936,7 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }
