@@ -1168,7 +1168,22 @@ export default function ErnieChatClient({
     <div
       ref={panelRef}
       style={panelHeight != null ? { height: panelHeight } : undefined}
-      className="relative flex min-h-0 w-full flex-1 gap-4 overflow-hidden"
+      // Fixed 2026-09-10 (4th pass, root cause confirmed live via a real
+      // browser session) — this element's height was ALWAYS being computed
+      // correctly by the JS in the layout effect above (confirmed live:
+      // style.height read "586px", the right number for the window at the
+      // time) — but "flex-1" (flex: 1 1 0%) tells the flexbox algorithm to
+      // GROW this item to fill whatever leftover space exists in its
+      // parent's column, which silently overrides an element's own
+      // explicit height. That's why the on-screen box kept ballooning past
+      // its own stated height (observed live: rendered at 1110px while its
+      // own style.height correctly said 586px) — confirmed by forcing
+      // "flex: none" on the live element, which snapped it back to the
+      // correct height instantly. Since this panel's height is always
+      // explicitly computed by the JS above (never left to the flexbox
+      // algorithm to guess), "flex-none" tells it to stop stretching and
+      // just use the height it's told to use.
+      className="relative flex min-h-0 w-full flex-none gap-4 overflow-hidden"
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
