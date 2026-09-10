@@ -164,26 +164,6 @@ export async function GET(req: NextRequest) {
   const receivedToken = auth?.replace(/^Bearer\s+/i, "").trim();
   const hasValidSecret = Boolean(cronSecret) && receivedToken === cronSecret;
 
-  // Temporary debug logging (added 2026-09-10): the identical secret works
-  // via a direct curl request but still 401s when cron-job.org's own
-  // servers send it — Vercel Authentication and the Firewall have both
-  // been ruled out as the cause (neither applies to this custom domain /
-  // this endpoint). This logs only shape/length info about what the
-  // function actually received — never the secret itself — so we can see
-  // whether cron-job.org's request even carries a real Authorization
-  // header by the time it reaches this code, and if so how it differs.
-  // Remove once the mismatch is found. Visible in Vercel's Logs tab.
-  console.error("[task-reminders] Auth debug:", {
-    hasAuthHeader: auth !== undefined,
-    authHeaderLength: auth?.length ?? null,
-    receivedTokenLength: receivedToken?.length ?? null,
-    envSecretLength: cronSecret?.length ?? null,
-    matched: hasValidSecret,
-    allHeaderKeys: [...req.headers.keys()],
-    userAgent: req.headers.get("user-agent"),
-    xForwardedFor: req.headers.get("x-forwarded-for"),
-  });
-
   if (!hasValidSecret) {
     const userSupabase = await createClient();
     const {
