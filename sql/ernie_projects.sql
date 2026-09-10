@@ -34,6 +34,13 @@
 -- =========================================================
 -- ernie_projects — the container itself. Soft-delete via `active`,
 -- matching the rest of the app's convention (never a hard delete).
+--
+-- Table created here, but its RLS policies are deliberately deferred to
+-- AFTER ernie_project_access exists further down (a policy on this table
+-- needs to reference that one). (Fixed 2026-09-10: the original version
+-- of this file created that policy immediately here, before
+-- ernie_project_access existed at all, and failed with
+-- "relation ernie_project_access does not exist" when Chad ran it.)
 -- =========================================================
 create table if not exists ernie_projects (
   id uuid primary key default gen_random_uuid(),
@@ -44,6 +51,22 @@ create table if not exists ernie_projects (
   active boolean not null default true
 );
 
+-- =========================================================
+-- ernie_project_access — one row per (project, user) grant. A project
+-- simply doesn't show up in someone's tab row without a row here — same
+-- shape/spirit as user_section_access, scoped to a project instead of an
+-- app-wide section.
+-- =========================================================
+create table if not exists ernie_project_access (
+  project_id uuid not null references ernie_projects(id) on delete cascade,
+  user_id uuid not null references profiles(id) on delete cascade,
+  granted_at timestamptz not null default now(),
+  granted_by uuid references profiles(id),
+  primary key (project_id, user_id)
+);
+
+-- Now that both tables above exist, RLS + policies for each (ernie_projects'
+-- own select policy references ernie_project_access, hence the ordering).
 alter table ernie_projects enable row level security;
 
 drop policy if exists "ernie_projects_select" on ernie_projects;
@@ -60,20 +83,6 @@ create policy "ernie_projects_write" on ernie_projects for all using (
   exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
 ) with check (
   exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin')
-);
-
--- =========================================================
--- ernie_project_access — one row per (project, user) grant. A project
--- simply doesn't show up in someone's tab row without a row here — same
--- shape/spirit as user_section_access, scoped to a project instead of an
--- app-wide section.
--- =========================================================
-create table if not exists ernie_project_access (
-  project_id uuid not null references ernie_projects(id) on delete cascade,
-  user_id uuid not null references profiles(id) on delete cascade,
-  granted_at timestamptz not null default now(),
-  granted_by uuid references profiles(id),
-  primary key (project_id, user_id)
 );
 
 alter table ernie_project_access enable row level security;
