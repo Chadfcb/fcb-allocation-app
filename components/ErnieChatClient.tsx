@@ -305,6 +305,34 @@ export default function ErnieChatClient({
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
+  // Fixed 2026-09-10, per Chad's screen recording — the whole BROWSER PAGE
+  // (sidebar included, not just the chat) was scrolling instead of just
+  // the message list. Root cause: this page's panel height is only ever
+  // an approximation computed in JS (see the layout effect right below),
+  // so it's never pixel-perfect the instant it changes (a message
+  // streaming in, a Project's tab row wrapping to two lines, etc.) — and
+  // the moment the real content is even 1px taller than that estimate,
+  // the shared (app) layout's <main> (which deliberately has no fixed
+  // height — every other page just grows and lets the page scroll, see
+  // the file-level comment above) has something to scroll, and the
+  // browser scrolls the whole page rather than only the inner
+  // "overflow-y-auto" message/conversation lists. Locking the outer
+  // document's own scroll while this component is mounted makes that
+  // physically impossible: the page itself can never move, so any
+  // scrolling (new messages included) is forced into the inner panels
+  // that are actually meant to scroll. Restored on unmount so leaving
+  // /ernie doesn't affect any other page.
+  useEffect(() => {
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+    };
+  }, []);
+
   useLayoutEffect(() => {
     function updateHeight() {
       if (!panelRef.current) return;
