@@ -186,6 +186,36 @@ const ERNIE_LINKS: { href: string; label: string }[] = [
   { href: "/ernie/projects", label: "Projects" },
 ];
 
+type TopLevelCategory = "ernie" | "finance" | "operations" | "sales" | "calendars" | "pos";
+
+// Which top-level category (if any) a given pathname belongs to — added
+// 2026-09-10, per Chad ("we built in that other categories would close if
+// you move to a different, what happened here?"). The accordion behavior
+// below (closeOtherTopLevelSections) only ever ran when a category's own
+// HEADER was clicked to open it — clicking a sub-link inside an
+// already-expanded category (the normal way to actually navigate) never
+// triggered it, so e.g. leaving Operations expanded and clicking straight
+// into a Finance sub-link left Operations sitting open too. This never
+// showed up before because Ernie AI used to be a single flat link with no
+// sub-links to click into — splitting it into "My Ernie AI"/"Projects" is
+// what exposed the gap. Fixed by expanding/collapsing based on the ACTUAL
+// CURRENT PAGE (see the effect below) rather than only on a header click.
+function topLevelCategoryForPath(pathname: string): TopLevelCategory | null {
+  if (pathname.startsWith("/ernie")) return "ernie";
+  if (FINANCE_LINKS.some((l) => l.href === pathname)) return "finance";
+  if (
+    OPERATIONS_LINKS.some((l) => l.href === pathname) ||
+    pathname.startsWith("/pos/labels") ||
+    pathname.startsWith("/upcs")
+  ) {
+    return "operations";
+  }
+  if (SALES_LINKS.some((l) => l.href === pathname)) return "sales";
+  if (CALENDARS_LINKS.some((l) => l.href === pathname)) return "calendars";
+  if (POS_LINKS.some((l) => l.href === pathname)) return "pos";
+  return null;
+}
+
 // POS — restored 2026-09-05 as its own top-level nav section, per Chad,
 // after "move Labels out of POS" got read too literally and the whole POS
 // entry disappeared along with it (Labels was the only thing under it, and
@@ -444,6 +474,36 @@ export default function Sidebar({
       }
     }
   }, []);
+
+  // Expand whichever top-level category the CURRENT PAGE belongs to and
+  // collapse the rest — added 2026-09-10 (see topLevelCategoryForPath
+  // above for why). Runs after the hydration effect above, so it correctly
+  // overrides whatever localStorage happened to have saved: which section
+  // is open should always match where you actually are once you've
+  // navigated somewhere. A page that isn't under any category (Dashboard,
+  // Tasks, Users, Audit Log) collapses all of them, matching "moving to a
+  // different section" generally, not just to another categorized page.
+  useEffect(() => {
+    const active = topLevelCategoryForPath(pathname);
+    const sections: Array<{
+      key: TopLevelCategory;
+      setExpanded: (value: boolean) => void;
+      storageKey: string;
+    }> = [
+      { key: "ernie", setExpanded: setErnieExpanded, storageKey: ERNIE_STORAGE_KEY },
+      { key: "finance", setExpanded: setFinanceExpanded, storageKey: FINANCE_STORAGE_KEY },
+      { key: "operations", setExpanded: setOperationsExpanded, storageKey: OPERATIONS_STORAGE_KEY },
+      { key: "sales", setExpanded: setSalesExpanded, storageKey: SALES_STORAGE_KEY },
+      { key: "calendars", setExpanded: setCalendarsExpanded, storageKey: CALENDARS_STORAGE_KEY },
+      { key: "pos", setExpanded: setPosExpanded, storageKey: POS_STORAGE_KEY },
+    ];
+    for (const section of sections) {
+      const shouldBeOpen = section.key === active;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing sidebar expand state to the current route, not a UI-driven update
+      section.setExpanded(shouldBeOpen);
+      localStorage.setItem(section.storageKey, String(shouldBeOpen));
+    }
+  }, [pathname]);
 
   useEffect(() => {
     // Pull this person's previously-dismissed "New!" badges from the
