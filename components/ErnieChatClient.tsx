@@ -305,38 +305,25 @@ export default function ErnieChatClient({
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  // Fixed 2026-09-10, per Chad's screen recording — the whole BROWSER PAGE
-  // (sidebar included, not just the chat) was scrolling instead of just
-  // the message list. Root cause: this page's panel height is only ever
-  // an approximation computed in JS (see the layout effect right below),
-  // so it's never pixel-perfect the instant it changes (a message
-  // streaming in, a Project's tab row wrapping to two lines, etc.) — and
-  // the moment the real content is even 1px taller than that estimate,
-  // the shared (app) layout's <main> (which deliberately has no fixed
-  // height — every other page just grows and lets the page scroll, see
-  // the file-level comment above) has something to scroll, and the
-  // browser scrolls the whole page rather than only the inner
-  // "overflow-y-auto" message/conversation lists. Locking the outer
-  // document's own scroll while this component is mounted makes that
-  // physically impossible: the page itself can never move, so any
-  // scrolling (new messages included) is forced into the inner panels
-  // that are actually meant to scroll. Restored on unmount so leaving
-  // /ernie doesn't affect any other page.
-  useEffect(() => {
-    const previousBodyOverflow = document.body.style.overflow;
-    const previousHtmlOverflow = document.documentElement.style.overflow;
-    document.body.style.overflow = "hidden";
-    document.documentElement.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousBodyOverflow;
-      document.documentElement.style.overflow = previousHtmlOverflow;
-    };
-  }, []);
-
   useLayoutEffect(() => {
     function updateHeight() {
       if (!panelRef.current) return;
-      const top = panelRef.current.getBoundingClientRect().top;
+      // Fixed 2026-09-10 (2nd pass) — the previous version used
+      // getBoundingClientRect().top on its own, which is measured relative
+      // to the CURRENT SCROLL POSITION of the page, not the page's actual
+      // layout. That created a feedback loop: if the page had scrolled down
+      // even slightly (e.g. because an earlier version of this panel was
+      // briefly too tall), "top" read as a smaller number, which made this
+      // calculation think MORE height was available, which made the panel
+      // even taller, which pushed the page to scroll further — each
+      // recompute made it worse instead of correcting itself. Adding back
+      // window.scrollY cancels out the current scroll position, giving the
+      // panel's true position in the page's own layout (i.e. where "top"
+      // would read if the page were scrolled all the way up) — that number
+      // doesn't change just because the page happens to be scrolled right
+      // now, so the calculation can't spiral like that again.
+      const rect = panelRef.current.getBoundingClientRect();
+      const top = rect.top + window.scrollY;
       // The shared (app) layout's <main> wraps every page in "py-6", so
       // there's padding below this panel too — without subtracting it, the
       // panel's bottom (and the input bar in it) always sat just far enough
@@ -344,7 +331,12 @@ export default function ErnieChatClient({
       const parentPaddingBottom = panelRef.current.parentElement
         ? parseFloat(getComputedStyle(panelRef.current.parentElement).paddingBottom || "0")
         : 0;
-      setPanelHeight(window.innerHeight - top - parentPaddingBottom);
+      const nextHeight = window.innerHeight - top - parentPaddingBottom;
+      // Guard against a transient measurement (e.g. mid-reflow, or a stale
+      // scroll position right as the page loads) producing a nonsensical
+      // height — never let the panel collapse to near-nothing or balloon
+      // past the viewport itself.
+      setPanelHeight(Math.max(240, Math.min(nextHeight, window.innerHeight)));
     }
     updateHeight();
     window.addEventListener("resize", updateHeight);
