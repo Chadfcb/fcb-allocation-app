@@ -308,22 +308,32 @@ export default function ErnieChatClient({
   useLayoutEffect(() => {
     function updateHeight() {
       if (!panelRef.current) return;
-      // Fixed 2026-09-10 (2nd pass) — the previous version used
-      // getBoundingClientRect().top on its own, which is measured relative
-      // to the CURRENT SCROLL POSITION of the page, not the page's actual
-      // layout. That created a feedback loop: if the page had scrolled down
-      // even slightly (e.g. because an earlier version of this panel was
-      // briefly too tall), "top" read as a smaller number, which made this
-      // calculation think MORE height was available, which made the panel
-      // even taller, which pushed the page to scroll further — each
-      // recompute made it worse instead of correcting itself. Adding back
-      // window.scrollY cancels out the current scroll position, giving the
-      // panel's true position in the page's own layout (i.e. where "top"
-      // would read if the page were scrolled all the way up) — that number
-      // doesn't change just because the page happens to be scrolled right
-      // now, so the calculation can't spiral like that again.
-      const rect = panelRef.current.getBoundingClientRect();
-      const top = rect.top + window.scrollY;
+      // Fixed 2026-09-10 (3rd pass, confirmed live via a real browser
+      // session against a long conversation) — both earlier versions
+      // measured "top" from getBoundingClientRect(), which reflects the
+      // CURRENT SCROLL POSITION at the exact instant it's called. Opening a
+      // long past conversation triggers the scrollIntoView effect below,
+      // which smooth-scrolls the page; if this height calculation happens
+      // to run mid-animation (very plausible — a ResizeObserver fires as
+      // dozens of messages render in), it can capture a scroll position
+      // that doesn't match the page's true, at-rest layout, locking in a
+      // wildly wrong height (observed live: 3870px in an 855px-tall
+      // window) that then never gets corrected, since nothing about the
+      // page's actual layout changes again to trigger a fresh, good
+      // measurement.
+      //
+      // The fix: measure this panel's position by walking up the
+      // offsetParent chain and summing offsetTop at each step. This is a
+      // pure DOCUMENT-layout measurement — completely independent of
+      // however far the page currently happens to be scrolled — so it
+      // can't be corrupted by a mid-scroll-animation snapshot the way
+      // getBoundingClientRect() can.
+      let node: HTMLElement | null = panelRef.current;
+      let top = 0;
+      while (node) {
+        top += node.offsetTop;
+        node = node.offsetParent as HTMLElement | null;
+      }
       // The shared (app) layout's <main> wraps every page in "py-6", so
       // there's padding below this panel too — without subtracting it, the
       // panel's bottom (and the input bar in it) always sat just far enough
@@ -332,11 +342,14 @@ export default function ErnieChatClient({
         ? parseFloat(getComputedStyle(panelRef.current.parentElement).paddingBottom || "0")
         : 0;
       const nextHeight = window.innerHeight - top - parentPaddingBottom;
-      // Guard against a transient measurement (e.g. mid-reflow, or a stale
-      // scroll position right as the page loads) producing a nonsensical
-      // height — never let the panel collapse to near-nothing or balloon
-      // past the viewport itself.
-      setPanelHeight(Math.max(240, Math.min(nextHeight, window.innerHeight)));
+      // Sanity guard: only apply a measurement that actually looks like a
+      // real, fittable panel height. If something above ever produces a
+      // clearly bogus number, skip the update and keep whatever height was
+      // last known good, rather than locking in a bad value the way the
+      // old clamp-to-innerHeight fallback did.
+      if (nextHeight > 100 && nextHeight <= window.innerHeight) {
+        setPanelHeight(nextHeight);
+      }
     }
     updateHeight();
     window.addEventListener("resize", updateHeight);
