@@ -1022,68 +1022,88 @@ export default function ErnieChatClient({
 
   return (
     <div className={`${archivo.variable} ${plexSans.variable} ${plexMono.variable} mx-auto flex w-full flex-col ${isPopup ? "max-w-full gap-2 p-3" : "max-w-[1600px] gap-3 p-6"}`}>
-      {/* Ernie Project tabs — General plus one per Project this user has
-          access to (RLS already limits the list — see sql/ernie_projects.sql).
-          Resized larger per Chad (2026-09-10, "i need the projects folders
-          to be larger, and above like i have in the screenshot") — bigger
-          tiles in the same row above the panel, rather than the earlier
-          small pill buttons. Hidden in the pop-out window, same reasoning as
-          the history sidebar below: that window is sized for a narrow chat
-          panel. */}
+      {/* Corrected 2026-09-10 per Chad: he never asked for the General /
+          Completed Projects pills resized — he asked for the Projects
+          themselves ("the tasks that are created") to move ABOVE the pill
+          row as larger squares, per his mockup screenshot (a row of blank
+          squares sitting above a General/Test/+New Project pill row). So:
+          the pill row below is back to its original small size, and a new
+          square-tile row above it is where an actual Project (plus
+          "+ New Project" for Administrators/Managers) now lives — General
+          and Completed Projects are not Projects themselves, so they stay
+          pills, not squares. Hidden in the pop-out window, same reasoning
+          as the history sidebar below: that window is sized for a narrow
+          chat panel. */}
       {!isPopup && (
-        <div className="flex flex-wrap items-stretch gap-2">
-          <button
-            type="button"
-            onClick={() => switchToProject(null)}
-            className={`rounded-2xl border px-5 py-3 font-[family-name:var(--font-plex-sans)] text-sm font-semibold transition-colors ${
-              activeProjectId === null
-                ? "border-[#6ABC46]/60 bg-[#6ABC46] text-[#0b0e09]"
-                : "border-[#262c1f] bg-[#181c13] text-[#eef1e9] hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
-            }`}
-          >
-            General
-          </button>
-          {/* Completed Projects — lives right next to General, same font
-              and button styling as every other tab here, per Chad
-              (2026-09-10, "i want the completed projects button, to live
-              next to the General button you have. same font same button
-              design"). Admin/Manager only: closing, reopening, and viewing
-              a closed Project are all admin actions (see
-              app/api/ernie/projects/[id]/route.ts). */}
-          {canManageProjects && (
-            <button
-              type="button"
-              onClick={openCompletedProjects}
-              className="rounded-2xl border border-[#262c1f] bg-[#181c13] px-5 py-3 font-[family-name:var(--font-plex-sans)] text-sm font-semibold text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
-            >
-              Completed Projects
-            </button>
+        <div className="flex flex-col gap-2">
+          {(projects.length > 0 || canManageProjects) && (
+            <div className="flex flex-wrap gap-3">
+              {projects.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => switchToProject(p.id)}
+                  title={p.description ?? undefined}
+                  className={`flex h-24 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-xl border px-2 text-center font-[family-name:var(--font-plex-sans)] transition-colors ${
+                    activeProjectId === p.id
+                      ? "border-[#6ABC46]/60 bg-[#6ABC46] text-[#0b0e09]"
+                      : "border-[#262c1f] bg-[#181c13] text-[#eef1e9] hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+                  }`}
+                >
+                  <svg viewBox="0 0 20 20" fill="none" className="h-6 w-6 shrink-0" aria-hidden="true">
+                    <path
+                      d="M3 5.5C3 4.67157 3.67157 4 4.5 4H8L9.5 6H15.5C16.3284 6 17 6.67157 17 7.5V14.5C17 15.3284 16.3284 16 15.5 16H4.5C3.67157 16 3 15.3284 3 14.5V5.5Z"
+                      fill="currentColor"
+                    />
+                  </svg>
+                  <span className="line-clamp-2 max-w-full break-words text-xs font-semibold leading-tight">
+                    {p.name}
+                  </span>
+                </button>
+              ))}
+              {canManageProjects && (
+                <button
+                  type="button"
+                  onClick={() => setCreateProjectOpen(true)}
+                  title="Create a new Ernie Project"
+                  className="flex h-24 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-[#262c1f] bg-transparent px-2 text-center font-[family-name:var(--font-plex-sans)] text-[#8f9885] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+                >
+                  <span className="text-2xl leading-none">+</span>
+                  <span className="text-xs font-semibold leading-tight">New Project</span>
+                </button>
+              )}
+            </div>
           )}
-          {projects.map((p) => (
+
+          <div className="flex flex-wrap items-center gap-1.5">
             <button
-              key={p.id}
               type="button"
-              onClick={() => switchToProject(p.id)}
-              title={p.description ?? undefined}
-              className={`max-w-[240px] truncate rounded-2xl border px-5 py-3 font-[family-name:var(--font-plex-sans)] text-sm font-semibold transition-colors ${
-                activeProjectId === p.id
+              onClick={() => switchToProject(null)}
+              className={`rounded-full border px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium transition-colors ${
+                activeProjectId === null
                   ? "border-[#6ABC46]/60 bg-[#6ABC46] text-[#0b0e09]"
                   : "border-[#262c1f] bg-[#181c13] text-[#eef1e9] hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
               }`}
             >
-              {p.name}
+              General
             </button>
-          ))}
-          {canManageProjects && (
-            <button
-              type="button"
-              onClick={() => setCreateProjectOpen(true)}
-              title="Create a new Ernie Project"
-              className="rounded-2xl border border-dashed border-[#262c1f] bg-transparent px-5 py-3 font-[family-name:var(--font-plex-sans)] text-sm font-semibold text-[#8f9885] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
-            >
-              + New Project
-            </button>
-          )}
+            {/* Completed Projects — lives right next to General, same font
+                and button styling as this pill row, per Chad (2026-09-10,
+                "i want the completed projects button, to live next to the
+                General button you have. same font same button design").
+                Admin/Manager only: closing, reopening, and viewing a
+                closed Project are all admin actions (see
+                app/api/ernie/projects/[id]/route.ts). */}
+            {canManageProjects && (
+              <button
+                type="button"
+                onClick={openCompletedProjects}
+                className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+              >
+                Completed Projects
+              </button>
+            )}
+          </div>
         </div>
       )}
 
