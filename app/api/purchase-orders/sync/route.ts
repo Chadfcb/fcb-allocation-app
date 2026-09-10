@@ -162,7 +162,18 @@ export async function POST(req: NextRequest) {
   // syncedCount>0): a run that finds nothing changed still counts as a
   // completed sync. Added 2026-09-09 alongside the Distributor Inventory
   // sync route and the new ekos_sync_status table.
-  await supabase.from("ekos_sync_status").upsert({ id: 1, last_synced_at: new Date().toISOString() });
+  //
+  // Checked explicitly (fixed 2026-09-10) — this silently failed for a full
+  // day under RLS (missing INSERT policy on ekos_sync_status; see
+  // sql/ekos_sync_status.sql) with nothing here to surface it. Doesn't fail
+  // the whole sync (the PO data itself synced fine either way) — just makes
+  // sure it shows up in `errors` instead of vanishing.
+  const { error: syncStatusError } = await supabase
+    .from("ekos_sync_status")
+    .upsert({ id: 1, last_synced_at: new Date().toISOString() });
+  if (syncStatusError) {
+    errors.push(`Dashboard "Last Ekos sync" timestamp not updated: ${syncStatusError.message}`);
+  }
 
   return NextResponse.json({
     syncedCount,

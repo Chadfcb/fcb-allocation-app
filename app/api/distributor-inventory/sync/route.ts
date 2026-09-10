@@ -123,8 +123,14 @@ export async function POST(req: NextRequest) {
   }
 
   // Stamp "Last Ekos sync" for the Dashboard — see the matching comment in
-  // app/api/purchase-orders/sync/route.ts. Added 2026-09-09.
-  await supabase.from("ekos_sync_status").upsert({ id: 1, last_synced_at: new Date().toISOString() });
+  // app/api/purchase-orders/sync/route.ts. Added 2026-09-09; error now
+  // checked explicitly (fixed 2026-09-10 — see sql/ekos_sync_status.sql).
+  const { error: syncStatusError } = await supabase
+    .from("ekos_sync_status")
+    .upsert({ id: 1, last_synced_at: new Date().toISOString() });
+  if (syncStatusError) {
+    errors.push(`Dashboard "Last Ekos sync" timestamp not updated: ${syncStatusError.message}`);
+  }
 
   return NextResponse.json({ syncedCount, errors });
 }

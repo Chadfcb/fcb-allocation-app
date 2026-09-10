@@ -35,3 +35,15 @@ drop policy if exists "ekos_sync_status_write_admin" on ekos_sync_status;
 create policy "ekos_sync_status_write_admin" on ekos_sync_status for update
   using (exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'))
   with check (exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
+
+-- Fixed 2026-09-10: both sync routes call .upsert({id: 1, ...}), which
+-- Postgres runs as INSERT ... ON CONFLICT DO UPDATE. RLS enforces the
+-- INSERT policy on that statement even though the conflict always routes it
+-- to an UPDATE (the row is a permanent singleton, id=1, seeded above) — with
+-- no INSERT policy at all, every sync's upsert was silently rejected by RLS,
+-- so "Last Ekos sync" on the Dashboard stayed stuck on "Never synced yet"
+-- forever despite both syncs actually completing. This just extends the
+-- same admin-only check to INSERT.
+drop policy if exists "ekos_sync_status_write_admin_insert" on ekos_sync_status;
+create policy "ekos_sync_status_write_admin_insert" on ekos_sync_status for insert
+  with check (exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'admin'));
