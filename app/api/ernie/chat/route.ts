@@ -140,11 +140,40 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
   const personNotes = personNotesRow?.notes ?? null;
 
-  const body = (await req.json()) as { conversationId?: string; message?: string; fileIds?: string[] };
+  const body = (await req.json()) as {
+    conversationId?: string;
+    message?: string;
+    fileIds?: string[];
+    projectId?: string;
+  };
   const newMessageText = body.message?.trim() ?? "";
   const fileIds = Array.isArray(body.fileIds)
     ? body.fileIds.filter((id): id is string => typeof id === "string" && id.length > 0)
     : [];
+
+  // A brand-new conversation started from inside an Ernie Project (see
+  // sql/ernie_projects.sql) carries the project's id so it's created
+  // already scoped to that project — re-verified here against this same
+  // user's own RLS-gated view of ernie_projects (never trust the client's
+  // say-so alone) so someone can't hand-craft a projectId they don't
+  // actually have access to. An existing conversation already has its
+  // project_id fixed from creation, so this only matters when starting a
+  // new one (no conversationId on the request yet).
+  let project: { id: string; name: string; description: string | null } | null = null;
+  if (body.projectId && !body.conversationId) {
+    const { data: projectRow } = await supabase
+      .from("ernie_projects")
+      .select("id, name, description")
+      .eq("id", body.projectId)
+      .maybeSingle();
+    if (!projectRow) {
+      return NextResponse.json(
+        { error: "That Project isn't available on your account — ask an admin for access." },
+        { status: 403 },
+      );
+    }
+    project = projectRow;
+  }
 
   if (!newMessageText && fileIds.length === 0) {
     return NextResponse.json({ error: "No message provided" }, { status: 400 });
@@ -181,10 +210,24 @@ export async function POST(req: NextRequest) {
         if (conversationId) {
           const { data: existing, error: convErr } = await supabase
             .from("ernie_conversations")
-            .select("id")
+            .select("id, project_id")
             .eq("id", conversationId)
             .maybeSingle();
           if (convErr) throw convErr;
+
+          // An existing conversation's own project_id (set once, at
+          // creation) is the source of truth for whether it's scoped to a
+          // Project — re-fetched fresh every turn (rather than trusting
+          // whatever the client happened to send) so Ernie's system prompt
+          // always reflects the real, current project context.
+          if (existing?.project_id) {
+            const { data: projectRow } = await supabase
+              .from("ernie_projects")
+              .select("id, name, description")
+              .eq("id", existing.project_id)
+              .maybeSingle();
+            project = projectRow ?? null;
+          }
 
           if (!existing) {
             // Stale/invalid id (e.g. leftover in another browser's
@@ -208,7 +251,11 @@ export async function POST(req: NextRequest) {
         if (!conversationId) {
           const { data: created, error: createErr } = await supabase
             .from("ernie_conversations")
-            .insert({ user_id: user.id, title: titleFromMessage(newMessageText) })
+            .insert({
+              user_id: user.id,
+              title: titleFromMessage(newMessageText),
+              project_id: project?.id ?? null,
+            })
             .select("id")
             .single();
           if (createErr) throw createErr;
@@ -253,6 +300,17 @@ export async function POST(req: NextRequest) {
           { role: "user", content: newMessageContentBlocks },
         ];
 
+        // Told to Ernie only when this conversation belongs to a Project
+        // (see sql/ernie_projects.sql) — not a new tool, just a system-prompt
+        // addendum, since run_read_only_query/get_file_for_download already
+        // reach ernie_project_files automatically via that table's own RLS
+        // (the same "no new tool needed" pattern as ernie_reference_documents).
+        const projectSystemPrompt = project
+          ? `\n\nThis conversation is happening inside the Ernie Project "${project.name}"${
+              project.description ? ` — ${project.description}` : ""
+            }. It has its own file library, separate from anyone's directly-uploaded files: query ernie_project_files (id, project_id, file_name, storage_path, description, mime_type, size_bytes, added_by, created_at) via run_read_only_query, filtered to project_id = '${project.id}', to see what's in it — read the whole table for this project rather than guessing a filter, since it's small. Use get_file_for_download (bucket "ernie-project-files") to actually hand one of those files over as a download. You only ever see the files of a Project you/this user have real access to — RLS enforces that automatically, the same as everywhere else.`
+          : "";
+
         let finalText = "";
         // Files Ernie produced or fetched during this turn (edit_spreadsheet,
         // get_file_for_download) so they can be shown as download chips —
@@ -285,7 +343,7 @@ export async function POST(req: NextRequest) {
             body: JSON.stringify({
               model: ANTHROPIC_MODEL,
               max_tokens: 2048,
-              system: buildErnieSystemPrompt(role, sections, isSuperAdmin, personNotes),
+              system: buildErnieSystemPrompt(role, sections, isSuperAdmin, personNotes) + projectSystemPrompt,
               tools: [...getErnieTools(role, sections, isSuperAdmin), WEB_SEARCH_TOOL, WEB_FETCH_TOOL, CODE_EXECUTION_TOOL],
               ...(isLastRound ? { tool_choice: { type: "none" } } : {}),
               messages: anthropicMessages,

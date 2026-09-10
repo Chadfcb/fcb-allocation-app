@@ -14,5 +14,9 @@ export default async function ErniePage() {
   const firstName =
     profile.full_name?.trim().split(/\s+/)[0] || profile.email.split("@")[0];
 
-  return <ErnieChatClient firstName={firstName} />;
+  // Whether this signed-in user can create Ernie Projects, manage their
+  // access, and add/remove their files — Administrators and Managers
+  // (role === "admin", either tier) per Chad, 2026-09-10. See
+  // sql/ernie_projects.sql.
+  return <ErnieChatClient firstName={firstName} canManageProjects={profile.role === "admin"} />;
 }

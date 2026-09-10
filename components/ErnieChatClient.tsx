@@ -97,6 +97,39 @@ interface ConversationSummary {
   updated_at: string;
 }
 
+// Ernie Projects (added 2026-09-10) — named containers with their own file
+// library and their own conversation history, visible only to whoever's
+// been granted access (see sql/ernie_projects.sql). A project tab isn't
+// persisted across a page refresh — landing back on /ernie always starts
+// on General, same as before this feature existed; switching tabs is a
+// same-session action.
+interface ErnieProject {
+  id: string;
+  name: string;
+  description: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+interface ProjectFile {
+  id: string;
+  file_name: string;
+  storage_path: string;
+  description: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  added_by: string | null;
+  created_at: string;
+}
+
+interface ProjectAccessUser {
+  id: string;
+  full_name: string | null;
+  email: string;
+  role: string;
+  has_access: boolean;
+}
+
 const ACTIVE_CONVERSATION_KEY = "ernie_active_conversation_id";
 const NEW_SENTINEL = "new";
 
@@ -121,11 +154,45 @@ function formatRelative(iso: string) {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-export default function ErnieChatClient({ firstName }: { firstName: string }) {
+export default function ErnieChatClient({
+  firstName,
+  canManageProjects,
+}: {
+  firstName: string;
+  // Whether this signed-in user can create Ernie Projects, manage a
+  // project's access, and add/remove its files — Administrators and
+  // Managers only (role === "admin", either tier). Everyone with Ernie
+  // access at all can still see and use a project they've been granted.
+  canManageProjects: boolean;
+}) {
   const supabase = useMemo(() => createClient(), []);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
+
+  // --- Ernie Projects state ---------------------------------------------
+  const [projects, setProjects] = useState<ErnieProject[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const activeProject = activeProjectId ? projects.find((p) => p.id === activeProjectId) ?? null : null;
+
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectDescription, setNewProjectDescription] = useState("");
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [createProjectError, setCreateProjectError] = useState<string | null>(null);
+
+  const [projectFiles, setProjectFiles] = useState<ProjectFile[]>([]);
+  const [projectFilesLoading, setProjectFilesLoading] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [projectFileUploading, setProjectFileUploading] = useState(false);
+  const [projectFileUploadError, setProjectFileUploadError] = useState<string | null>(null);
+  const projectFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [manageAccessOpen, setManageAccessOpen] = useState(false);
+  const [accessUsers, setAccessUsers] = useState<ProjectAccessUser[]>([]);
+  const [accessLoading, setAccessLoading] = useState(false);
+  const [accessSavingId, setAccessSavingId] = useState<string | null>(null);
+  const [accessError, setAccessError] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   // Live "what Ernie is doing right now" label (e.g. "Checking inventory &
@@ -314,6 +381,8 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
   // Load the sidebar's conversation list once on mount — it's always
   // visible now (no more click-to-open History dropdown), so it needs its
   // own data as soon as the page loads rather than waiting to be opened.
+  // Scoped to whichever Project (if any) is currently active — see
+  // refreshHistory below.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -333,18 +402,215 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
     };
   }, []);
 
-  // Conversation list for the right-hand sidebar — loaded once on mount and
-  // refreshed after every reply, rather than only when a dropdown is opened,
-  // since the sidebar is on-screen at all times now.
-  async function refreshHistory() {
+  // Every Project this signed-in user has access to (RLS on ernie_projects
+  // already limits this — see sql/ernie_projects.sql), for the tab row
+  // above the header. Loaded once on mount; refreshed after creating one.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/ernie/projects");
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          setProjects(data.projects ?? []);
+        }
+      } catch {
+        // Tabs just won't show up this load — General still works fine.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Conversation list for the right-hand sidebar — loaded on mount, after
+  // every reply, and whenever the active Project tab changes, rather than
+  // only when a dropdown is opened, since the sidebar is on-screen at all
+  // times now. Omitting projectId scopes to the general (non-Project)
+  // history; passing one scopes to that Project's own history — the two
+  // never mix (see app/api/ernie/conversations/route.ts).
+  async function refreshHistory(projectId?: string | null) {
+    const scopedTo = projectId !== undefined ? projectId : activeProjectId;
     try {
-      const res = await fetch("/api/ernie/conversations");
+      const res = await fetch(
+        scopedTo ? `/api/ernie/conversations?projectId=${scopedTo}` : "/api/ernie/conversations",
+      );
       if (res.ok) {
         const data = await res.json();
         setHistory(data.conversations ?? []);
       }
     } catch {
       // leave the stale list showing rather than erroring the whole panel
+    }
+  }
+
+  async function loadProjectFiles(projectId: string) {
+    setProjectFilesLoading(true);
+    try {
+      const res = await fetch(`/api/ernie/projects/${projectId}/files`);
+      if (res.ok) {
+        const data = await res.json();
+        setProjectFiles(data.files ?? []);
+      }
+    } finally {
+      setProjectFilesLoading(false);
+    }
+  }
+
+  // Switching tabs (General <-> a Project, or between two Projects) starts
+  // a blank conversation in that context and loads its own file list and
+  // its own conversation history — deliberately does not try to auto-open
+  // whatever conversation was last open there; "New Conversation"/the
+  // history list handle picking one up again.
+  async function switchToProject(projectId: string | null) {
+    if (projectId === activeProjectId) return;
+    setActiveProjectId(projectId);
+    setMessages([]);
+    setConversationId(null);
+    setError(null);
+    setFilesOpen(false);
+    setProjectFiles([]);
+    setHistoryLoading(true);
+    await refreshHistory(projectId);
+    setHistoryLoading(false);
+    if (projectId) await loadProjectFiles(projectId);
+  }
+
+  async function createProject() {
+    const name = newProjectName.trim();
+    if (!name) {
+      setCreateProjectError("Give it a name.");
+      return;
+    }
+    setCreatingProject(true);
+    setCreateProjectError(null);
+    try {
+      const res = await fetch("/api/ernie/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, description: newProjectDescription.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setCreateProjectError(data.error ?? "Couldn't create that Project.");
+        return;
+      }
+      setProjects((prev) => [...prev, data.project].sort((a, b) => a.name.localeCompare(b.name)));
+      setCreateProjectOpen(false);
+      setNewProjectName("");
+      setNewProjectDescription("");
+      switchToProject(data.project.id);
+    } catch {
+      setCreateProjectError("Couldn't reach the server — try again.");
+    } finally {
+      setCreatingProject(false);
+    }
+  }
+
+  async function openManageAccess() {
+    if (!activeProjectId) return;
+    setManageAccessOpen(true);
+    setAccessError(null);
+    setAccessLoading(true);
+    try {
+      const res = await fetch(`/api/ernie/projects/${activeProjectId}/access`);
+      const data = await res.json();
+      if (!res.ok) {
+        setAccessError(data.error ?? "Couldn't load access for this Project.");
+        return;
+      }
+      setAccessUsers(data.users ?? []);
+    } catch {
+      setAccessError("Couldn't reach the server — try again.");
+    } finally {
+      setAccessLoading(false);
+    }
+  }
+
+  async function toggleUserAccess(user: ProjectAccessUser) {
+    if (!activeProjectId) return;
+    setAccessSavingId(user.id);
+    setAccessError(null);
+    try {
+      const res = user.has_access
+        ? await fetch(`/api/ernie/projects/${activeProjectId}/access?userId=${user.id}`, { method: "DELETE" })
+        : await fetch(`/api/ernie/projects/${activeProjectId}/access`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ userId: user.id }),
+          });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}) as { error?: string });
+        setAccessError(data.error ?? "Couldn't update access.");
+        return;
+      }
+      setAccessUsers((prev) =>
+        prev.map((u) => (u.id === user.id ? { ...u, has_access: !u.has_access } : u)),
+      );
+    } catch {
+      setAccessError("Couldn't reach the server — try again.");
+    } finally {
+      setAccessSavingId(null);
+    }
+  }
+
+  async function handleProjectFiles(fileList: FileList) {
+    if (!activeProjectId) return;
+    setProjectFileUploading(true);
+    setProjectFileUploadError(null);
+    try {
+      for (const file of Array.from(fileList)) {
+        const path = `${activeProjectId}/${storageFileName(file.name)}`;
+        const { error: uploadErr } = await supabase.storage.from("ernie-project-files").upload(path, file);
+        if (uploadErr) {
+          setProjectFileUploadError(`Couldn't upload ${file.name}: ${uploadErr.message}`);
+          continue;
+        }
+        const res = await fetch(`/api/ernie/projects/${activeProjectId}/files`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            file_name: file.name,
+            storage_path: path,
+            mime_type: file.type || null,
+            size_bytes: file.size,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setProjectFileUploadError(`Uploaded ${file.name} but couldn't record it: ${data.error ?? "unknown error"}`);
+          continue;
+        }
+        setProjectFiles((prev) => [data.file, ...prev]);
+      }
+    } finally {
+      setProjectFileUploading(false);
+    }
+  }
+
+  async function removeProjectFile(f: ProjectFile) {
+    if (!activeProjectId) return;
+    setProjectFiles((prev) => prev.filter((p) => p.id !== f.id));
+    await fetch(`/api/ernie/projects/${activeProjectId}/files?fileId=${f.id}`, { method: "DELETE" });
+  }
+
+  async function handleDownloadProjectFile(f: ProjectFile) {
+    setDownloadingId(f.id);
+    try {
+      const { data } = await supabase.storage.from("ernie-project-files").createSignedUrl(f.storage_path, 300);
+      if (!data?.signedUrl) return;
+      const res = await fetch(data.signedUrl);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = f.file_name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+    } finally {
+      setDownloadingId(null);
     }
   }
 
@@ -489,6 +755,7 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
           conversationId: conversationId ?? undefined,
           message: trimmed,
           fileIds: filesForThisMessage.map((f) => f.id),
+          projectId: activeProjectId ?? undefined,
         }),
       });
 
@@ -549,7 +816,11 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
             setMessages((prev) => [...prev, { role: "assistant", text: event.text ?? "", files: outputFiles }]);
             if (event.conversationId && event.conversationId !== conversationId) {
               setConversationId(event.conversationId);
-              sessionStorage.setItem(ACTIVE_CONVERSATION_KEY, event.conversationId);
+              // Only the general (non-Project) conversation pointer is
+              // restored on a fresh page load (see the restore effect
+              // above) — a Project tab always starts blank on reload, so
+              // there's nothing useful to persist for it here.
+              if (!activeProjectId) sessionStorage.setItem(ACTIVE_CONVERSATION_KEY, event.conversationId);
             }
             refreshHistory();
           } else if (event.type === "error") {
@@ -579,7 +850,9 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
     setMessages([]);
     setConversationId(null);
     setError(null);
-    sessionStorage.setItem(ACTIVE_CONVERSATION_KEY, NEW_SENTINEL);
+    // Only touch the general-history restore pointer when actually in
+    // General — see the matching comment in the "done" handler above.
+    if (!activeProjectId) sessionStorage.setItem(ACTIVE_CONVERSATION_KEY, NEW_SENTINEL);
   }
 
   async function openConversation(id: string) {
@@ -595,7 +868,7 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
       const data = await res.json();
       setMessages(data.messages ?? []);
       setConversationId(data.conversation.id);
-      sessionStorage.setItem(ACTIVE_CONVERSATION_KEY, data.conversation.id);
+      if (!activeProjectId) sessionStorage.setItem(ACTIVE_CONVERSATION_KEY, data.conversation.id);
     } catch {
       setError("Couldn't load that conversation — check your connection and try again.");
     } finally {
@@ -639,12 +912,56 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
   }
 
   return (
+    <div className={`${archivo.variable} ${plexSans.variable} ${plexMono.variable} mx-auto flex w-full flex-col ${isPopup ? "max-w-full gap-2 p-3" : "max-w-[1600px] gap-3 p-6"}`}>
+      {/* Ernie Project tabs — General plus one per Project this user has
+          access to (RLS already limits the list — see sql/ernie_projects.sql).
+          Hidden in the pop-out window, same reasoning as the history sidebar
+          below: that window is sized for a narrow chat panel. */}
+      {!isPopup && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => switchToProject(null)}
+            className={`rounded-full border px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium transition-colors ${
+              activeProjectId === null
+                ? "border-[#6ABC46]/60 bg-[#6ABC46] text-[#0b0e09]"
+                : "border-[#262c1f] bg-[#181c13] text-[#eef1e9] hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+            }`}
+          >
+            General
+          </button>
+          {projects.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => switchToProject(p.id)}
+              title={p.description ?? undefined}
+              className={`max-w-[220px] truncate rounded-full border px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium transition-colors ${
+                activeProjectId === p.id
+                  ? "border-[#6ABC46]/60 bg-[#6ABC46] text-[#0b0e09]"
+                  : "border-[#262c1f] bg-[#181c13] text-[#eef1e9] hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+              }`}
+            >
+              {p.name}
+            </button>
+          ))}
+          {canManageProjects && (
+            <button
+              type="button"
+              onClick={() => setCreateProjectOpen(true)}
+              title="Create a new Ernie Project"
+              className="rounded-full border border-dashed border-[#262c1f] bg-transparent px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#8f9885] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+            >
+              + New Project
+            </button>
+          )}
+        </div>
+      )}
+
     <div
       ref={panelRef}
       style={panelHeight != null ? { height: panelHeight } : undefined}
-      className={`${archivo.variable} ${plexSans.variable} ${plexMono.variable} relative mx-auto flex w-full ${
-        isPopup ? "max-w-full gap-0 p-3" : "max-w-[1600px] gap-4 p-6"
-      } overflow-hidden`}
+      className="relative flex min-h-0 w-full flex-1 gap-4 overflow-hidden"
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -663,10 +980,57 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
         <div className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[#4c8a32] via-[#6ABC46] to-[#7fce5c]" />
 
         <div className="flex items-center justify-between border-b border-[#1c2117] px-5 py-4">
-          <h1 className="font-[family-name:var(--font-archivo)] text-lg font-bold tracking-tight text-[#eef1e9]">
-            Ernie AI
-          </h1>
-          <div className="flex items-center gap-2">
+          <div className="min-w-0">
+            <h1 className="truncate font-[family-name:var(--font-archivo)] text-lg font-bold tracking-tight text-[#eef1e9]">
+              {activeProject ? activeProject.name : "Ernie AI"}
+            </h1>
+            {activeProject?.description && (
+              <p className="truncate font-[family-name:var(--font-plex-sans)] text-xs text-[#8f9885]">
+                {activeProject.description}
+              </p>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {activeProject && (
+              <button
+                type="button"
+                onClick={() => setFilesOpen(true)}
+                className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+              >
+                Files ({projectFiles.length})
+              </button>
+            )}
+            {activeProject && canManageProjects && (
+              <button
+                type="button"
+                onClick={openManageAccess}
+                className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+              >
+                Manage Access
+              </button>
+            )}
+            {activeProject && canManageProjects && (
+              <>
+                <input
+                  ref={projectFileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files?.length) handleProjectFiles(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => projectFileInputRef.current?.click()}
+                  disabled={projectFileUploading}
+                  className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c] disabled:opacity-50"
+                >
+                  {projectFileUploading ? "Uploading…" : "Add Files"}
+                </button>
+              </>
+            )}
             {!isPopup && (
               <button
                 type="button"
@@ -753,6 +1117,149 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
                   </div>
                 </>
               )}
+            </div>
+          </div>
+        )}
+
+        {createProjectOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+            <div className="w-full max-w-md rounded-xl border border-[#262c1f] bg-[#12150e] p-5 shadow-xl">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="font-[family-name:var(--font-archivo)] text-base font-bold text-[#eef1e9]">
+                  New Ernie Project
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setCreateProjectOpen(false)}
+                  className="text-[#8a9282] hover:text-[#eef1e9]"
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
+              </div>
+              <label className="mb-1 block font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#8a9282]">
+                Name
+              </label>
+              <input
+                type="text"
+                value={newProjectName}
+                onChange={(e) => setNewProjectName(e.target.value)}
+                placeholder="e.g. 2027 Distributor Contracts"
+                className="mb-3 w-full rounded-lg border border-[#262c1f] bg-[#181c13] p-2.5 font-[family-name:var(--font-plex-sans)] text-sm text-[#eef1e9] outline-none focus:border-[#6ABC46]/50"
+              />
+              <label className="mb-1 block font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#8a9282]">
+                Description (optional)
+              </label>
+              <textarea
+                value={newProjectDescription}
+                onChange={(e) => setNewProjectDescription(e.target.value)}
+                rows={3}
+                placeholder="What this Project is for — helps Ernie use its files well."
+                className="mb-3 w-full resize-none rounded-lg border border-[#262c1f] bg-[#181c13] p-2.5 font-[family-name:var(--font-plex-sans)] text-sm text-[#eef1e9] outline-none focus:border-[#6ABC46]/50"
+              />
+              {createProjectError && <p className="mb-2 text-xs text-red-400">{createProjectError}</p>}
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={createProject}
+                  disabled={creatingProject}
+                  className="rounded-full bg-[#6ABC46] px-4 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-semibold text-[#12150e] transition-opacity hover:opacity-90 disabled:opacity-50"
+                >
+                  {creatingProject ? "Creating…" : "Create Project"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {filesOpen && activeProject && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+            <div className="flex max-h-[80vh] w-full max-w-lg flex-col rounded-xl border border-[#262c1f] bg-[#12150e] p-5 shadow-xl">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="font-[family-name:var(--font-archivo)] text-base font-bold text-[#eef1e9]">
+                  {activeProject.name} — Files
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setFilesOpen(false)}
+                  className="text-[#8a9282] hover:text-[#eef1e9]"
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
+              </div>
+              {projectFileUploadError && <p className="mb-2 text-xs text-red-400">{projectFileUploadError}</p>}
+              <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
+                {projectFilesLoading ? (
+                  <p className="py-6 text-center text-sm text-[#8a9282]">Loading…</p>
+                ) : projectFiles.length === 0 ? (
+                  <p className="py-6 text-center text-sm text-[#8a9282]">
+                    No files in this Project yet.
+                    {canManageProjects && " Use “Add Files” to add some."}
+                  </p>
+                ) : (
+                  projectFiles.map((f) => (
+                    <FileChip
+                      key={f.id}
+                      f={{ id: f.id, file_name: f.file_name, mime_type: f.mime_type, size_bytes: f.size_bytes, storage_path: f.storage_path }}
+                      onDownload={() => handleDownloadProjectFile(f)}
+                      onRemove={canManageProjects ? () => removeProjectFile(f) : undefined}
+                    />
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {manageAccessOpen && activeProject && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+            <div className="flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-[#262c1f] bg-[#12150e] p-5 shadow-xl">
+              <div className="mb-1 flex items-center justify-between">
+                <h2 className="font-[family-name:var(--font-archivo)] text-base font-bold text-[#eef1e9]">
+                  {activeProject.name} — Manage Access
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setManageAccessOpen(false)}
+                  className="text-[#8a9282] hover:text-[#eef1e9]"
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
+              </div>
+              <p className="mb-3 font-[family-name:var(--font-plex-sans)] text-xs text-[#8a9282]">
+                Checked = this person sees this Project&rsquo;s tab and can chat inside it.
+              </p>
+              {accessError && <p className="mb-2 text-xs text-red-400">{accessError}</p>}
+              <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
+                {accessLoading ? (
+                  <p className="py-6 text-center text-sm text-[#8a9282]">Loading…</p>
+                ) : (
+                  accessUsers.map((u) => (
+                    <label
+                      key={u.id}
+                      className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-2 hover:bg-[#181c13]"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={u.has_access}
+                        disabled={accessSavingId === u.id}
+                        onChange={() => toggleUserAccess(u)}
+                        className="h-4 w-4 accent-[#6ABC46]"
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm text-[#eef1e9]">
+                          {u.full_name || u.email}
+                        </span>
+                        <span className="block truncate font-[family-name:var(--font-plex-mono)] text-xs text-[#5d6456]">
+                          {u.email}
+                        </span>
+                      </span>
+                    </label>
+                  ))
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -904,7 +1411,7 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
         <div className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[#4c8a32] via-[#6ABC46] to-[#7fce5c]" />
         <div className="border-b border-[#1c2117] px-4 py-4">
           <h2 className="font-[family-name:var(--font-archivo)] text-sm font-bold tracking-tight text-[#eef1e9]">
-            Past Conversations
+            {activeProject ? `${activeProject.name} — Conversations` : "Past Conversations"}
           </h2>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto font-[family-name:var(--font-plex-sans)]">
@@ -937,6 +1444,7 @@ export default function ErnieChatClient({ firstName }: { firstName: string }) {
         </div>
       </div>
       )}
+    </div>
     </div>
   );
 }
