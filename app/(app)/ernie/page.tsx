@@ -18,5 +18,8 @@ export default async function ErniePage() {
   // access, and add/remove their files — Administrators and Managers
   // (role === "admin", either tier) per Chad, 2026-09-10. See
   // sql/ernie_projects.sql.
-  return <ErnieChatClient firstName={firstName} canManageProjects={profile.role === "admin"} />;
+  // Split 2026-09-10 into two sidebar entries ("My Ernie AI" / "Projects")
+  // — this page is now the personal/General chat only. See
+  // app/(app)/ernie/projects/page.tsx for the Projects page.
+  return <ErnieChatClient firstName={firstName} canManageProjects={profile.role === "admin"} mode="general" />;
 }

@@ -170,6 +170,21 @@ const FINANCE_STORAGE_KEY = "fcb-sidebar-finance-expanded";
 const OPERATIONS_STORAGE_KEY = "fcb-sidebar-operations-expanded";
 const SALES_STORAGE_KEY = "fcb-sidebar-sales-expanded";
 const CALENDARS_STORAGE_KEY = "fcb-sidebar-calendars-expanded";
+const ERNIE_STORAGE_KEY = "fcb-sidebar-ernie-expanded";
+
+// Ernie AI — split into two sub-links, added 2026-09-10 per Chad ("we need
+// to separate them, instead of having them together, its too convoluted the
+// way it is currently"): the previous single "Ernie AI" link opened a page
+// that mixed the personal/General chat and the whole Projects tab-and-tile
+// UI together in one view. "My Ernie AI" (/ernie) is now the plain personal
+// chat only — no Project tiles, no Completed Projects — and "Projects"
+// (/ernie/projects) is its own page for creating/opening Projects. Both
+// still gated by the same "ernie_ai" section grant as before — this only
+// splits the ONE page into two, it doesn't add a new permission.
+const ERNIE_LINKS: { href: string; label: string }[] = [
+  { href: "/ernie", label: "My Ernie AI" },
+  { href: "/ernie/projects", label: "Projects" },
+];
 
 // POS — restored 2026-09-05 as its own top-level nav section, per Chad,
 // after "move Labels out of POS" got read too literally and the whole POS
@@ -361,6 +376,7 @@ export default function Sidebar({
 }) {
   const pathname = usePathname();
   const [hidden, setHidden] = useState(false);
+  const [ernieExpanded, setErnieExpanded] = useState(true);
   const [financeExpanded, setFinanceExpanded] = useState(true);
   const [operationsExpanded, setOperationsExpanded] = useState(true);
   const [salesExpanded, setSalesExpanded] = useState(true);
@@ -381,6 +397,11 @@ export default function Sidebar({
     // Hydrate persisted expand/collapse prefs after mount rather than in the
     // initial useState — reading localStorage during the initializer would
     // mismatch between server render (no localStorage) and client.
+    const storedErnie = localStorage.getItem(ERNIE_STORAGE_KEY);
+    if (storedErnie !== null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional post-mount hydration from localStorage
+      setErnieExpanded(storedErnie === "true");
+    }
     const storedFinance = localStorage.getItem(FINANCE_STORAGE_KEY);
     if (storedFinance !== null) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional post-mount hydration from localStorage
@@ -496,7 +517,11 @@ export default function Sidebar({
   // one is ever expanded at a time. Closing the section you're currently
   // in still just closes it, same as before — this only kicks in when a
   // section is being opened.
-  function closeOtherTopLevelSections(except: "finance" | "operations" | "sales" | "calendars" | "pos") {
+  function closeOtherTopLevelSections(except: "ernie" | "finance" | "operations" | "sales" | "calendars" | "pos") {
+    if (except !== "ernie") {
+      setErnieExpanded(false);
+      localStorage.setItem(ERNIE_STORAGE_KEY, "false");
+    }
     if (except !== "finance") {
       setFinanceExpanded(false);
       localStorage.setItem(FINANCE_STORAGE_KEY, "false");
@@ -517,6 +542,15 @@ export default function Sidebar({
       setPosExpanded(false);
       localStorage.setItem(POS_STORAGE_KEY, "false");
     }
+  }
+
+  function toggleErnie() {
+    setErnieExpanded((prev) => {
+      const next = !prev;
+      localStorage.setItem(ERNIE_STORAGE_KEY, String(next));
+      if (next) closeOtherTopLevelSections("ernie");
+      return next;
+    });
   }
 
   function toggleFinance() {
@@ -691,10 +725,37 @@ export default function Sidebar({
         )}
 
         {showErnie && (
-          <Link href="/ernie" className={`mt-1 ${linkClass("/ernie")}`} onClick={() => dismissNew("/ernie")}>
-            Ernie AI
-            {showsNew("/ernie") && <NewBadge />}
-          </Link>
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                toggleErnie();
+                dismissNew("section:ernie");
+              }}
+              className="mt-1 flex items-center gap-2 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
+            >
+              Ernie AI
+              {sectionShowsNew(
+                "section:ernie",
+                ERNIE_LINKS.map((link) => link.href),
+              ) && <NewBadge />}
+            </button>
+            {ernieExpanded && (
+              <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
+                {ERNIE_LINKS.map((link) => (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    className={linkClass(link.href)}
+                    onClick={() => dismissNew(link.href)}
+                  >
+                    {link.label}
+                    {showsNew(link.href) && <NewBadge />}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </>
         )}
 
         {/* Tasks (formerly "Projects") — the company-wide action/directive

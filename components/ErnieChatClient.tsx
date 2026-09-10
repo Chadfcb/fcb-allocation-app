@@ -157,6 +157,7 @@ function formatRelative(iso: string) {
 export default function ErnieChatClient({
   firstName,
   canManageProjects,
+  mode,
 }: {
   firstName: string;
   // Whether this signed-in user can create Ernie Projects, manage a
@@ -164,6 +165,18 @@ export default function ErnieChatClient({
   // Managers only (role === "admin", either tier). Everyone with Ernie
   // access at all can still see and use a project they've been granted.
   canManageProjects: boolean;
+  // Split 2026-09-10, per Chad ("we need to separate them, instead of
+  // having them together, its too convoluted the way it is currently") —
+  // this one component still backs both pages (it shares almost all of its
+  // state/logic — sending messages, file handling, conversation history),
+  // but "general" (rendered at /ernie, "My Ernie AI" in the sidebar) never
+  // shows the Project tiles/Completed Projects UI and always operates on
+  // the personal, non-Project conversation; "projects" (rendered at
+  // /ernie/projects, "Projects" in the sidebar) shows the Project tiles +
+  // Completed Projects, and — since there's no "General" tab on this page
+  // anymore — shows a "pick or create a Project" placeholder instead of a
+  // chat until one is selected.
+  mode: "general" | "projects";
 }) {
   const supabase = useMemo(() => createClient(), []);
 
@@ -384,7 +397,11 @@ export default function ErnieChatClient({
   // Restore whichever conversation this tab was last looking at (or the
   // most recently updated one, for a brand-new tab/session) so navigating
   // back to /ernie — or opening it fresh on another device — doesn't drop
-  // you into a blank conversation you didn't ask to start.
+  // you into a blank conversation you didn't ask to start. This pointer is
+  // only ever about the personal/General conversation (see
+  // ACTIVE_CONVERSATION_KEY's other uses below) — the Projects page
+  // (mode === "projects") always starts blank until a Project is picked,
+  // so this whole restore is skipped there.
   useEffect(() => {
     let cancelled = false;
 
@@ -403,6 +420,16 @@ export default function ErnieChatClient({
     }
 
     async function init() {
+      // Moved inside init() (rather than checked before the effect even
+      // starts) so this early-out setState happens inside the same async
+      // function as every other setInitializing(false) call here, matching
+      // this effect's existing pattern rather than calling setState
+      // synchronously in the effect body itself.
+      if (mode !== "general") {
+        setInitializing(false);
+        return;
+      }
+
       const stored =
         typeof window !== "undefined" ? sessionStorage.getItem(ACTIVE_CONVERSATION_KEY) : null;
 
@@ -443,14 +470,17 @@ export default function ErnieChatClient({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [mode]);
 
   // Load the sidebar's conversation list once on mount — it's always
   // visible now (no more click-to-open History dropdown), so it needs its
   // own data as soon as the page loads rather than waiting to be opened.
-  // Scoped to whichever Project (if any) is currently active — see
-  // refreshHistory below.
+  // This unscoped fetch is only meaningful on the General/"My Ernie AI"
+  // page (mode === "general") — the Projects page always starts with no
+  // conversation until a Project is picked, at which point switchToProject
+  // calls refreshHistory(projectId) itself, properly scoped.
   useEffect(() => {
+    if (mode !== "general") return;
     let cancelled = false;
     (async () => {
       setHistoryLoading(true);
@@ -467,12 +497,14 @@ export default function ErnieChatClient({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [mode]);
 
   // Every Project this signed-in user has access to (RLS on ernie_projects
-  // already limits this — see sql/ernie_projects.sql), for the tab row
-  // above the header. Loaded once on mount; refreshed after creating one.
+  // already limits this — see sql/ernie_projects.sql), for the tile row on
+  // the Projects page. Only relevant there — "My Ernie AI" never shows
+  // Project tiles. Loaded once on mount; refreshed after creating one.
   useEffect(() => {
+    if (mode !== "projects") return;
     let cancelled = false;
     (async () => {
       try {
@@ -482,13 +514,13 @@ export default function ErnieChatClient({
           setProjects(data.projects ?? []);
         }
       } catch {
-        // Tabs just won't show up this load — General still works fine.
+        // Tiles just won't show up this load.
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [mode]);
 
   // Conversation list for the right-hand sidebar — loaded on mount, after
   // every reply, and whenever the active Project tab changes, rather than
@@ -1087,12 +1119,18 @@ export default function ErnieChatClient({
           squares sitting above a General/Test/+New Project pill row). So:
           the pill row below is back to its original small size, and a new
           square-tile row above it is where an actual Project (plus
-          "+ New Project" for Administrators/Managers) now lives — General
-          and Completed Projects are not Projects themselves, so they stay
-          pills, not squares. Hidden in the pop-out window, same reasoning
-          as the history sidebar below: that window is sized for a narrow
-          chat panel. */}
-      {!isPopup && (
+          "+ New Project" for Administrators/Managers) now lives — Completed
+          Projects is not a Project itself, so it stays a pill, not a
+          square. Hidden in the pop-out window, same reasoning as the
+          history sidebar below: that window is sized for a narrow chat
+          panel.
+
+          Split 2026-09-10, per Chad ("we need to separate them... too
+          convoluted the way it is currently") — this whole tile+pill row
+          now only renders on the Projects page (mode === "projects"). The
+          "General" pill that used to sit here is gone entirely — General
+          is its own page now ("My Ernie AI"), not a tab inside this one. */}
+      {!isPopup && mode === "projects" && (
         <div className="flex flex-col gap-2">
           {(projects.length > 0 || canManageProjects) && (
             <div className="flex flex-wrap gap-3">
@@ -1134,21 +1172,8 @@ export default function ErnieChatClient({
           )}
 
           <div className="flex flex-wrap items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => switchToProject(null)}
-              className={`rounded-full border px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium transition-colors ${
-                activeProjectId === null
-                  ? "border-[#6ABC46]/60 bg-[#6ABC46] text-[#0b0e09]"
-                  : "border-[#262c1f] bg-[#181c13] text-[#eef1e9] hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
-              }`}
-            >
-              General
-            </button>
-            {/* Completed Projects — lives right next to General, same font
-                and button styling as this pill row, per Chad (2026-09-10,
-                "i want the completed projects button, to live next to the
-                General button you have. same font same button design").
+            {/* Completed Projects — its own pill, same font/button styling
+                Chad asked for originally when it sat next to General.
                 Admin/Manager only: closing, reopening, and viewing a
                 closed Project are all admin actions (see
                 app/api/ernie/projects/[id]/route.ts). */}
@@ -1189,6 +1214,27 @@ export default function ErnieChatClient({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
+      {/* Split 2026-09-10, per Chad — the Projects page (mode === "projects")
+          has no "General" tab anymore, so there's nothing to fall back to
+          when no Project is selected yet. Rather than show a blank chat
+          (which would look like a stray General conversation), show a
+          simple placeholder until one is picked or created. The panelRef
+          div itself stays permanently mounted either way (see the height
+          layout effect above) — only what's INSIDE it swaps, so the
+          height-measurement logic never has to deal with this ref
+          appearing/disappearing. */}
+      {mode === "projects" && !activeProject ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-2xl border border-[#262c1f] bg-[#12150f] p-10 text-center shadow-[0_0_0_1px_rgba(0,0,0,0.4)]">
+          <p className="font-[family-name:var(--font-plex-sans)] text-sm text-[#8f9885]">
+            {projects.length > 0
+              ? "Select a Project above to open its conversation and files."
+              : canManageProjects
+                ? "No Projects yet — use “+ New Project” above to create one."
+                : "You don't have access to any Projects yet. An Administrator or Manager can grant you access."}
+          </p>
+        </div>
+      ) : (
+        <>
       {dragActive && (
         <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-[#6ABC46]/60 bg-[#0b0e09]/85">
           <p className="font-[family-name:var(--font-plex-sans)] text-sm font-medium text-[#eef1e9]">
@@ -1258,7 +1304,7 @@ export default function ErnieChatClient({
         <div className="flex items-center justify-between border-b border-[#1c2117] px-5 py-4">
           <div className="min-w-0">
             <h1 className="truncate font-[family-name:var(--font-archivo)] text-lg font-bold tracking-tight text-[#eef1e9]">
-              {activeProject ? activeProject.name : "Ernie AI"}
+              {activeProject ? activeProject.name : mode === "general" ? "My Ernie AI" : "Ernie AI"}
             </h1>
             {activeProject?.description && (
               <p className="truncate font-[family-name:var(--font-plex-sans)] text-xs text-[#8f9885]">
@@ -1318,8 +1364,11 @@ export default function ErnieChatClient({
             {/* Pop Out and "What Ernie Knows About You" only belong to a
                 personal, General conversation — per Chad (2026-09-10, "we
                 only need those to exist in personal conversations with
-                ernie"), hidden entirely once a Project is active. */}
-            {!isPopup && !activeProject && (
+                ernie"). Gated on mode === "general" (rather than
+                !activeProject) now that General and Projects are separate
+                pages — the Projects page never shows these, even before a
+                Project is picked. */}
+            {!isPopup && mode === "general" && (
               <button
                 type="button"
                 onClick={openPopout}
@@ -1329,7 +1378,7 @@ export default function ErnieChatClient({
                 Pop Out ↗
               </button>
             )}
-            {!isPopup && !activeProject && (
+            {!isPopup && mode === "general" && (
               <button
                 type="button"
                 onClick={openNotes}
@@ -1756,6 +1805,8 @@ export default function ErnieChatClient({
           )}
         </div>
       </div>
+      )}
+        </>
       )}
     </div>
     </div>
