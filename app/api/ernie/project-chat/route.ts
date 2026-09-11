@@ -41,6 +41,22 @@ import { firstNameFor } from "@/lib/displayName";
 //                          stream is purely a live status signal for
 //                          whoever's tab sent the triggering message.
 
+// Vercel kills a serverless function after its max duration — with no
+// maxDuration set, that default is only 10 seconds on this app's Hobby
+// plan. Reading a real PDF's full content (base64, now that it's actually
+// sent to Anthropic instead of a placeholder — see the PDF-reread fix,
+// 2026-09-11) can easily take longer than that on its own, before the
+// tool-use loop even finishes, which is what a Gateway Timeout here means:
+// Vercel killed the function mid-request, so anything that hadn't already
+// been written to the database yet (specifically Ernie's own reply row —
+// the one thing this route inserts only at the very end) was lost, even
+// though the user's own message row (inserted immediately, at the top of
+// this handler) was already saved and is not affected. 60s is the max
+// Hobby allows; a heavier read (a large PDF plus several tool rounds) can
+// still exceed even that — if it keeps happening, the real fix is
+// upgrading past Hobby for a longer cap, or trimming MAX_TOOL_ROUNDS.
+export const maxDuration = 60;
+
 const ANTHROPIC_MODEL = "claude-sonnet-5";
 const MAX_TOOL_ROUNDS = 8;
 const MAX_HISTORY_MESSAGES = 40;

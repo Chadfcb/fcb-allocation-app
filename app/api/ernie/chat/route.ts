@@ -37,6 +37,19 @@ import { buildFileContentBlocks, captureCodeExecutionFile, logErnieToolExecution
 // Only the final answer is ever persisted to ernie_messages — the
 // intermediate status events are never saved, purely a live UI thing.
 
+// Vercel kills a serverless function after its max duration — with no
+// maxDuration set, that default is only 10 seconds on this app's Hobby
+// plan. Reading a real PDF's full content (base64, now that it's actually
+// sent to Anthropic instead of a placeholder — see the PDF-reread fix,
+// 2026-09-11) can easily take longer than that on its own, before the
+// tool-use loop even finishes, which is what a Gateway Timeout means:
+// Vercel killed the function mid-request, so anything not already
+// persisted (the assistant's own reply, only inserted at the very end) was
+// lost even though everything already saved is untouched. 60s is the max
+// Hobby allows; if a heavy PDF read still exceeds it, that means upgrading
+// past Hobby for a longer cap, or trimming MAX_TOOL_ROUNDS.
+export const maxDuration = 60;
+
 const ANTHROPIC_MODEL = "claude-sonnet-5";
 const MAX_TOOL_ROUNDS = 8;
 
