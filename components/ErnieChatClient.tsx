@@ -1695,6 +1695,18 @@ export default function ErnieChatClient({
                 if (isOwnMessage) {
                   return (
                     <div key={i} className="flex flex-col items-end gap-1.5">
+                      {/* Only shown inside a Project's shared room — General
+                          chat is always just you and Ernie, so a "you" label
+                          on your own bubble would be pure noise there. In a
+                          Project, per Chad ("i dont see my name next to my
+                          chat"), your own messages need the same visible
+                          name treatment a teammate's message gets, not just
+                          the right/green styling. */}
+                      {activeProject && m.senderName && (
+                        <span className="font-[family-name:var(--font-plex-mono)] text-[11px] font-medium tracking-wide text-[#8f9885]">
+                          {m.senderName}
+                        </span>
+                      )}
                       {m.files && m.files.length > 0 && (
                         <div className="flex max-w-[75%] flex-wrap justify-end gap-1.5">
                           {m.files.map((f) => (
