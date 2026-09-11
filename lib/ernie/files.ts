@@ -499,14 +499,24 @@ const TEXT_CHAR_CAP = 20000;
 // used both to attach a freshly-uploaded file to the message that
 // references it, and (forToolResult: true, from the read_uploaded_file
 // tool) to pull an earlier file's contents back up without re-attaching
-// it. The two differ only in how a PDF is handled: Claude's Messages API
-// accepts a "document" block in a user message, but not reliably inside a
-// tool_result, so forToolResult mode asks for a re-attach instead of
-// risking a malformed request.
+// it.
+//
+// Fixed 2026-09-11 (Chad/Eddie hit this in an Ernie Project's chat: Ernie
+// could find their marketing SOP PDF in the Project's file library via
+// get_file_for_download, but couldn't actually read it without someone
+// re-attaching it fresh) — a "document" (PDF) block genuinely isn't valid
+// content INSIDE a tool_result block on Claude's Messages API, but it IS
+// valid as a sibling block in the same user-role turn that carries that
+// tool_result — a turn can hold both. So `forToolResult` no longer changes
+// what this function returns for a PDF (it always returns the real
+// document block); the caller is what changed instead — see the tool-loop
+// in app/api/ernie/chat/route.ts and app/api/ernie/project-chat/route.ts,
+// which now pulls any "document" block out of a tool's __contentBlocks and
+// pushes it as a sibling of that round's tool_result blocks, rather than
+// trying to nest it inside one.
 export async function buildFileContentBlocks(
   supabase: SupabaseClient,
   file: ErnieFileRow,
-  opts: { forToolResult?: boolean } = {},
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shape varies by type (text/image/document)
 ): Promise<any[]> {
   const header = `Attached file: "${file.file_name}"`;
@@ -529,9 +539,6 @@ export async function buildFileContentBlocks(
   }
 
   if (kind === "pdf") {
-    if (opts.forToolResult) {
-      return [{ type: "text", text: `${header} is a PDF — ask the user to re-attach it to read its contents again.` }];
-    }
     return [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: buffer.toString("base64") } }];
   }
 

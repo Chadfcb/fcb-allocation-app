@@ -305,7 +305,7 @@ Any table above with a storage_path column (event_materials, pos_library, pos_la
   {
     name: "read_uploaded_file",
     description:
-      "Read the contents of a previously-uploaded (or previously Ernie-produced) file again, by file_id — for when someone refers to a file from earlier in this or a past conversation without re-attaching it, OR a file get_file_for_download just fetched from elsewhere in the app (e.g. an Ernie Project's file library) — call this right after with the same file_id to actually read it, not just hand over a download link. Spreadsheets (.xlsx), CSV, Word documents (.docx), plain text, and images all work; a PDF can't be re-read this way — ask the user to re-attach it instead.",
+      "Read the contents of a previously-uploaded (or previously Ernie-produced) file again, by file_id — for when someone refers to a file from earlier in this or a past conversation without re-attaching it, OR a file get_file_for_download just fetched from elsewhere in the app (e.g. an Ernie Project's file library) — call this right after with the same file_id to actually read it, not just hand over a download link. Spreadsheets (.xlsx), CSV, Word documents (.docx), plain text, images, and PDFs all work.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -1433,12 +1433,16 @@ export async function runErnieTool(
       if (!file) {
         return { error: "No file found with that id (it may not exist, or belong to someone else)." };
       }
-      // __contentBlocks is a signal to app/api/ernie/chat/route.ts to pass
-      // this straight through as the tool_result's content array (which can
-      // include an image block) instead of JSON-stringifying it into inert
-      // text — every other tool's result goes through the normal
-      // stringified path untouched.
-      const blocks = await buildFileContentBlocks(supabase, file, { forToolResult: true });
+      // __contentBlocks is a signal to the tool-use loop (both
+      // app/api/ernie/chat/route.ts and app/api/ernie/project-chat/route.ts)
+      // to use these real content blocks — which can include an image or a
+      // PDF "document" block — instead of JSON-stringifying this result
+      // into inert text the way every other tool's result is. A "document"
+      // block specifically can't nest inside the tool_result itself (not
+      // valid on Claude's Messages API), so the route pulls any of those out
+      // and posts them as a sibling block in the same turn instead — see the
+      // matching comment on buildFileContentBlocks in lib/ernie/files.ts.
+      const blocks = await buildFileContentBlocks(supabase, file);
       return { __contentBlocks: blocks };
     }
 

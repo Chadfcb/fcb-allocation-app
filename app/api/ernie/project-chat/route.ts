@@ -343,6 +343,16 @@ The message that was just posted, from ${senderName}${
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic tool_result content shape
             const toolResults: any[] = [];
+            // A tool result can carry real Anthropic content blocks (e.g. a
+            // PDF "document" block from read_uploaded_file — see
+            // lib/ernie/files.ts and lib/ernie/tools.ts) via a special
+            // __contentBlocks key. A "document" block specifically is not
+            // valid nested inside a tool_result block on Claude's Messages
+            // API, so any such blocks are pulled out here and appended as
+            // sibling blocks in the same user-role turn instead, alongside
+            // the tool_results themselves.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shape
+            const extraSiblingBlocks: any[] = [];
             for (const block of content) {
               if (block.type !== "tool_use") continue;
               let result: unknown;
@@ -363,9 +373,22 @@ The message that was just posted, from ${senderName}${
               ) {
                 outputFileIds.push((result as { id: string }).id);
               }
-              toolResults.push({ type: "tool_result", tool_use_id: block.id, content: JSON.stringify(result) });
+              if (result && typeof result === "object" && "__contentBlocks" in result) {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shape
+                const blocks = (result as { __contentBlocks: any[] }).__contentBlocks ?? [];
+                const documentBlocks = blocks.filter((b) => b?.type === "document");
+                const otherBlocks = blocks.filter((b) => b?.type !== "document");
+                extraSiblingBlocks.push(...documentBlocks);
+                toolResults.push({
+                  type: "tool_result",
+                  tool_use_id: block.id,
+                  content: otherBlocks.length > 0 ? otherBlocks : "File contents attached below.",
+                });
+              } else {
+                toolResults.push({ type: "tool_result", tool_use_id: block.id, content: JSON.stringify(result) });
+              }
             }
-            anthropicMessages.push({ role: "user", content: toolResults });
+            anthropicMessages.push({ role: "user", content: [...toolResults, ...extraSiblingBlocks] });
             continue;
           }
 
