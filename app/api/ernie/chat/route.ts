@@ -212,6 +212,14 @@ export async function POST(req: NextRequest) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       }
 
+      // One id for this entire HTTP request / tool-use loop. Passed through
+      // to every runErnieTool() call below so its propose-then-confirm
+      // machinery (see loadConfirmedPendingAction in lib/ernie/tools.ts) can
+      // structurally guarantee a "confirmed:true" call is never honored
+      // inside the same turn that proposed it — only a later request (a
+      // genuine new user message) carries a different requestId.
+      const requestId = crypto.randomUUID();
+
       try {
         // Resolve (or create) the conversation this message belongs to, and
         // load its prior messages (RLS already restricts this to the
@@ -456,7 +464,7 @@ export async function POST(req: NextRequest) {
               send({ type: "status", label: describeErnieToolCall(block.name) });
               let result: unknown;
               try {
-                result = await runErnieTool(supabase, block.name, block.input ?? {}, role, sections, conversationId, isSuperAdmin, user.id);
+                result = await runErnieTool(supabase, block.name, block.input ?? {}, role, sections, conversationId, isSuperAdmin, user.id, requestId);
               } catch (toolErr) {
                 result = {
                   error:

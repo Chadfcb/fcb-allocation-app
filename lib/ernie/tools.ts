@@ -1,9 +1,23 @@
 // Read-only data tools for Ernie (the in-app AI assistant, see
 // app/api/ernie/chat/route.ts). Nothing here writes to the app's own
-// database (allocations, inventory, pricing, etc.) — the one deliberate
-// exception to "Ernie never changes anything" is edit_spreadsheet, which
-// edits a FILE the user themselves uploaded (not app data) and hands back
-// a new version, same as if they'd edited it in Excel and saved a copy.
+// database (allocations, inventory, pricing, etc.) except the calendar
+// (Social Media / Events / Chain) add/update/delete tools and create_task
+// (added 2026-09-11, extended same day — see their definitions below) — a
+// deliberate, narrowly-scoped exception covering exactly those tables,
+// added after Chad asked for Ernie to be able to actually enter what it
+// drafts (a content plan, a task) onto the real calendar/Tasks section
+// instead of only describing it. Every one of those tools follows a
+// mandatory propose-then-confirm flow (see the comment right above
+// add_social_media_calendar_event's definition, and createPendingAction/
+// loadConfirmedPendingAction further down) so nothing is ever written
+// until the user has actually seen a summary and approved it in their own
+// next message — and every executed write is logged (via logChange or
+// task_item_activity, matching each page's own UI) so a bad entry can be
+// one-click undone exactly like a person's mistake. edit_spreadsheet is
+// the other pre-existing exception to "Ernie never changes anything," but
+// a narrower one still — it edits a FILE the user themselves uploaded (not
+// app data) and hands back a new version, same as if they'd edited it in
+// Excel and saved a copy.
 // Most of these tools are narrow, purpose-built queries against one slice
 // of the app's data, shaped in plain JS — but "run_read_only_query" (see
 // its case below) is a deliberate exception: a general-purpose read-only
@@ -67,6 +81,7 @@ import {
 } from "@/lib/ernie/files";
 import { listRepoPath, readRepoFile } from "@/lib/github";
 import { isBlockedPath, canAccessRepoPath } from "@/lib/ernie/fileAccessMap";
+import { logChange } from "@/lib/audit";
 
 // Several Sales pages show numbers that are NOT stored in the database —
 // they're computed live in the browser from several tables at once (see
@@ -462,6 +477,274 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
       required: ["path"],
     },
   },
+  // ── Ernie's write abilities (added 2026-09-11, extended same day) ──────
+  // Every mutating tool below (add/update/delete on any of the three
+  // calendars, create_task) follows the same two-step propose-then-confirm
+  // pattern, per Chad: Ernie must ask whatever questions it needs, then
+  // summarize exactly what it's about to do, and only actually do it once
+  // the user approves in their OWN NEXT MESSAGE — never in the same turn
+  // it proposed it. That's not just a prompting request here: calling one
+  // of these WITHOUT confirmed:true validates the input, resolves any
+  // names to real ids, stores the exact resulting write in a new
+  // ernie_pending_actions row, and returns a preview + that row's id —
+  // nothing is written to the real table yet. Calling it AGAIN with
+  // confirmed:true and that same pending_action_id actually performs the
+  // write, but only succeeds if the pending row was created in a genuinely
+  // earlier HTTP request (a separate user chat message) than this one —
+  // enforced in loadConfirmedPendingAction below by comparing request_id,
+  // so a propose+confirm pair can never both happen inside one tool-use
+  // loop no matter what the model decides to do. See
+  // sql/ernie_pending_actions.sql for the full writeup. Every executed
+  // write is also logged to audit_log via logChange (or task_item_activity
+  // for a task), the same trail a person's own edit goes through, so a bad
+  // entry is one click to undo.
+  {
+    name: "add_social_media_calendar_event",
+    description:
+      "Propose (or, with confirmed:true, actually create) a new Social Media Calendar (/social-media-calendar) event. First call: leave confirmed out — this validates everything and returns a preview plus a pending_action_id, but writes nothing yet. Present that preview to the user in your own words and ask them to confirm. Only after they approve in a NEW message, call this again with confirmed:true and that same pending_action_id (repeat the other fields too) to actually create it. Only start_date and title are required; leave anything else out if it wasn't specified rather than inventing a value.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        title: { type: "string", description: "Event title, e.g. \"IG Post: Monday culture/brand post\"." },
+        start_date: { type: "string", description: "yyyy-mm-dd." },
+        end_date: { type: "string", description: "yyyy-mm-dd, only for a multi-day event. Omit otherwise." },
+        time_label: { type: "string", description: "Free-text time, e.g. \"11am-12pm\". Omit if not specified." },
+        type: {
+          type: "string",
+          enum: ["post", "campaign", "story", "promotion", "other"],
+          description: "Defaults to \"post\" if omitted.",
+        },
+        location: { type: "string", description: "Location/venue, if relevant. Omit otherwise." },
+        rep: { type: "string", description: "Rep/staff name, if relevant. Omit otherwise." },
+        color: { type: "string", description: "Hex color for the calendar chip, e.g. \"#d99a3d\". Omit to use the calendar's default." },
+        notes: { type: "string", description: "Any additional notes." },
+        confirmed: { type: "boolean", description: "Omit or false to preview; true (with pending_action_id) to actually create it." },
+        pending_action_id: { type: "string", description: "Required when confirmed:true — the id returned by the preview call." },
+      },
+      required: ["title", "start_date"],
+    },
+  },
+  {
+    name: "update_social_media_calendar_event",
+    description:
+      "Propose (or, with confirmed:true, actually make) a change to an existing Social Media Calendar event. Look the event up first (run_read_only_query against social_media_events, or list_social_media_calendar_events) to get its id — especially if the user only described it (\"the Friday post about the tasting\") rather than giving you an id directly. Same propose-then-confirm flow as add_social_media_calendar_event: first call without confirmed to get a preview + pending_action_id, present it, then call again with confirmed:true once the user approves in a new message. Only pass the fields that are actually changing; anything omitted stays as-is.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        id: { type: "string", description: "The event's id." },
+        title: { type: "string" },
+        start_date: { type: "string", description: "yyyy-mm-dd." },
+        end_date: { type: "string", description: "yyyy-mm-dd, or an empty string to clear it." },
+        time_label: { type: "string" },
+        type: { type: "string", enum: ["post", "campaign", "story", "promotion", "other"] },
+        location: { type: "string" },
+        rep: { type: "string" },
+        color: { type: "string" },
+        notes: { type: "string" },
+        confirmed: { type: "boolean" },
+        pending_action_id: { type: "string" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "delete_social_media_calendar_event",
+    description:
+      "Propose (or, with confirmed:true, actually perform) permanently removing an event from the Social Media Calendar. This is destructive — confirm with whoever's asking which specific event they mean (by title and date) before even proposing it. Same propose-then-confirm flow: first call without confirmed to get a preview + pending_action_id, then call again with confirmed:true once the user approves in a new message.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        id: { type: "string", description: "The event's id — look it up first if you don't already have it." },
+        confirmed: { type: "boolean" },
+        pending_action_id: { type: "string" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "list_social_media_calendar_events",
+    description:
+      "List Social Media Calendar entries, optionally filtered by date range — a dedicated shortcut for this one table so you don't have to reach for run_read_only_query for the common case of \"what's already on the calendar this week/month.\"",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        start_date: { type: "string", description: "yyyy-mm-dd, inclusive lower bound on start_date." },
+        end_date: { type: "string", description: "yyyy-mm-dd, inclusive upper bound on start_date." },
+      },
+    },
+  },
+  {
+    name: "add_events_calendar_event",
+    description:
+      "Propose (or, with confirmed:true, actually create) a new Events Calendar (/events) entry — festivals, tastings, donations, work-withs, or other. Same propose-then-confirm flow as add_social_media_calendar_event: first call without confirmed for a preview + pending_action_id, present it, then call again with confirmed:true once approved in a new message. Only start_date and title are required.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        title: { type: "string" },
+        start_date: { type: "string", description: "yyyy-mm-dd." },
+        end_date: { type: "string", description: "yyyy-mm-dd, only for a multi-day event. Omit otherwise." },
+        time_label: { type: "string", description: "Free-text time. Omit if not specified." },
+        type: {
+          type: "string",
+          enum: ["festival", "tasting", "donation", "work-with", "other"],
+          description: "Defaults to \"other\" if omitted.",
+        },
+        location: { type: "string" },
+        distributor_name: { type: "string", description: "Ties this event to a distributor, if relevant (partial name match). Omit otherwise." },
+        rep: { type: "string" },
+        notes: { type: "string" },
+        confirmed: { type: "boolean" },
+        pending_action_id: { type: "string" },
+      },
+      required: ["title", "start_date"],
+    },
+  },
+  {
+    name: "update_events_calendar_event",
+    description:
+      "Propose (or, with confirmed:true, actually make) a change to an existing Events Calendar entry. Look it up first (get_events, or run_read_only_query against events) to get its id. Same propose-then-confirm flow as the other update tools. Only pass fields that are changing.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        id: { type: "string" },
+        title: { type: "string" },
+        start_date: { type: "string", description: "yyyy-mm-dd." },
+        end_date: { type: "string", description: "yyyy-mm-dd, or an empty string to clear it." },
+        time_label: { type: "string" },
+        type: { type: "string", enum: ["festival", "tasting", "donation", "work-with", "other"] },
+        location: { type: "string" },
+        distributor_name: { type: "string", description: "Pass an empty string to clear the distributor link." },
+        rep: { type: "string" },
+        notes: { type: "string" },
+        confirmed: { type: "boolean" },
+        pending_action_id: { type: "string" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "delete_events_calendar_event",
+    description:
+      "Propose (or, with confirmed:true, actually perform) permanently removing an Events Calendar entry. Destructive — confirm which specific one is meant before proposing it. Same propose-then-confirm flow.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        id: { type: "string" },
+        confirmed: { type: "boolean" },
+        pending_action_id: { type: "string" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "add_chain_calendar_event",
+    description:
+      "Propose (or, with confirmed:true, actually create) a new Chain Calendar (/chain-calendar) entry — demo, reset, ad, display, or other. Same propose-then-confirm flow as add_social_media_calendar_event. Only start_date and title are required.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        title: { type: "string" },
+        start_date: { type: "string", description: "yyyy-mm-dd." },
+        end_date: { type: "string", description: "yyyy-mm-dd, only for a multi-day event. Omit otherwise." },
+        time_label: { type: "string" },
+        type: {
+          type: "string",
+          enum: ["demo", "reset", "ad", "display", "other"],
+          description: "Defaults to \"other\" if omitted.",
+        },
+        location: { type: "string" },
+        rep: { type: "string" },
+        color: { type: "string" },
+        notes: { type: "string" },
+        confirmed: { type: "boolean" },
+        pending_action_id: { type: "string" },
+      },
+      required: ["title", "start_date"],
+    },
+  },
+  {
+    name: "update_chain_calendar_event",
+    description:
+      "Propose (or, with confirmed:true, actually make) a change to an existing Chain Calendar entry. Look it up first (list_chain_calendar_events, or run_read_only_query against chain_events). Same propose-then-confirm flow. Only pass fields that are changing.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        id: { type: "string" },
+        title: { type: "string" },
+        start_date: { type: "string", description: "yyyy-mm-dd." },
+        end_date: { type: "string", description: "yyyy-mm-dd, or an empty string to clear it." },
+        time_label: { type: "string" },
+        type: { type: "string", enum: ["demo", "reset", "ad", "display", "other"] },
+        location: { type: "string" },
+        rep: { type: "string" },
+        color: { type: "string" },
+        notes: { type: "string" },
+        confirmed: { type: "boolean" },
+        pending_action_id: { type: "string" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "delete_chain_calendar_event",
+    description:
+      "Propose (or, with confirmed:true, actually perform) permanently removing a Chain Calendar entry. Destructive — confirm which specific one is meant before proposing it. Same propose-then-confirm flow.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        id: { type: "string" },
+        confirmed: { type: "boolean" },
+        pending_action_id: { type: "string" },
+      },
+      required: ["id"],
+    },
+  },
+  {
+    name: "list_chain_calendar_events",
+    description:
+      "List Chain Calendar entries, optionally filtered by date range — a dedicated shortcut for this one table.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        start_date: { type: "string", description: "yyyy-mm-dd, inclusive lower bound on start_date." },
+        end_date: { type: "string", description: "yyyy-mm-dd, inclusive upper bound on start_date." },
+      },
+    },
+  },
+  {
+    name: "create_task",
+    description:
+      "Propose (or, with confirmed:true, actually create) a new task in the Tasks section (/tasks). Tasks live under Category → Subcategory, so first find the right subcategory_id (run_read_only_query against task_categories/task_subcategories, or ask the user which category this belongs under if it's not obvious) — don't guess one. Resolve any assignee to their profiles.id the same way (run_read_only_query against profiles) before calling this. Same propose-then-confirm flow as the calendar tools: first call without confirmed for a preview + pending_action_id, present it, then call again with confirmed:true once approved in a new message.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        subcategory_id: { type: "string", description: "The task_subcategories.id this task belongs under." },
+        title: { type: "string" },
+        notes: { type: "string" },
+        due_date: { type: "string", description: "yyyy-mm-dd. Omit if there isn't one." },
+        assignee_user_ids: {
+          type: "array",
+          items: { type: "string" },
+          description: "profiles.id values for whoever should be assigned. Omit for an unassigned task.",
+        },
+        confirmed: { type: "boolean" },
+        pending_action_id: { type: "string" },
+      },
+      required: ["subcategory_id", "title"],
+    },
+  },
+  {
+    name: "confirm_pending_action",
+    description:
+      "The second half of every propose-then-confirm write tool above — this is what actually PERFORMS a previously-proposed write. Only ever call this after: (1) you already called one of the add/update/delete/create_task tools without confirmed and got back a pending_action_id, (2) you showed that preview to the user in plain language and asked them to confirm, and (3) the user approved it IN THEIR OWN NEXT MESSAGE — never in the same reply you proposed it in. Calling this (or the original tool with confirmed:true) before a real separate confirmation from the user is a policy violation, even if you're confident what they'd want.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        pending_action_id: { type: "string", description: "The id returned by the proposing call." },
+      },
+      required: ["pending_action_id"],
+    },
+  },
   {
     name: "update_person_notes",
     description:
@@ -502,6 +785,19 @@ const ADMIN_ONLY_TOOL_NAMES = new Set([
   "get_pos_label_files",
   "get_users",
   "get_cashflow_dashboard",
+  "add_social_media_calendar_event",
+  "update_social_media_calendar_event",
+  "delete_social_media_calendar_event",
+  "list_social_media_calendar_events",
+  "add_events_calendar_event",
+  "update_events_calendar_event",
+  "delete_events_calendar_event",
+  "add_chain_calendar_event",
+  "update_chain_calendar_event",
+  "delete_chain_calendar_event",
+  "list_chain_calendar_events",
+  "create_task",
+  "confirm_pending_action",
 ]);
 
 // Which section(s) unlock each formerly-admin-only tool — mirrors the RLS
@@ -526,6 +822,26 @@ const TOOL_SECTIONS: Record<string, AnySectionKey[] | null> = {
   get_pos_label_files: ["pos_labels"],
   get_users: null,
   get_cashflow_dashboard: ["cashflow_dashboard"],
+  add_social_media_calendar_event: ["events_calendar"],
+  update_social_media_calendar_event: ["events_calendar"],
+  delete_social_media_calendar_event: ["events_calendar"],
+  list_social_media_calendar_events: ["events_calendar"],
+  add_events_calendar_event: ["events_calendar"],
+  update_events_calendar_event: ["events_calendar"],
+  delete_events_calendar_event: ["events_calendar"],
+  add_chain_calendar_event: ["events_calendar"],
+  update_chain_calendar_event: ["events_calendar"],
+  delete_chain_calendar_event: ["events_calendar"],
+  list_chain_calendar_events: ["events_calendar"],
+  create_task: ["tasks"],
+  // Shared by every propose-then-confirm write tool above — visible to
+  // anyone who has EITHER events_calendar or tasks, since it's the generic
+  // "execute what I already proposed" step. The actual required section
+  // for a given pending action is re-checked against that row's own
+  // action_type inside loadConfirmedPendingAction — this tool-list gate is
+  // just what makes the tool visible at all, same defense-in-depth pattern
+  // canUseTool already applies everywhere else.
+  confirm_pending_action: ["events_calendar", "tasks"],
 };
 
 function canUseTool(
@@ -986,6 +1302,124 @@ const SECTION_DEFAULT_FILE_NAMES: Record<string, string> = {
   contribution_margin: "Contribution Margin.xlsx",
 };
 
+// ── Propose-then-confirm write support (added 2026-09-11) ────────────────
+// See sql/ernie_pending_actions.sql and the big comment above
+// add_social_media_calendar_event's tool definition for the full writeup.
+// Every mutating tool funnels through these two helpers: createPendingAction
+// stores what a "propose" call resolved and would write, without writing it;
+// loadConfirmedPendingAction is what a "confirmed:true" call (or
+// confirm_pending_action itself) uses to fetch that row back and — its one
+// real safety property — refuses unless the row was created by a strictly
+// earlier HTTP request than the one asking to confirm it, so a propose and
+// its confirm can never both happen inside the same tool-use loop.
+
+// Which section a given action_type needs — re-checked here regardless of
+// whether the tool that eventually executes it (confirm_pending_action,
+// shared across all of them) was itself already gated at the tool-list
+// level, same defense-in-depth spirit as canUseTool elsewhere in this file.
+const PENDING_ACTION_SECTIONS: Record<string, AnySectionKey> = {
+  add_social_media_calendar_event: "events_calendar",
+  update_social_media_calendar_event: "events_calendar",
+  delete_social_media_calendar_event: "events_calendar",
+  add_events_calendar_event: "events_calendar",
+  update_events_calendar_event: "events_calendar",
+  delete_events_calendar_event: "events_calendar",
+  add_chain_calendar_event: "events_calendar",
+  update_chain_calendar_event: "events_calendar",
+  delete_chain_calendar_event: "events_calendar",
+  create_task: "tasks",
+};
+
+async function createPendingAction(
+  supabase: SupabaseClient,
+  params: {
+    userId: string;
+    requestId: string;
+    actionType: string;
+    targetTable: string;
+    payload: Record<string, unknown>;
+    summary: string;
+  },
+): Promise<{ error: string } | { pending: true; pending_action_id: string; summary: string; message: string }> {
+  const { data, error } = await supabase
+    .from("ernie_pending_actions")
+    .insert({
+      created_by: params.userId,
+      action_type: params.actionType,
+      target_table: params.targetTable,
+      payload: params.payload,
+      summary: params.summary,
+      request_id: params.requestId,
+    })
+    .select("id")
+    .single();
+  if (error) return { error: `Couldn't stage that action: ${error.message}` };
+
+  return {
+    pending: true,
+    pending_action_id: data.id,
+    summary: params.summary,
+    message:
+      "Nothing has been written yet. Share this summary with the user in your own words and ask them to confirm. Only after they approve in a NEW message, call this same tool again with confirmed:true and this exact pending_action_id (repeating the other fields) — or call confirm_pending_action with this pending_action_id.",
+  };
+}
+
+async function loadConfirmedPendingAction(
+  supabase: SupabaseClient,
+  params: {
+    userId: string;
+    requestId: string;
+    pendingActionId: string;
+    expectedActionType?: string;
+    role: Role | undefined;
+    sections: AnySectionKey[];
+    isSuperAdmin: boolean;
+  },
+): Promise<{ error: string } | { row: { id: string; action_type: string; target_table: string; payload: Record<string, unknown>; summary: string } }> {
+  const { data: row, error } = await supabase
+    .from("ernie_pending_actions")
+    .select("id, created_by, action_type, target_table, payload, summary, request_id, status")
+    .eq("id", params.pendingActionId)
+    .maybeSingle();
+  if (error) return { error: error.message };
+  if (!row) return { error: "No pending action found with that id — it may have already been confirmed, or never existed." };
+  if (row.status !== "pending") {
+    return { error: `That action is already "${row.status}" — it can't be confirmed again.` };
+  }
+  if (params.expectedActionType && row.action_type !== params.expectedActionType) {
+    return { error: `That pending_action_id is for a "${row.action_type}" action, not "${params.expectedActionType}".` };
+  }
+  if (row.request_id === params.requestId) {
+    return {
+      error:
+        "This action was proposed in this SAME message/turn — it can't be confirmed here too. Show the summary to the user as your reply, end your turn, and only confirm it after they explicitly approve in their own next message.",
+    };
+  }
+  const requiredSection = PENDING_ACTION_SECTIONS[row.action_type];
+  if (requiredSection && !hasSection(params.role, params.sections, requiredSection, params.isSuperAdmin)) {
+    return { error: "This account no longer has the access this action needs — it can't be confirmed." };
+  }
+
+  const { error: updateErr } = await supabase
+    .from("ernie_pending_actions")
+    .update({ status: "executed" })
+    .eq("id", row.id)
+    .eq("status", "pending");
+  if (updateErr) return { error: `Couldn't mark that action executed: ${updateErr.message}` };
+
+  return { row };
+}
+
+async function resolveDistributorId(supabase: SupabaseClient, name: string): Promise<{ id?: string; error?: string }> {
+  const { data, error } = await supabase.from("distributors").select("id, name").ilike("name", `%${name}%`);
+  if (error) return { error: error.message };
+  if (!data || data.length === 0) return { error: `No distributor found matching "${name}".` };
+  if (data.length > 1) {
+    return { error: `More than one distributor matches "${name}": ${data.map((d) => d.name).join(", ")}. Be more specific.` };
+  }
+  return { id: data[0].id };
+}
+
 export async function runErnieTool(
   supabase: SupabaseClient,
   name: string,
@@ -995,6 +1429,11 @@ export async function runErnieTool(
   currentConversationId?: string,
   isSuperAdmin = false,
   userId?: string,
+  // One id per HTTP request (a route generates this once with
+  // crypto.randomUUID() before its tool-use loop starts) — the mechanism
+  // that makes propose-then-confirm a real structural guarantee rather
+  // than just a prompted convention. See loadConfirmedPendingAction above.
+  requestId?: string,
 ): Promise<unknown> {
   // Defense in depth: getErnieTools() already keeps a tool a user isn't
   // granted out of their tool list, so Claude has nothing to call here —
@@ -1274,6 +1713,377 @@ export async function runErnieTool(
         rep: r.rep,
         notes: r.notes,
       }));
+    }
+
+    case "list_social_media_calendar_events": {
+      let query = supabase.from("social_media_events").select("*");
+      if (input.start_date) query = query.gte("start_date", input.start_date as string);
+      if (input.end_date) query = query.lte("start_date", input.end_date as string);
+      const { data, error } = await query.order("start_date", { ascending: true });
+      if (error) throw error;
+      return data ?? [];
+    }
+
+    case "list_chain_calendar_events": {
+      let query = supabase.from("chain_events").select("*");
+      if (input.start_date) query = query.gte("start_date", input.start_date as string);
+      if (input.end_date) query = query.lte("start_date", input.end_date as string);
+      const { data, error } = await query.order("start_date", { ascending: true });
+      if (error) throw error;
+      return data ?? [];
+    }
+
+    case "add_social_media_calendar_event":
+    case "add_events_calendar_event":
+    case "add_chain_calendar_event": {
+      if (!userId) return { error: "No signed-in user to attribute this event to." };
+      const table = name === "add_social_media_calendar_event" ? "social_media_events" : name === "add_events_calendar_event" ? "events" : "chain_events";
+      const types =
+        table === "social_media_events"
+          ? ["post", "campaign", "story", "promotion", "other"]
+          : table === "events"
+          ? ["festival", "tasting", "donation", "work-with", "other"]
+          : ["demo", "reset", "ad", "display", "other"];
+      const defaultType = table === "social_media_events" ? "post" : "other";
+      const hasColor = table !== "events";
+      const hasDistributor = table === "events";
+
+      // Confirming a previously-proposed add.
+      if (input.confirmed === true && typeof input.pending_action_id === "string") {
+        const loaded = await loadConfirmedPendingAction(supabase, {
+          userId,
+          requestId: requestId ?? "",
+          pendingActionId: input.pending_action_id,
+          expectedActionType: name,
+          role,
+          sections,
+          isSuperAdmin,
+        });
+        if ("error" in loaded) return { error: loaded.error };
+        const { data, error } = await supabase.from(table).insert(loaded.row.payload).select().single();
+        if (error) throw error;
+        await logChange(supabase, {
+          weekId: null,
+          tableName: table,
+          recordId: data.id,
+          fieldName: "title",
+          oldValue: "",
+          newValue: (loaded.row.payload as Record<string, unknown>).title,
+          changedBy: userId,
+        });
+        return { ok: true, event: data };
+      }
+
+      // First call: propose.
+      const title = (input.title as string | undefined)?.trim();
+      const startDate = input.start_date as string | undefined;
+      if (!title) return { error: "title is required." };
+      if (!startDate) return { error: "start_date is required." };
+      const eventType = (input.type as string | undefined) || defaultType;
+      if (!types.includes(eventType)) {
+        return { error: `type must be one of ${types.join("/")}, got "${eventType}".` };
+      }
+      let distributorId: string | null = null;
+      let distributorLabel = "";
+      if (hasDistributor && input.distributor_name) {
+        const resolved = await resolveDistributorId(supabase, input.distributor_name as string);
+        if (resolved.error) return { error: resolved.error };
+        distributorId = resolved.id ?? null;
+        distributorLabel = `, distributor: ${input.distributor_name}`;
+      }
+
+      const payload: Record<string, unknown> = {
+        title,
+        start_date: startDate,
+        end_date: (input.end_date as string | undefined) || null,
+        time_label: (input.time_label as string | undefined)?.trim() || null,
+        type: eventType,
+        location: (input.location as string | undefined)?.trim() || null,
+        rep: (input.rep as string | undefined)?.trim() || null,
+        notes: (input.notes as string | undefined)?.trim() || null,
+        created_by: userId,
+        updated_by: userId,
+      };
+      if (hasColor) payload.color = (input.color as string | undefined) || null;
+      if (hasDistributor) payload.distributor_id = distributorId;
+
+      const calendarLabel = table === "social_media_events" ? "Social Media Calendar" : table === "events" ? "Events Calendar" : "Chain Calendar";
+      const summary = `Add to the ${calendarLabel}: "${title}" (${eventType}) on ${startDate}${
+        input.end_date ? ` through ${input.end_date}` : ""
+      }${input.time_label ? `, ${input.time_label}` : ""}${input.location ? ` at ${input.location}` : ""}${distributorLabel}${
+        input.rep ? `, rep: ${input.rep}` : ""
+      }${input.notes ? `. Notes: ${input.notes}` : ""}.`;
+
+      if (!requestId) return { error: "Internal error: missing request id — can't stage this action." };
+      return await createPendingAction(supabase, {
+        userId,
+        requestId,
+        actionType: name,
+        targetTable: table,
+        payload,
+        summary,
+      });
+    }
+
+    case "update_social_media_calendar_event":
+    case "update_events_calendar_event":
+    case "update_chain_calendar_event": {
+      if (!userId) return { error: "No signed-in user to attribute this change to." };
+      const table = name === "update_social_media_calendar_event" ? "social_media_events" : name === "update_events_calendar_event" ? "events" : "chain_events";
+      const types =
+        table === "social_media_events"
+          ? ["post", "campaign", "story", "promotion", "other"]
+          : table === "events"
+          ? ["festival", "tasting", "donation", "work-with", "other"]
+          : ["demo", "reset", "ad", "display", "other"];
+      const hasColor = table !== "events";
+      const hasDistributor = table === "events";
+      const fields = hasColor
+        ? (["title", "start_date", "end_date", "time_label", "type", "location", "rep", "color", "notes"] as const)
+        : (["title", "start_date", "end_date", "time_label", "type", "location", "rep", "notes"] as const);
+
+      // Confirming a previously-proposed update.
+      if (input.confirmed === true && typeof input.pending_action_id === "string") {
+        const loaded = await loadConfirmedPendingAction(supabase, {
+          userId,
+          requestId: requestId ?? "",
+          pendingActionId: input.pending_action_id,
+          expectedActionType: name,
+          role,
+          sections,
+          isSuperAdmin,
+        });
+        if ("error" in loaded) return { error: loaded.error };
+        const { id, ...updatePayload } = loaded.row.payload as Record<string, unknown> & { id: string };
+
+        const { data: existing, error: fetchErr } = await supabase.from(table).select("*").eq("id", id).maybeSingle();
+        if (fetchErr) throw fetchErr;
+        if (!existing) return { error: "That event no longer exists — it may have been deleted since this was proposed." };
+
+        const { data, error } = await supabase.from(table).update(updatePayload).eq("id", id).select().single();
+        if (error) throw error;
+
+        for (const field of Object.keys(updatePayload)) {
+          if (field === "updated_by" || field === "updated_at") continue;
+          await logChange(supabase, {
+            weekId: null,
+            tableName: table,
+            recordId: id,
+            fieldName: field,
+            oldValue: (existing as Record<string, unknown>)[field],
+            newValue: (data as Record<string, unknown>)[field],
+            changedBy: userId,
+          });
+        }
+        return { ok: true, event: data };
+      }
+
+      // First call: propose.
+      const id = input.id as string | undefined;
+      if (!id) return { error: "id is required." };
+
+      const { data: existing, error: fetchErr } = await supabase.from(table).select("*").eq("id", id).maybeSingle();
+      if (fetchErr) throw fetchErr;
+      if (!existing) return { error: "No calendar event found with that id." };
+
+      if (input.type !== undefined && !types.includes(input.type as string)) {
+        return { error: `type must be one of ${types.join("/")}, got "${input.type}".` };
+      }
+
+      const updatePayload: Record<string, unknown> = { id, updated_by: userId, updated_at: new Date().toISOString() };
+      const changeDescriptions: string[] = [];
+      for (const field of fields) {
+        if (input[field] === undefined) continue;
+        const raw = input[field];
+        const value = typeof raw === "string" && raw.trim() === "" && field !== "title" && field !== "start_date" ? null : raw;
+        updatePayload[field] = value;
+        changeDescriptions.push(`${field}: "${(existing as Record<string, unknown>)[field] ?? ""}" → "${value ?? ""}"`);
+      }
+      if (hasDistributor && input.distributor_name !== undefined) {
+        if (input.distributor_name === "") {
+          updatePayload.distributor_id = null;
+          changeDescriptions.push("distributor: cleared");
+        } else {
+          const resolved = await resolveDistributorId(supabase, input.distributor_name as string);
+          if (resolved.error) return { error: resolved.error };
+          updatePayload.distributor_id = resolved.id;
+          changeDescriptions.push(`distributor → ${input.distributor_name}`);
+        }
+      }
+      if (changeDescriptions.length === 0) {
+        return { error: "No fields were provided to change." };
+      }
+
+      const calendarLabel = table === "social_media_events" ? "Social Media Calendar" : table === "events" ? "Events Calendar" : "Chain Calendar";
+      const summary = `Update "${existing.title}" on the ${calendarLabel}: ${changeDescriptions.join("; ")}.`;
+
+      if (!requestId) return { error: "Internal error: missing request id — can't stage this action." };
+      return await createPendingAction(supabase, {
+        userId,
+        requestId,
+        actionType: name,
+        targetTable: table,
+        payload: updatePayload,
+        summary,
+      });
+    }
+
+    case "delete_social_media_calendar_event":
+    case "delete_events_calendar_event":
+    case "delete_chain_calendar_event": {
+      if (!userId) return { error: "No signed-in user to attribute this change to." };
+      const table = name === "delete_social_media_calendar_event" ? "social_media_events" : name === "delete_events_calendar_event" ? "events" : "chain_events";
+      const calendarLabel = table === "social_media_events" ? "Social Media Calendar" : table === "events" ? "Events Calendar" : "Chain Calendar";
+
+      // Confirming a previously-proposed delete.
+      if (input.confirmed === true && typeof input.pending_action_id === "string") {
+        const loaded = await loadConfirmedPendingAction(supabase, {
+          userId,
+          requestId: requestId ?? "",
+          pendingActionId: input.pending_action_id,
+          expectedActionType: name,
+          role,
+          sections,
+          isSuperAdmin,
+        });
+        if ("error" in loaded) return { error: loaded.error };
+        const { id, title } = loaded.row.payload as { id: string; title: string };
+
+        const { error } = await supabase.from(table).delete().eq("id", id);
+        if (error) throw error;
+
+        await logChange(supabase, {
+          weekId: null,
+          tableName: table,
+          recordId: id,
+          fieldName: "title",
+          oldValue: title,
+          newValue: "",
+          changedBy: userId,
+        });
+        return { ok: true, deleted_id: id };
+      }
+
+      // First call: propose.
+      const id = input.id as string | undefined;
+      if (!id) return { error: "id is required." };
+
+      const { data: existing, error: fetchErr } = await supabase.from(table).select("id, title, start_date").eq("id", id).maybeSingle();
+      if (fetchErr) throw fetchErr;
+      if (!existing) return { error: "No calendar event found with that id — it may already be deleted." };
+
+      const summary = `Permanently delete "${existing.title}" (${existing.start_date}) from the ${calendarLabel}. This cannot be undone from the calendar itself (though it will still show in Audit Log).`;
+
+      if (!requestId) return { error: "Internal error: missing request id — can't stage this action." };
+      return await createPendingAction(supabase, {
+        userId,
+        requestId,
+        actionType: name,
+        targetTable: table,
+        payload: { id, title: existing.title },
+        summary,
+      });
+    }
+
+    case "create_task": {
+      if (!userId) return { error: "No signed-in user to attribute this task to." };
+
+      // Confirming a previously-proposed task.
+      if (input.confirmed === true && typeof input.pending_action_id === "string") {
+        const loaded = await loadConfirmedPendingAction(supabase, {
+          userId,
+          requestId: requestId ?? "",
+          pendingActionId: input.pending_action_id,
+          expectedActionType: "create_task",
+          role,
+          sections,
+          isSuperAdmin,
+        });
+        if ("error" in loaded) return { error: loaded.error };
+        const { assignee_user_ids, ...taskPayload } = loaded.row.payload as Record<string, unknown> & { assignee_user_ids: string[] };
+
+        const { data, error } = await supabase.from("task_items").insert(taskPayload).select().single();
+        if (error) throw error;
+        await supabase.from("task_item_activity").insert({ item_id: data.id, actor_id: userId, action: "created", detail: null });
+        if (assignee_user_ids && assignee_user_ids.length > 0) {
+          await supabase
+            .from("task_item_assignees")
+            .insert(assignee_user_ids.map((assigneeId) => ({ item_id: data.id, user_id: assigneeId })));
+        }
+        return { ok: true, task: data };
+      }
+
+      // First call: propose.
+      const subcategoryId = input.subcategory_id as string | undefined;
+      const title = (input.title as string | undefined)?.trim();
+      if (!subcategoryId) return { error: "subcategory_id is required — look it up first (run_read_only_query against task_categories/task_subcategories)." };
+      if (!title) return { error: "title is required." };
+
+      const { data: subcategory, error: subErr } = await supabase
+        .from("task_subcategories")
+        .select("id, name, category_id")
+        .eq("id", subcategoryId)
+        .maybeSingle();
+      if (subErr) throw subErr;
+      if (!subcategory) return { error: "No task subcategory found with that id." };
+
+      let assigneeNames = "";
+      const assigneeIds = Array.isArray(input.assignee_user_ids) ? (input.assignee_user_ids as string[]) : [];
+      if (assigneeIds.length > 0) {
+        const { data: assigneeProfiles } = await supabase.from("profiles").select("id, full_name, email").in("id", assigneeIds);
+        assigneeNames = (assigneeProfiles ?? []).map((p) => p.full_name?.trim() || p.email).join(", ");
+      }
+
+      const payload = {
+        subcategory_id: subcategoryId,
+        title,
+        notes: (input.notes as string | undefined)?.trim() || null,
+        due_date: (input.due_date as string | undefined) || null,
+        created_by: userId,
+        assignee_user_ids: assigneeIds,
+      };
+      const summary = `Create a task under "${subcategory.name}": "${title}"${input.due_date ? `, due ${input.due_date}` : ""}${
+        assigneeNames ? `, assigned to ${assigneeNames}` : ""
+      }${input.notes ? `. Notes: ${input.notes}` : ""}.`;
+
+      if (!requestId) return { error: "Internal error: missing request id — can't stage this action." };
+      return await createPendingAction(supabase, {
+        userId,
+        requestId,
+        actionType: "create_task",
+        targetTable: "task_items",
+        payload,
+        summary,
+      });
+    }
+
+    case "confirm_pending_action": {
+      if (!userId) return { error: "No signed-in user." };
+      const pendingActionId = input.pending_action_id as string | undefined;
+      if (!pendingActionId) return { error: "pending_action_id is required." };
+
+      // Peek at the row first just to find out which action type it is, so
+      // we can hand off to the exact same logic add/update/delete/
+      // create_task's own confirmed:true branch already implements above,
+      // rather than duplicating the execution logic a third time here.
+      const { data: peek } = await supabase
+        .from("ernie_pending_actions")
+        .select("action_type")
+        .eq("id", pendingActionId)
+        .maybeSingle();
+      if (!peek) return { error: "No pending action found with that id." };
+
+      return runErnieTool(
+        supabase,
+        peek.action_type,
+        { ...input, confirmed: true, pending_action_id: pendingActionId },
+        role,
+        sections,
+        currentConversationId,
+        isSuperAdmin,
+        userId,
+        requestId,
+      );
     }
 
     case "get_pricing_data": {
@@ -1608,16 +2418,42 @@ export function buildErnieSystemPrompt(
   isSuperAdmin = false,
   personNotes?: string | null,
 ): string {
+  // The deliberate exceptions to "Ernie is read-only" (Social Media
+  // Calendar added 2026-09-11; extended the same day to the Events
+  // Calendar, Chain Calendar, and task creation — see the relevant tools'
+  // own comments in ERNIE_TOOLS above for why). Each is gated by the same
+  // section its own app page checks (events_calendar for all three
+  // calendars, tasks for task creation), so this line stays accurate for
+  // every account tier without special-casing here. Every one of these
+  // tools is propose-then-confirm: Ernie must ask whatever questions it
+  // needs, then call the tool WITHOUT confirmed to get a preview and a
+  // pending_action_id (nothing is written yet), present that preview in
+  // its own words, and only after the person clearly says to go ahead —
+  // in a NEW message, never the same turn — call it again with
+  // confirmed:true and that same pending_action_id to actually write it.
+  const hasCalendarWriteAccess = hasSection(role, sections, "events_calendar", isSuperAdmin);
+  const hasTaskWriteAccess = hasSection(role, sections, "tasks", isSuperAdmin);
+  const calendarSentence = hasCalendarWriteAccess
+    ? `You CAN add, edit, and delete entries on all three calendars — the Social Media Calendar (add/update/delete/list_social_media_calendar_event(s)), the Events Calendar (add/update/delete/list_events_calendar_event(s), which also takes a distributor name for events tied to a distributor), and the Chain Calendar (add/update/delete/list_chain_calendar_event(s)) — use these once someone actually wants a planned post, event, or chain activity put onto the relevant calendar, not just described in chat, and confirm which specific event they mean before editing or deleting one.`
+    : `You do NOT have access to any of the calendars (Social Media, Events, or Chain) — if someone asks you to add, change, or remove a calendar entry, tell them you don't have that access and they'll need to do it themselves or ask an admin to grant it.`;
+  const taskSentence = hasTaskWriteAccess
+    ? ` You CAN also create tasks (create_task) — ask what's needed (title, which category/subcategory, notes, due date, who it should be assigned to) before proposing one.`
+    : ` You do NOT have access to create tasks — if someone asks you to create one, tell them you don't have that access and they'll need to do it themselves or ask an admin to grant it.`;
+  const hasAnyWriteAccess = hasCalendarWriteAccess || hasTaskWriteAccess;
+  const writeAccessSentence = hasAnyWriteAccess
+    ? `${calendarSentence}${taskSentence} Never propose and execute in the same turn — always wait for a genuine new message confirming it. Every write is logged to the app's Audit Log, same as if a person made it, so it can be undone if it's wrong. Everything else in the app stays completely read-only: for anything outside these calendars and tasks, tell people you're read-only and they'll need to make that change on the relevant page themselves.`
+    : `You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`;
+
   const dataAccessParagraph =
     role === "admin" && isSuperAdmin
-      ? `You can read data — inventory, allocations, distributors, distributor-reported inventory, Build Orders, the Events Calendar, purchase orders, Sales/pricing data, POS label files, the Cash Flow Dashboard, and the app's user list — via the tools available to you, plus a general-purpose read-only database query tool (run_read_only_query) for anything the specific tools don't already cover. You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`
+      ? `You can read data — inventory, allocations, distributors, distributor-reported inventory, Build Orders, the Events Calendar, purchase orders, Sales/pricing data, POS label files, the Cash Flow Dashboard, and the app's user list — via the tools available to you, plus a general-purpose read-only database query tool (run_read_only_query) for anything the specific tools don't already cover. ${writeAccessSentence}`
       : role === "admin"
       ? (() => {
           const hasFinance = hasSection(role, sections, "cashflow_dashboard", isSuperAdmin);
           const financeSentence = hasFinance
             ? " You also have access to the Cash Flow Dashboard (Finance)."
             : " You do NOT have access to the Cash Flow Dashboard (Finance) — being an admin doesn't automatically include it, and this account hasn't been separately granted it. If asked about it, say plainly that this account doesn't have Finance access rather than guessing at figures.";
-          return `You can read data — inventory, allocations, distributors, distributor-reported inventory, Build Orders, the Events Calendar, purchase orders, Sales/pricing data, POS label files, and the app's user list — via the tools available to you, plus a general-purpose read-only database query tool (run_read_only_query) for anything the specific tools don't already cover.${financeSentence} You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`;
+          return `You can read data — inventory, allocations, distributors, distributor-reported inventory, Build Orders, the Events Calendar, purchase orders, Sales/pricing data, POS label files, and the app's user list — via the tools available to you, plus a general-purpose read-only database query tool (run_read_only_query) for anything the specific tools don't already cover.${financeSentence} ${writeAccessSentence}`;
         })()
       : (() => {
           const granted = TOOL_SECTION_DESCRIPTIONS.filter(([keys]) =>
@@ -1633,7 +2469,7 @@ export function buildErnieSystemPrompt(
           const withheldAll = [...withheld, "the list of app users"];
           const withheldSentence = ` You do NOT have access to: ${withheldAll.join(", ")} — those aren't areas of the app this user has been granted (the user list is admin-only regardless), and a query touching them will simply come back empty rather than erroring, no matter how it's phrased. If someone asks about any of those, say plainly that you don't have access to that and they should check with an admin, rather than guessing or refusing to engage.`;
 
-          return `You can read inventory and allocations data — on-hand/unlabeled/to-be-packaged/remaining quantities, per-distributor allocations, PO numbers and status, and distributor pricing (so order value can be computed) — and the distributor list, via the tools available to you. This is the same data this user can already see on the app's Inventory & Allocation page.${grantedSentence} You also have a general-purpose read-only database query tool (run_read_only_query) for anything the specific tools don't already cover — it runs with this same user's own database permissions, so it naturally reaches only the same data they already have access to elsewhere, never more.${withheldSentence} You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`;
+          return `You can read inventory and allocations data — on-hand/unlabeled/to-be-packaged/remaining quantities, per-distributor allocations, PO numbers and status, and distributor pricing (so order value can be computed) — and the distributor list, via the tools available to you. This is the same data this user can already see on the app's Inventory & Allocation page.${grantedSentence} You also have a general-purpose read-only database query tool (run_read_only_query) for anything the specific tools don't already cover — it runs with this same user's own database permissions, so it naturally reaches only the same data they already have access to elsewhere, never more.${withheldSentence} ${writeAccessSentence}`;
         })();
 
   return `You are Ernie, an internal AI assistant built into FCB Data (Full Circle Brewing Co.'s inventory/allocations/operations app), available to every signed-in user.

@@ -188,6 +188,11 @@ export async function POST(req: NextRequest) {
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
       }
 
+      // One id for this entire HTTP request / tool-use loop — see the
+      // matching comment in app/api/ernie/chat/route.ts for why this is
+      // required for the propose-then-confirm write tools to work safely.
+      const requestId = crypto.randomUUID();
+
       try {
         // Recent room history for Ernie's context — capped so a long-running
         // Project's room doesn't grow this call unbounded. Each line is
@@ -373,7 +378,7 @@ The message that was just posted, from ${senderName}${
               if (block.type !== "tool_use") continue;
               let result: unknown;
               try {
-                result = await runErnieTool(supabase, block.name, block.input ?? {}, role, sections, noConversationId, isSuperAdmin, user.id);
+                result = await runErnieTool(supabase, block.name, block.input ?? {}, role, sections, noConversationId, isSuperAdmin, user.id, requestId);
               } catch (toolErr) {
                 result = { error: toolErr instanceof Error ? toolErr.message : "Tool lookup failed" };
               }
