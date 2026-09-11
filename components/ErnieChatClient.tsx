@@ -88,6 +88,27 @@ interface ChatMessage {
   role: "user" | "assistant";
   text: string;
   files?: ErnieFile[];
+  // Only ever set inside a Project's live shared room (see
+  // switchToProject/the room-loading effect below) — general/personal chat
+  // is always just "you" and "Ernie", so these stay undefined there.
+  // senderId null means Ernie; a real id is whichever teammate sent it,
+  // compared against the signed-in userId to decide left/right alignment.
+  senderId?: string | null;
+  senderName?: string;
+}
+
+// One row of a Project's live shared chat room (see
+// sql/ernie_project_chat.sql / app/api/ernie/project-chat/route.ts) — every
+// user with access to the Project reads and writes the same rows, unlike
+// the personal, 1:1 ernie_conversations/ernie_messages used everywhere else.
+interface RoomMessageRow {
+  id: string;
+  sender_id: string | null;
+  sender_name: string;
+  role: "user" | "ernie";
+  content: string;
+  file_ids: string[];
+  created_at: string;
 }
 
 interface ConversationSummary {
@@ -568,11 +589,97 @@ export default function ErnieChatClient({
     setConversationId(null);
     setError(null);
     setProjectFiles([]);
-    setHistoryLoading(true);
-    await refreshHistory(projectId);
-    setHistoryLoading(false);
+    // A Project's chat is a live shared room now, not a list of past
+    // conversations to browse — the room-loading effect below (keyed on
+    // activeProjectId) loads its messages and subscribes to new ones the
+    // moment activeProjectId changes, so there's nothing conversation-list
+    // shaped to fetch here anymore.
     if (projectId) await loadProjectFiles(projectId);
   }
+
+  // Resolves a room message's attached file ids into the same ErnieFile
+  // shape the rest of this component already renders as download chips
+  // (FileChip) — mirrors how the general chat's "done" SSE event resolves
+  // outputFileIds, just for however many ids one or more room rows carry.
+  async function resolveRoomFiles(ids: string[]): Promise<ErnieFile[]> {
+    if (ids.length === 0) return [];
+    const { data } = await supabase
+      .from("ernie_files")
+      .select("id, file_name, mime_type, size_bytes, storage_path, source_bucket")
+      .in("id", ids);
+    return (data as ErnieFile[] | null) ?? [];
+  }
+
+  function roomRowToChatMessage(row: RoomMessageRow, filesById: Map<string, ErnieFile>): ChatMessage {
+    const files = row.file_ids.map((id) => filesById.get(id)).filter((f): f is ErnieFile => !!f);
+    return {
+      role: row.role === "ernie" ? "assistant" : "user",
+      text: row.content,
+      files: files.length > 0 ? files : undefined,
+      senderId: row.sender_id,
+      senderName: row.sender_name,
+    };
+  }
+
+  // Loads a Project's live shared room and keeps it live: an initial fetch
+  // of its history, then a Supabase Realtime subscription so every message
+  // anyone posts — including Ernie's, if he decides to reply — shows up for
+  // this tab the instant it's inserted, no refresh or polling needed. Runs
+  // whenever the active Project changes; tears its own subscription down on
+  // cleanup so switching Projects (or leaving) doesn't leave stale channels
+  // listening in the background.
+  useEffect(() => {
+    if (mode !== "projects" || !activeProjectId) return;
+    let cancelled = false;
+
+    async function loadRoom() {
+      setInitializing(true);
+      try {
+        const res = await fetch(`/api/ernie/project-chat?projectId=${activeProjectId}`);
+        if (!res.ok) {
+          if (!cancelled) setError("Couldn't load this Project's chat — try again.");
+          return;
+        }
+        const data = (await res.json()) as { messages?: RoomMessageRow[] };
+        const rows = data.messages ?? [];
+        const allFileIds = Array.from(new Set(rows.flatMap((r) => r.file_ids ?? [])));
+        const files = await resolveRoomFiles(allFileIds);
+        const filesById = new Map(files.map((f) => [f.id, f]));
+        if (!cancelled) setMessages(rows.map((r) => roomRowToChatMessage(r, filesById)));
+      } catch {
+        if (!cancelled) setError("Couldn't load this Project's chat — check your connection and try again.");
+      } finally {
+        if (!cancelled) setInitializing(false);
+      }
+    }
+
+    loadRoom();
+
+    const channel = supabase
+      .channel(`ernie-project-chat-${activeProjectId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "ernie_project_messages",
+          filter: `project_id=eq.${activeProjectId}`,
+        },
+        async (payload) => {
+          const row = payload.new as RoomMessageRow;
+          const files = await resolveRoomFiles(row.file_ids ?? []);
+          const filesById = new Map(files.map((f) => [f.id, f]));
+          setMessages((prev) => [...prev, roomRowToChatMessage(row, filesById)]);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- resolveRoomFiles/roomRowToChatMessage are stable per render and re-including them would just re-run this identically on every render
+  }, [mode, activeProjectId, supabase]);
 
   async function createProject() {
     const name = newProjectName.trim();
@@ -935,16 +1042,49 @@ export default function ErnieChatClient({
 
     const filesForThisMessage = pendingFiles;
 
-    setMessages((prev) => [
-      ...prev,
-      { role: "user", text: trimmed, files: filesForThisMessage.length ? filesForThisMessage : undefined },
-    ]);
     setInput("");
     setPendingFiles([]);
     setUploadError(null);
     setError(null);
     setStatusLabel(null);
     setLoading(true);
+
+    // A Project's chat is a live shared room, not a private turn-by-turn
+    // conversation — this doesn't optimistically append the message locally
+    // the way General chat does below. Every message, including this
+    // person's own, arrives back through the room's Realtime subscription
+    // (see the room-loading effect above) the moment it's actually inserted,
+    // the same way it does for every other teammate watching the room —
+    // that's what keeps everyone's view of the room honestly in sync rather
+    // than this tab showing a locally-echoed copy that could drift from
+    // what actually got saved.
+    if (activeProjectId) {
+      try {
+        const res = await fetch("/api/ernie/project-chat", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            projectId: activeProjectId,
+            message: trimmed,
+            fileIds: filesForThisMessage.map((f) => f.id),
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}) as { error?: string });
+          setError(data.error ?? "Something went wrong posting that.");
+        }
+      } catch {
+        setError("Couldn't reach Ernie — check your connection and try again.");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", text: trimmed, files: filesForThisMessage.length ? filesForThisMessage : undefined },
+    ]);
 
     try {
       const res = await fetch("/api/ernie/chat", {
@@ -1387,13 +1527,18 @@ export default function ErnieChatClient({
                 What Ernie Knows About You
               </button>
             )}
-            <button
-              type="button"
-              onClick={startNewConversation}
-              className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
-            >
-              New Conversation
-            </button>
+            {/* A Project's chat is one persistent shared room, not a series
+                of conversations to start fresh — this only means anything
+                for General's personal, turn-by-turn chat. */}
+            {!activeProject && (
+              <button
+                type="button"
+                onClick={startNewConversation}
+                className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+              >
+                New Conversation
+              </button>
+            )}
           </div>
         </div>
 
@@ -1538,23 +1683,58 @@ export default function ErnieChatClient({
                 if (m.role === "assistant") lastAssistantIndex = i;
               });
 
-              return messages.map((m, i) =>
-                m.role === "user" ? (
-                  <div key={i} className="flex flex-col items-end gap-1.5">
-                    {m.files && m.files.length > 0 && (
-                      <div className="flex max-w-[75%] flex-wrap justify-end gap-1.5">
-                        {m.files.map((f) => (
-                          <FileChip key={f.id} f={f} onDownload={() => handleDownloadFile(f)} />
-                        ))}
-                      </div>
-                    )}
-                    {m.text && (
-                      <div className="max-w-[75%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-[#6ABC46] px-3.5 py-2.5 text-sm text-[#0b0e09]">
-                        {m.text}
-                      </div>
-                    )}
-                  </div>
-                ) : (
+              return messages.map((m, i) => {
+                // Outside a Project, chat is always just "you" and "Ernie" —
+                // every user-role message is your own. Inside a Project's
+                // live room, m.senderId tells own messages (right-aligned,
+                // green, exactly like General) apart from a teammate's
+                // (left-aligned, labeled with their real name) — see
+                // roomRowToChatMessage above.
+                const isOwnMessage = m.role === "user" && (!activeProject || m.senderId === userId);
+
+                if (isOwnMessage) {
+                  return (
+                    <div key={i} className="flex flex-col items-end gap-1.5">
+                      {m.files && m.files.length > 0 && (
+                        <div className="flex max-w-[75%] flex-wrap justify-end gap-1.5">
+                          {m.files.map((f) => (
+                            <FileChip key={f.id} f={f} onDownload={() => handleDownloadFile(f)} />
+                          ))}
+                        </div>
+                      )}
+                      {m.text && (
+                        <div className="max-w-[75%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-[#6ABC46] px-3.5 py-2.5 text-sm text-[#0b0e09]">
+                          {m.text}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
+                if (m.role === "user") {
+                  // A teammate's message in this Project's shared room.
+                  return (
+                    <div key={i} className="flex flex-col items-start gap-1.5">
+                      <span className="font-[family-name:var(--font-plex-mono)] text-[11px] font-medium tracking-wide text-[#8f9885]">
+                        {m.senderName}
+                      </span>
+                      {m.files && m.files.length > 0 && (
+                        <div className="flex max-w-[75%] flex-wrap gap-1.5">
+                          {m.files.map((f) => (
+                            <FileChip key={f.id} f={f} onDownload={() => handleDownloadFile(f)} />
+                          ))}
+                        </div>
+                      )}
+                      {m.text && (
+                        <div className="max-w-[75%] whitespace-pre-wrap rounded-2xl rounded-tl-sm border border-[#262c1f] bg-[#181c13] px-3.5 py-2.5 text-sm text-[#eef1e9]">
+                          {m.text}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
+                return (
                   <div key={i} className="flex items-start gap-3">
                     {i === lastAssistantIndex ? (
                       // eslint-disable-next-line @next/next/no-img-element -- plain img keeps gif animation intact
@@ -1582,8 +1762,8 @@ export default function ErnieChatClient({
                       )}
                     </div>
                   </div>
-                ),
-              );
+                );
+              });
             })()}
 
           {loading && (
@@ -1652,16 +1832,19 @@ export default function ErnieChatClient({
         </div>
       </div>
 
-      {/* Conversation list — replaces the old History dropdown with an
-          always-visible sidebar, per Chad's request. Hidden in the pop-out
+      {/* Conversation list — a personal, General-chat-only feature. A
+          Project's chat is one live shared room now (see the room-loading
+          effect above), not a list of separate conversations to browse, so
+          this whole panel is General-only — same reasoning as Pop Out and
+          "What Ernie Knows About You" above. Also hidden in the pop-out
           window: that window is sized for a narrow chat panel, and the full
           history is always one click away in the main window. */}
-      {!isPopup && (
+      {!isPopup && !activeProject && (
       <div className="flex w-72 shrink-0 flex-col overflow-hidden rounded-2xl border border-[#262c1f] bg-[#12150f] shadow-[0_0_0_1px_rgba(0,0,0,0.4)]">
         <div className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[#4c8a32] via-[#6ABC46] to-[#7fce5c]" />
         <div className="border-b border-[#1c2117] px-4 py-4">
           <h2 className="font-[family-name:var(--font-archivo)] text-sm font-bold tracking-tight text-[#eef1e9]">
-            {activeProject ? `${activeProject.name} — Conversations` : "Past Conversations"}
+            Past Conversations
           </h2>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto font-[family-name:var(--font-plex-sans)]">
