@@ -2095,11 +2095,28 @@ export async function runErnieTool(
       // still-pending row and confirm that one. This is what
       // "confirm"/"execute"/"yes" from the user should always resolve to.
       if (!pendingActionId) {
+        // Only look within a short recency window (added after a real
+        // incident on 2026-09-11). The model described a preview in words
+        // without actually calling the propose tool for it, then "execute"
+        // fell back to whatever OLD pending row happened to still be
+        // sitting there from an earlier, unrelated test — and silently
+        // wrote THAT instead. A stale, unrelated action being sitting
+        // around is normal (people abandon a proposal without ever
+        // confirming it); the bug is reaching back arbitrarily far in time
+        // to find "something, anything" pending and executing it as if it
+        // were what the user just approved. Bounding this to the last few
+        // minutes means a genuinely fresh propose-then-confirm pair still
+        // works exactly as before, but a "confirm" with nothing actually
+        // proposed a moment ago fails loudly instead of silently executing
+        // an old leftover.
+        const RECENCY_WINDOW_MINUTES = 10;
+        const cutoff = new Date(Date.now() - RECENCY_WINDOW_MINUTES * 60 * 1000).toISOString();
         const { data: mostRecent, error: mostRecentErr } = await supabase
           .from("ernie_pending_actions")
           .select("id")
           .eq("created_by", userId)
           .eq("status", "pending")
+          .gte("created_at", cutoff)
           .order("created_at", { ascending: false })
           .limit(1)
           .maybeSingle();
@@ -2107,7 +2124,7 @@ export async function runErnieTool(
         if (!mostRecent) {
           return {
             error:
-              "There's no pending action to confirm for this user right now — nothing has been proposed yet, or it was already confirmed/cancelled. Propose the add/update/delete/task action again first.",
+              `There's nothing pending from the last ${RECENCY_WINDOW_MINUTES} minutes to confirm for this user — either nothing was actually proposed yet (double check you really called the add/update/delete/create_task tool WITHOUT confirmed and got a real preview back, rather than just describing one), or it's too old/already handled. Propose the action again fresh, show the user that exact preview, and only then call confirm_pending_action.`,
           };
         }
         pendingActionId = mostRecent.id;
@@ -2477,11 +2494,11 @@ export function buildErnieSystemPrompt(
   // calendars, tasks for task creation), so this line stays accurate for
   // every account tier without special-casing here. Every one of these
   // tools is propose-then-confirm: Ernie must ask whatever questions it
-  // needs, then call the tool WITHOUT confirmed to get a preview and a
-  // pending_action_id (nothing is written yet), present that preview in
-  // its own words, and only after the person clearly says to go ahead —
-  // in a NEW message, never the same turn — call it again with
-  // confirmed:true and that same pending_action_id to actually write it.
+  // needs, then ACTUALLY CALL the tool WITHOUT confirmed to get a real
+  // preview (nothing is written yet), present that exact preview in its
+  // own words, and only after the person clearly says to go ahead — in a
+  // NEW message, never the same turn — call confirm_pending_action (no
+  // arguments) to actually write it.
   const hasCalendarWriteAccess = hasSection(role, sections, "events_calendar", isSuperAdmin);
   const hasTaskWriteAccess = hasSection(role, sections, "tasks", isSuperAdmin);
   const calendarSentence = hasCalendarWriteAccess
@@ -2492,7 +2509,7 @@ export function buildErnieSystemPrompt(
     : ` You do NOT have access to create tasks — if someone asks you to create one, tell them you don't have that access and they'll need to do it themselves or ask an admin to grant it.`;
   const hasAnyWriteAccess = hasCalendarWriteAccess || hasTaskWriteAccess;
   const writeAccessSentence = hasAnyWriteAccess
-    ? `${calendarSentence}${taskSentence} Never propose and execute in the same turn — always wait for a genuine new message confirming it. Every write is logged to the app's Audit Log, same as if a person made it, so it can be undone if it's wrong. Everything else in the app stays completely read-only: for anything outside these calendars and tasks, tell people you're read-only and they'll need to make that change on the relevant page themselves.`
+    ? `${calendarSentence}${taskSentence} CRITICAL: never describe a "preview" of a calendar event or task in your reply unless you actually called the real add/update/delete/create_task tool THIS SAME TURN and are relaying the exact preview text it gave back — inventing preview-sounding text without calling the tool leaves nothing real staged, and a later "confirm" will then find nothing of yours to confirm (or, worse, silently confirm some unrelated leftover instead). Never propose and execute in the same turn — always wait for a genuine new message confirming it, and when that confirmation comes, call confirm_pending_action with no arguments (it automatically confirms your own most recent proposal — never try to recall or re-type a pending_action_id yourself). Every write is logged to the app's Audit Log, same as if a person made it, so it can be undone if it's wrong. Everything else in the app stays completely read-only: for anything outside these calendars and tasks, tell people you're read-only and they'll need to make that change on the relevant page themselves.`
     : `You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`;
 
   const dataAccessParagraph =
