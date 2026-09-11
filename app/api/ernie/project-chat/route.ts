@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getErnieTools, buildErnieSystemPrompt, runErnieTool } from "@/lib/ernie/tools";
 import { hasSection, getUserSections, ERNIE_SECTION } from "@/lib/permissions";
 import { buildFileContentBlocks, captureCodeExecutionFile, logErnieToolExecution, type ErnieFileRow } from "@/lib/ernie/files";
+import { firstNameFor } from "@/lib/displayName";
 
 // The live, shared chat room for one Ernie Project (see
 // sql/ernie_project_chat.sql) — replaces the old setup where each person got
@@ -129,7 +130,15 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const senderName = profile?.full_name?.trim() || profile?.email || "Someone";
+  // Never fall back to the bare email address — per Chad ("i didnt ask for
+  // my email, i asked for our names"). This is the exact same fallback the
+  // rest of the app already uses for a name (see lib/displayName.ts and its
+  // matching use in TasksPageClient.tsx): a real full_name (set during
+  // account setup) wins outright; an account that predates that flow, or
+  // never had one filled in, falls back to a guessed first name from their
+  // email instead of the address itself.
+  const senderName =
+    profile?.full_name?.trim() || firstNameFor({ full_name: profile?.full_name ?? null, email: profile?.email ?? "" });
 
   // Post the person's own message first — this is what makes it show up
   // live for everyone the instant it's inserted, before Ernie's turn (below)

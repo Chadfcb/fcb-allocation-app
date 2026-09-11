@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useMemo, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, Role } from "@/lib/types/db";
+import { firstNameFor } from "@/lib/displayName";
 import {
   GROUP_KEYS,
   GROUP_LABEL,
@@ -279,6 +280,13 @@ export default function UsersPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTier, setEditTier] = useState<Tier>("employee");
   const [editSections, setEditSections] = useState(emptyGroupState());
+  // Added 2026-09-11, per Chad ("there no option for me to change my name
+  // in there") — full_name only ever got set by the one-time account-setup
+  // flow (app/account-setup/page.tsx, first sign-in with a temp password).
+  // An account created before that flow existed (Chad's own, notably) never
+  // went through it, so it has no name on file and nothing anywhere let
+  // that be fixed after the fact. This is that fix.
+  const [editFullName, setEditFullName] = useState("");
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
@@ -331,6 +339,7 @@ export default function UsersPage() {
     setEditingId(user.id);
     setEditTier(tierOf(user.role, user.is_super_admin));
     setEditSections(groupStateFromSections(user.sections));
+    setEditFullName(user.full_name ?? "");
   }
 
   async function handleSaveEdit(userId: string) {
@@ -344,6 +353,17 @@ export default function UsersPage() {
         const fields = tierToRoleFields(editTier);
         await supabase.from("profiles").update(fields).eq("id", userId);
       }
+      // Name is a normal column, not tier/role — any admin or Manager
+      // editing this row can set or fix it (same "admins can update any
+      // profile" policy that already covers this page's other writes; only
+      // role/is_super_admin themselves are locked down to Administrators,
+      // via the trigger referenced above). An empty field clears it back to
+      // null, which just falls back to the guessed-from-email name
+      // everywhere else in the app already does.
+      await supabase
+        .from("profiles")
+        .update({ full_name: editFullName.trim() || null })
+        .eq("id", userId);
       const desired = editTier === "administrator" ? [] : expandGroupState(editSections);
       await saveSections(userId, desired);
       setEditingId(null);
@@ -512,6 +532,7 @@ export default function UsersPage() {
         <table className="min-w-full divide-y divide-neutral-900 text-sm">
           <thead className="bg-neutral-900 text-xs uppercase tracking-wide text-neutral-500">
             <tr>
+              <th className="px-3 py-2 text-left">Name</th>
               <th className="px-3 py-2 text-left">Email</th>
               <th className="px-3 py-2 text-left">Joined</th>
               <th className="px-3 py-2 text-left">Last Active</th>
@@ -526,6 +547,13 @@ export default function UsersPage() {
               return (
                 <Fragment key={user.id}>
                   <tr className="hover:bg-neutral-900/60">
+                    <td className="px-3 py-2 text-neutral-200">
+                      {user.full_name?.trim() || (
+                        <span className="italic text-neutral-500" title="No name on file — falling back to a guess from their email">
+                          {firstNameFor(user)} (guessed)
+                        </span>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-neutral-200">{user.email}</td>
                     <td className="px-3 py-2 text-neutral-500">
                       {new Date(user.created_at).toLocaleDateString()}
@@ -555,8 +583,25 @@ export default function UsersPage() {
                   </tr>
                   {editingId === user.id && (
                     <tr>
-                      <td colSpan={6} className="bg-black/40 px-4 py-4">
+                      <td colSpan={7} className="bg-black/40 px-4 py-4">
                         <div className="max-w-xl space-y-3 rounded-md border border-neutral-800 bg-neutral-950 p-4">
+                          <div>
+                            <label className="mb-1 block text-xs font-medium text-neutral-400">
+                              Name
+                            </label>
+                            <input
+                              type="text"
+                              value={editFullName}
+                              onChange={(e) => setEditFullName(e.target.value)}
+                              placeholder="e.g. Dave Smith"
+                              className="w-full max-w-xs rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100 focus:border-neutral-500 focus:outline-none"
+                            />
+                            <p className="mt-1 text-xs text-neutral-500">
+                              Shown across the app — Tasks, Ernie&apos;s Project chat, etc. Left
+                              blank, it falls back to a guessed name from their email.
+                            </p>
+                          </div>
+
                           <div>
                             <label className="mb-1 block text-xs font-medium text-neutral-400">
                               Tier
