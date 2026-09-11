@@ -484,24 +484,45 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
   // summarize exactly what it's about to do, and only actually do it once
   // the user approves in their OWN NEXT MESSAGE — never in the same turn
   // it proposed it. That's not just a prompting request here: calling one
-  // of these WITHOUT confirmed:true validates the input, resolves any
-  // names to real ids, stores the exact resulting write in a new
+  // of these WITHOUT confirmed validates the input, resolves any names to
+  // real ids, stores the exact resulting write in a new
   // ernie_pending_actions row, and returns a preview + that row's id —
-  // nothing is written to the real table yet. Calling it AGAIN with
-  // confirmed:true and that same pending_action_id actually performs the
-  // write, but only succeeds if the pending row was created in a genuinely
-  // earlier HTTP request (a separate user chat message) than this one —
-  // enforced in loadConfirmedPendingAction below by comparing request_id,
-  // so a propose+confirm pair can never both happen inside one tool-use
-  // loop no matter what the model decides to do. See
-  // sql/ernie_pending_actions.sql for the full writeup. Every executed
-  // write is also logged to audit_log via logChange (or task_item_activity
-  // for a task), the same trail a person's own edit goes through, so a bad
-  // entry is one click to undo.
+  // nothing is written to the real table yet.
+  //
+  // The actual write is performed by calling confirm_pending_action with
+  // NO arguments (see its own definition below) — it looks up and executes
+  // THIS SAME USER's own most recently proposed, still-pending action.
+  // Earlier (2026-09-11) this instead told the model to call the original
+  // tool again with confirmed:true and the exact pending_action_id from
+  // the preview call, repeated verbatim — that turned out to be a real bug
+  // in production, not just an awkward API: only the FINAL TEXT of a
+  // model's turn is ever persisted across HTTP requests (see
+  // app/api/ernie/chat/route.ts) — the actual tool_use/tool_result content
+  // blocks that carried the pending_action_id are not reloaded on the next
+  // turn. So the model had no real way to recall that id once the user
+  // replied "confirm" in a new message, and every observed attempt just
+  // silently re-proposed the same action from scratch instead of
+  // confirming it — nothing ever actually got written, even after several
+  // rounds of the user saying "confirm"/"execute". confirm_pending_action
+  // with no arguments removes that dependency entirely: the server, not
+  // the model's memory, finds "the most recent pending row this user
+  // hasn't confirmed yet." The confirmed:true + pending_action_id path on
+  // the tools below still exists (loadConfirmedPendingAction still enforces
+  // the same request_id check either way) but is no longer how a normal
+  // confirmation should happen — confirm_pending_action with no arguments
+  // is the one true path, since it only succeeds if the pending row was
+  // created in a genuinely earlier HTTP request (a separate user chat
+  // message) than this one — enforced in loadConfirmedPendingAction below
+  // by comparing request_id, so a propose+confirm pair can never both
+  // happen inside one tool-use loop no matter what the model decides to
+  // do. See sql/ernie_pending_actions.sql for the full writeup. Every
+  // executed write is also logged to audit_log via logChange (or
+  // task_item_activity for a task), the same trail a person's own edit
+  // goes through, so a bad entry is one click to undo.
   {
     name: "add_social_media_calendar_event",
     description:
-      "Propose (or, with confirmed:true, actually create) a new Social Media Calendar (/social-media-calendar) event. First call: leave confirmed out — this validates everything and returns a preview plus a pending_action_id, but writes nothing yet. Present that preview to the user in your own words and ask them to confirm. Only after they approve in a NEW message, call this again with confirmed:true and that same pending_action_id (repeat the other fields too) to actually create it. Only start_date and title are required; leave anything else out if it wasn't specified rather than inventing a value.",
+      "Propose a new Social Media Calendar (/social-media-calendar) event. Leave confirmed out — this validates everything and returns a preview, but writes nothing yet. Present that preview to the user in your own words and ask them to confirm. Only after they approve in a NEW message, call confirm_pending_action (no arguments) to actually create it — do NOT try to recall a pending_action_id and call this tool again; that id is not reliably available to you after this turn ends. Only start_date and title are required; leave anything else out if it wasn't specified rather than inventing a value.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -518,8 +539,8 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
         rep: { type: "string", description: "Rep/staff name, if relevant. Omit otherwise." },
         color: { type: "string", description: "Hex color for the calendar chip, e.g. \"#d99a3d\". Omit to use the calendar's default." },
         notes: { type: "string", description: "Any additional notes." },
-        confirmed: { type: "boolean", description: "Omit or false to preview; true (with pending_action_id) to actually create it." },
-        pending_action_id: { type: "string", description: "Required when confirmed:true — the id returned by the preview call." },
+        confirmed: { type: "boolean", description: "Leave this out. To actually write the proposed event after the user approves, call confirm_pending_action instead — do not set confirmed:true here." },
+        pending_action_id: { type: "string", description: "Leave this out — call confirm_pending_action (no arguments) instead once the user approves." },
       },
       required: ["title", "start_date"],
     },
@@ -527,7 +548,7 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
   {
     name: "update_social_media_calendar_event",
     description:
-      "Propose (or, with confirmed:true, actually make) a change to an existing Social Media Calendar event. Look the event up first (run_read_only_query against social_media_events, or list_social_media_calendar_events) to get its id — especially if the user only described it (\"the Friday post about the tasting\") rather than giving you an id directly. Same propose-then-confirm flow as add_social_media_calendar_event: first call without confirmed to get a preview + pending_action_id, present it, then call again with confirmed:true once the user approves in a new message. Only pass the fields that are actually changing; anything omitted stays as-is.",
+      "Propose a change to an existing Social Media Calendar event. Look the event up first (run_read_only_query against social_media_events, or list_social_media_calendar_events) to get its id — especially if the user only described it (\"the Friday post about the tasting\") rather than giving you an id directly. Same propose-then-confirm flow as add_social_media_calendar_event: leave confirmed out to get a preview, present it, then call confirm_pending_action (no arguments) once the user approves in a new message. Only pass the fields that are actually changing; anything omitted stays as-is.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -550,7 +571,7 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
   {
     name: "delete_social_media_calendar_event",
     description:
-      "Propose (or, with confirmed:true, actually perform) permanently removing an event from the Social Media Calendar. This is destructive — confirm with whoever's asking which specific event they mean (by title and date) before even proposing it. Same propose-then-confirm flow: first call without confirmed to get a preview + pending_action_id, then call again with confirmed:true once the user approves in a new message.",
+      "Propose permanently removing an event from the Social Media Calendar. This is destructive — confirm with whoever's asking which specific event they mean (by title and date) before even proposing it. Same propose-then-confirm flow: leave confirmed out to get a preview, then call confirm_pending_action (no arguments) once the user approves in a new message.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -576,7 +597,7 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
   {
     name: "add_events_calendar_event",
     description:
-      "Propose (or, with confirmed:true, actually create) a new Events Calendar (/events) entry — festivals, tastings, donations, work-withs, or other. Same propose-then-confirm flow as add_social_media_calendar_event: first call without confirmed for a preview + pending_action_id, present it, then call again with confirmed:true once approved in a new message. Only start_date and title are required.",
+      "Propose a new Events Calendar (/events) entry — festivals, tastings, donations, work-withs, or other. Same propose-then-confirm flow as add_social_media_calendar_event: leave confirmed out for a preview, present it, then call confirm_pending_action (no arguments) once approved in a new message. Only start_date and title are required.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -602,7 +623,7 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
   {
     name: "update_events_calendar_event",
     description:
-      "Propose (or, with confirmed:true, actually make) a change to an existing Events Calendar entry. Look it up first (get_events, or run_read_only_query against events) to get its id. Same propose-then-confirm flow as the other update tools. Only pass fields that are changing.",
+      "Propose a change to an existing Events Calendar entry. Look it up first (get_events, or run_read_only_query against events) to get its id. Same propose-then-confirm flow as the other update tools — leave confirmed out for a preview, then confirm_pending_action (no arguments) once approved in a new message. Only pass fields that are changing.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -625,7 +646,7 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
   {
     name: "delete_events_calendar_event",
     description:
-      "Propose (or, with confirmed:true, actually perform) permanently removing an Events Calendar entry. Destructive — confirm which specific one is meant before proposing it. Same propose-then-confirm flow.",
+      "Propose permanently removing an Events Calendar entry. Destructive — confirm which specific one is meant before proposing it. Same propose-then-confirm flow — leave confirmed out for a preview, then confirm_pending_action (no arguments) once approved in a new message.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -639,7 +660,7 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
   {
     name: "add_chain_calendar_event",
     description:
-      "Propose (or, with confirmed:true, actually create) a new Chain Calendar (/chain-calendar) entry — demo, reset, ad, display, or other. Same propose-then-confirm flow as add_social_media_calendar_event. Only start_date and title are required.",
+      "Propose a new Chain Calendar (/chain-calendar) entry — demo, reset, ad, display, or other. Same propose-then-confirm flow as add_social_media_calendar_event — leave confirmed out for a preview, then confirm_pending_action (no arguments) once approved in a new message. Only start_date and title are required.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -665,7 +686,7 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
   {
     name: "update_chain_calendar_event",
     description:
-      "Propose (or, with confirmed:true, actually make) a change to an existing Chain Calendar entry. Look it up first (list_chain_calendar_events, or run_read_only_query against chain_events). Same propose-then-confirm flow. Only pass fields that are changing.",
+      "Propose a change to an existing Chain Calendar entry. Look it up first (list_chain_calendar_events, or run_read_only_query against chain_events). Same propose-then-confirm flow — leave confirmed out for a preview, then confirm_pending_action (no arguments) once approved in a new message. Only pass fields that are changing.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -688,7 +709,7 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
   {
     name: "delete_chain_calendar_event",
     description:
-      "Propose (or, with confirmed:true, actually perform) permanently removing a Chain Calendar entry. Destructive — confirm which specific one is meant before proposing it. Same propose-then-confirm flow.",
+      "Propose permanently removing a Chain Calendar entry. Destructive — confirm which specific one is meant before proposing it. Same propose-then-confirm flow — leave confirmed out for a preview, then confirm_pending_action (no arguments) once approved in a new message.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -714,7 +735,7 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
   {
     name: "create_task",
     description:
-      "Propose (or, with confirmed:true, actually create) a new task in the Tasks section (/tasks). Tasks live under Category → Subcategory, so first find the right subcategory_id (run_read_only_query against task_categories/task_subcategories, or ask the user which category this belongs under if it's not obvious) — don't guess one. Resolve any assignee to their profiles.id the same way (run_read_only_query against profiles) before calling this. Same propose-then-confirm flow as the calendar tools: first call without confirmed for a preview + pending_action_id, present it, then call again with confirmed:true once approved in a new message.",
+      "Propose a new task in the Tasks section (/tasks). Tasks live under Category → Subcategory, so first find the right subcategory_id (run_read_only_query against task_categories/task_subcategories, or ask the user which category this belongs under if it's not obvious) — don't guess one. Resolve any assignee to their profiles.id the same way (run_read_only_query against profiles) before calling this. Same propose-then-confirm flow as the calendar tools: leave confirmed out for a preview, present it, then call confirm_pending_action (no arguments) once approved in a new message.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -736,13 +757,17 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
   {
     name: "confirm_pending_action",
     description:
-      "The second half of every propose-then-confirm write tool above — this is what actually PERFORMS a previously-proposed write. Only ever call this after: (1) you already called one of the add/update/delete/create_task tools without confirmed and got back a pending_action_id, (2) you showed that preview to the user in plain language and asked them to confirm, and (3) the user approved it IN THEIR OWN NEXT MESSAGE — never in the same reply you proposed it in. Calling this (or the original tool with confirmed:true) before a real separate confirmation from the user is a policy violation, even if you're confident what they'd want.",
+      "The second half of every propose-then-confirm write tool above — this is what actually PERFORMS a previously-proposed write. Only ever call this after: (1) you already called one of the add/update/delete/create_task tools without confirmed and showed the user a preview, and (2) the user approved it IN THEIR OWN NEXT MESSAGE — never in the same reply you proposed it in. Calling this before a real separate confirmation from the user is a policy violation, even if you're confident what they'd want. IMPORTANT: leave pending_action_id out — just call this tool with no arguments and it confirms YOUR own most recently proposed action for this same user automatically. Do NOT try to recall or re-type the id from a pending_action_id you were given earlier in the conversation — that value is not reliably available to you across turns, and guessing at it (or, worse, silently proposing the action all over again instead of calling this tool) is exactly the bug this note exists to prevent. Only pass pending_action_id explicitly in the rare case where the user is clearly confirming an OLDER proposal than the most recent one (e.g. they went back to approve something from several messages ago after proposing something newer in between).",
     input_schema: {
       type: "object" as const,
       properties: {
-        pending_action_id: { type: "string", description: "The id returned by the proposing call." },
+        pending_action_id: {
+          type: "string",
+          description:
+            "Optional. Leave this out in the normal case — omitting it confirms your own most recent pending proposal for this user. Only set it if you have the exact id AND you need to confirm something other than the most recent proposal.",
+        },
       },
-      required: ["pending_action_id"],
+      required: [],
     },
   },
   {
@@ -1360,7 +1385,7 @@ async function createPendingAction(
     pending_action_id: data.id,
     summary: params.summary,
     message:
-      "Nothing has been written yet. Share this summary with the user in your own words and ask them to confirm. Only after they approve in a NEW message, call this same tool again with confirmed:true and this exact pending_action_id (repeating the other fields) — or call confirm_pending_action with this pending_action_id.",
+      "Nothing has been written yet. Share this summary with the user in your own words and ask them to confirm. Only after they approve in a NEW message, call confirm_pending_action with NO arguments — it automatically confirms this user's own most recent pending proposal, so you do not need to remember or re-supply this pending_action_id (and in practice you won't reliably have it anymore once this turn ends). Do not silently propose the same thing again when the user confirms — that looks like progress but never actually writes anything.",
   };
 }
 
@@ -2059,8 +2084,34 @@ export async function runErnieTool(
 
     case "confirm_pending_action": {
       if (!userId) return { error: "No signed-in user." };
-      const pendingActionId = input.pending_action_id as string | undefined;
-      if (!pendingActionId) return { error: "pending_action_id is required." };
+      let pendingActionId = input.pending_action_id as string | undefined;
+
+      // The normal path: no id given at all. Rather than depend on Claude
+      // correctly recalling an opaque pending_action_id from a PRIOR turn
+      // (it can't — only the final text reply gets persisted across
+      // requests, not the tool_use/tool_result content that actually
+      // carried that id, so the model has no real memory of it once the
+      // turn ends), just look up this same user's own most recent
+      // still-pending row and confirm that one. This is what
+      // "confirm"/"execute"/"yes" from the user should always resolve to.
+      if (!pendingActionId) {
+        const { data: mostRecent, error: mostRecentErr } = await supabase
+          .from("ernie_pending_actions")
+          .select("id")
+          .eq("created_by", userId)
+          .eq("status", "pending")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (mostRecentErr) return { error: mostRecentErr.message };
+        if (!mostRecent) {
+          return {
+            error:
+              "There's no pending action to confirm for this user right now — nothing has been proposed yet, or it was already confirmed/cancelled. Propose the add/update/delete/task action again first.",
+          };
+        }
+        pendingActionId = mostRecent.id;
+      }
 
       // Peek at the row first just to find out which action type it is, so
       // we can hand off to the exact same logic add/update/delete/
