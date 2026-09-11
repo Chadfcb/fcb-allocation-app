@@ -1,8 +1,10 @@
 // Read-only data tools for Ernie (the in-app AI assistant, see
 // app/api/ernie/chat/route.ts). Nothing here writes to the app's own
 // database (allocations, inventory, pricing, etc.) except the calendar
-// (Social Media / Events / Chain) add/update/delete tools and create_task
-// (added 2026-09-11, extended same day — see their definitions below) — a
+// (Social Media / Events / Chain) add/update/delete tools and create_task/
+// update_task (all added 2026-09-11 — see their definitions below;
+// update_task followed later the same day after Chad asked for a way to
+// edit a task Ernie already created, e.g. adding notes) — a
 // deliberate, narrowly-scoped exception covering exactly those tables,
 // added after Chad asked for Ernie to be able to actually enter what it
 // drafts (a content plan, a task) onto the real calendar/Tasks section
@@ -755,6 +757,29 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
     },
   },
   {
+    name: "update_task",
+    description:
+      "Propose a change to an existing task in the Tasks section (/tasks) — rename it, edit its notes, set/clear its due date, mark it resolved/reopen it, and/or change who's assigned. Look the task up first (run_read_only_query against task_items) if you don't already have its id. Only pass the fields that are actually changing; anything omitted stays as-is — assignee_user_ids, if passed, REPLACES the full assignee list (pass every assignee who should remain, not just new ones; pass an empty array to unassign everyone). There is no delete-task tool — the app itself has no way to permanently delete a task, only mark it resolved, so offer that instead if someone asks to remove one. Same propose-then-confirm flow as the calendar tools: leave confirmed out for a preview, present it, then call confirm_pending_action (no arguments) once approved in a new message.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        id: { type: "string", description: "The task_items.id to update." },
+        title: { type: "string" },
+        notes: { type: "string", description: "Empty string clears the notes." },
+        due_date: { type: "string", description: "yyyy-mm-dd, or an empty string to clear it." },
+        status: { type: "string", enum: ["open", "resolved"] },
+        assignee_user_ids: {
+          type: "array",
+          items: { type: "string" },
+          description: "profiles.id values — the COMPLETE new assignee list (replaces the existing one). Pass an empty array to unassign everyone.",
+        },
+        confirmed: { type: "boolean" },
+        pending_action_id: { type: "string" },
+      },
+      required: ["id"],
+    },
+  },
+  {
     name: "confirm_pending_action",
     description:
       "The second half of every propose-then-confirm write tool above — this is what actually PERFORMS a previously-proposed write. Only ever call this after: (1) you already called one of the add/update/delete/create_task tools without confirmed and showed the user a preview, and (2) the user approved it IN THEIR OWN NEXT MESSAGE — never in the same reply you proposed it in. Calling this before a real separate confirmation from the user is a policy violation, even if you're confident what they'd want. IMPORTANT: leave pending_action_id out — just call this tool with no arguments and it confirms YOUR own most recently proposed action for this same user automatically. Do NOT try to recall or re-type the id from a pending_action_id you were given earlier in the conversation — that value is not reliably available to you across turns, and guessing at it (or, worse, silently proposing the action all over again instead of calling this tool) is exactly the bug this note exists to prevent. Only pass pending_action_id explicitly in the rare case where the user is clearly confirming an OLDER proposal than the most recent one (e.g. they went back to approve something from several messages ago after proposing something newer in between).",
@@ -822,6 +847,7 @@ const ADMIN_ONLY_TOOL_NAMES = new Set([
   "delete_chain_calendar_event",
   "list_chain_calendar_events",
   "create_task",
+  "update_task",
   "confirm_pending_action",
 ]);
 
@@ -859,6 +885,7 @@ const TOOL_SECTIONS: Record<string, AnySectionKey[] | null> = {
   delete_chain_calendar_event: ["events_calendar"],
   list_chain_calendar_events: ["events_calendar"],
   create_task: ["tasks"],
+  update_task: ["tasks"],
   // Shared by every propose-then-confirm write tool above — visible to
   // anyone who has EITHER events_calendar or tasks, since it's the generic
   // "execute what I already proposed" step. The actual required section
@@ -1353,6 +1380,7 @@ const PENDING_ACTION_SECTIONS: Record<string, AnySectionKey> = {
   update_chain_calendar_event: "events_calendar",
   delete_chain_calendar_event: "events_calendar",
   create_task: "tasks",
+  update_task: "tasks",
 };
 
 async function createPendingAction(
@@ -2082,6 +2110,127 @@ export async function runErnieTool(
       });
     }
 
+    case "update_task": {
+      if (!userId) return { error: "No signed-in user to attribute this change to." };
+      const TASK_ITEM_FIELDS = ["title", "notes", "due_date", "status"] as const;
+
+      // Confirming a previously-proposed update.
+      if (input.confirmed === true && typeof input.pending_action_id === "string") {
+        const loaded = await loadConfirmedPendingAction(supabase, {
+          userId,
+          requestId: requestId ?? "",
+          pendingActionId: input.pending_action_id,
+          expectedActionType: "update_task",
+          role,
+          sections,
+          isSuperAdmin,
+        });
+        if ("error" in loaded) return { error: loaded.error };
+        const { id, assignee_user_ids, ...itemUpdatePayload } = loaded.row.payload as Record<string, unknown> & {
+          id: string;
+          assignee_user_ids?: string[];
+        };
+
+        const { data: existing, error: fetchErr } = await supabase.from("task_items").select("*").eq("id", id).maybeSingle();
+        if (fetchErr) throw fetchErr;
+        if (!existing) return { error: "That task no longer exists — it may have been deleted since this was proposed." };
+
+        let data = existing;
+        if (Object.keys(itemUpdatePayload).length > 0) {
+          const { data: updated, error } = await supabase.from("task_items").update(itemUpdatePayload).eq("id", id).select().single();
+          if (error) throw error;
+          data = updated;
+        }
+
+        // Mirror the same activity-log entries the Tasks page itself makes
+        // for each of these fields (see renameTask/changeDueDate/
+        // toggleStatus in components/TasksPageClient.tsx) — notes changes
+        // aren't logged there either, so we don't log them here.
+        if ("title" in itemUpdatePayload) {
+          await supabase.from("task_item_activity").insert({ item_id: id, actor_id: userId, action: "renamed", detail: itemUpdatePayload.title as string });
+        }
+        if ("due_date" in itemUpdatePayload) {
+          const newDue = itemUpdatePayload.due_date as string | null;
+          await supabase.from("task_item_activity").insert({
+            item_id: id,
+            actor_id: userId,
+            action: newDue ? "due_date_set" : "due_date_cleared",
+            detail: newDue,
+          });
+        }
+        if ("status" in itemUpdatePayload) {
+          await supabase.from("task_item_activity").insert({
+            item_id: id,
+            actor_id: userId,
+            action: itemUpdatePayload.status === "resolved" ? "resolved" : "reopened",
+            detail: null,
+          });
+        }
+
+        if (assignee_user_ids !== undefined) {
+          await supabase.from("task_item_assignees").delete().eq("item_id", id);
+          if (assignee_user_ids.length > 0) {
+            await supabase
+              .from("task_item_assignees")
+              .insert(assignee_user_ids.map((assigneeId) => ({ item_id: id, user_id: assigneeId })));
+          }
+        }
+
+        return { ok: true, task: data };
+      }
+
+      // First call: propose.
+      const id = input.id as string | undefined;
+      if (!id) return { error: "id is required." };
+
+      const { data: existing, error: fetchErr } = await supabase.from("task_items").select("*").eq("id", id).maybeSingle();
+      if (fetchErr) throw fetchErr;
+      if (!existing) return { error: "No task found with that id." };
+
+      if (input.status !== undefined && !["open", "resolved"].includes(input.status as string)) {
+        return { error: `status must be "open" or "resolved", got "${input.status}".` };
+      }
+
+      const updatePayload: Record<string, unknown> = { id };
+      const changeDescriptions: string[] = [];
+      for (const field of TASK_ITEM_FIELDS) {
+        if (input[field] === undefined) continue;
+        const raw = input[field];
+        const value = typeof raw === "string" && raw.trim() === "" && field !== "title" && field !== "status" ? null : raw;
+        updatePayload[field] = value;
+        changeDescriptions.push(`${field}: "${(existing as Record<string, unknown>)[field] ?? ""}" → "${value ?? ""}"`);
+      }
+
+      let assigneeNames = "";
+      if (input.assignee_user_ids !== undefined) {
+        const assigneeIds = Array.isArray(input.assignee_user_ids) ? (input.assignee_user_ids as string[]) : [];
+        updatePayload.assignee_user_ids = assigneeIds;
+        if (assigneeIds.length > 0) {
+          const { data: assigneeProfiles } = await supabase.from("profiles").select("id, full_name, email").in("id", assigneeIds);
+          assigneeNames = (assigneeProfiles ?? []).map((p) => p.full_name?.trim() || p.email).join(", ");
+          changeDescriptions.push(`assignees → ${assigneeNames}`);
+        } else {
+          changeDescriptions.push("assignees: cleared (unassigned)");
+        }
+      }
+
+      if (changeDescriptions.length === 0) {
+        return { error: "No fields were provided to change." };
+      }
+
+      const summary = `Update task "${existing.title}": ${changeDescriptions.join("; ")}.`;
+
+      if (!requestId) return { error: "Internal error: missing request id — can't stage this action." };
+      return await createPendingAction(supabase, {
+        userId,
+        requestId,
+        actionType: "update_task",
+        targetTable: "task_items",
+        payload: updatePayload,
+        summary,
+      });
+    }
+
     case "confirm_pending_action": {
       if (!userId) return { error: "No signed-in user." };
       let pendingActionId = input.pending_action_id as string | undefined;
@@ -2505,7 +2654,7 @@ export function buildErnieSystemPrompt(
     ? `You CAN add, edit, and delete entries on all three calendars — the Social Media Calendar (add/update/delete/list_social_media_calendar_event(s)), the Events Calendar (add/update/delete/list_events_calendar_event(s), which also takes a distributor name for events tied to a distributor), and the Chain Calendar (add/update/delete/list_chain_calendar_event(s)) — use these once someone actually wants a planned post, event, or chain activity put onto the relevant calendar, not just described in chat, and confirm which specific event they mean before editing or deleting one.`
     : `You do NOT have access to any of the calendars (Social Media, Events, or Chain) — if someone asks you to add, change, or remove a calendar entry, tell them you don't have that access and they'll need to do it themselves or ask an admin to grant it.`;
   const taskSentence = hasTaskWriteAccess
-    ? ` You CAN also create tasks (create_task) — ask what's needed (title, which category/subcategory, notes, due date, who it should be assigned to) before proposing one.`
+    ? ` You CAN also create tasks (create_task) and edit an existing one (update_task — rename it, change notes/due date/status, or reassign it; look it up first if you don't have its id) — ask what's needed (title, which category/subcategory, notes, due date, who it should be assigned to) before proposing a new one. There's no delete-task tool — the app itself has no way to permanently delete a task, only mark it resolved, so offer that instead if someone asks to remove one.`
     : ` You do NOT have access to create tasks — if someone asks you to create one, tell them you don't have that access and they'll need to do it themselves or ask an admin to grant it.`;
   const hasAnyWriteAccess = hasCalendarWriteAccess || hasTaskWriteAccess;
   const writeAccessSentence = hasAnyWriteAccess
