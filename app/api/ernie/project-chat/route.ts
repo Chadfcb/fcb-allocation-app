@@ -19,20 +19,31 @@ import { firstNameFor } from "@/lib/displayName";
 //                          this to Projects the caller actually has access
 //                          to; a stale/foreign id just comes back empty).
 // POST { projectId, message, fileIds? } — posts the caller's message, then
-//                          decides whether Ernie should reply and, if so,
-//                          posts his reply too, in the SAME room, as its own
-//                          message row. Both inserts show up for every open
-//                          tab in the Project via Realtime — this route
-//                          doesn't stream anything back itself.
+//                          runs a cheap, tool-free "should I reply?" check
+//                          before doing anything else. Only if that comes
+//                          back yes does this go on to run the full
+//                          tool-use loop and post Ernie's reply.
+//
+//                          Streamed as Server-Sent Events specifically so
+//                          the room can show "Ernie is thinking…" only once
+//                          it's actually true — per Chad (2026-09-11): "lets
+//                          have that not show there, unless he is asked
+//                          something, or he is going to respond." A
+//                          "will_reply" event fires the moment the decide
+//                          step comes back yes (before the slower tool loop
+//                          even starts); if the decide step says no, only a
+//                          "done" event (ernieReplied: false) ever fires, so
+//                          the room never shows a thinking indicator for
+//                          ordinary back-and-forth Ernie has no reason to
+//                          join. Ernie's own reply (if any) still shows up
+//                          for everyone via the Realtime subscription on
+//                          ernie_project_messages, same as before — this
+//                          stream is purely a live status signal for
+//                          whoever's tab sent the triggering message.
 
 const ANTHROPIC_MODEL = "claude-sonnet-5";
 const MAX_TOOL_ROUNDS = 8;
 const MAX_HISTORY_MESSAGES = 40;
-
-// Ernie is told to answer with exactly this token, and nothing else, when he
-// judges the room doesn't need him to speak up right now. Anything else he
-// returns is posted as a real message.
-const NO_REPLY_SENTINEL = "NO_REPLY";
 
 const WEB_SEARCH_TOOL = { type: "web_search_20250305", name: "web_search", max_uses: 5 };
 const WEB_FETCH_TOOL = {
@@ -153,183 +164,255 @@ export async function POST(req: NextRequest) {
   });
   if (insertUserErr) return NextResponse.json({ error: insertUserErr.message }, { status: 500 });
 
-  // Recent room history for Ernie's context — capped so a long-running
-  // Project's room doesn't grow this call unbounded. Each line is labeled
-  // with the real sender's name so Ernie can actually follow who said what,
-  // the way a person reading the room would.
-  const { data: historyRows, error: historyErr } = await supabase
-    .from("ernie_project_messages")
-    .select("sender_name, role, content, created_at")
-    .eq("project_id", projectId)
-    .order("created_at", { ascending: false })
-    .limit(MAX_HISTORY_MESSAGES);
-  if (historyErr) return NextResponse.json({ error: historyErr.message }, { status: 500 });
+  const encoder = new TextEncoder();
 
-  const orderedHistory = [...(historyRows ?? [])].reverse();
-  const transcript = orderedHistory
-    .map((m) => `${m.role === "ernie" ? "Ernie" : m.sender_name}: ${m.content || "(no text — attached a file)"}`)
-    .join("\n");
+  const stream = new ReadableStream({
+    async start(controller) {
+      function send(event: Record<string, unknown>) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+      }
 
-  // Personal notes aren't a thing here (this is a shared room, not any one
-  // person's private conversation) — buildErnieSystemPrompt's personNotes
-  // stays null on purpose.
-  const groupChatSystemPrompt = `\n\nYou're reading a live, shared team chat room inside the Ernie Project "${project.name}"${
-    project.description ? ` — ${project.description}` : ""
-  }. Multiple people can post here, each message labeled with their real name; you (Ernie) are effectively one more participant in the room, not a 1:1 assistant. It has its own file library, separate from anyone's directly-uploaded files: query ernie_project_files (id, project_id, file_name, storage_path, description, mime_type, size_bytes, added_by, created_at) via run_read_only_query, filtered to project_id = '${project.id}', to see what's in it — read the whole table for this project rather than guessing a filter, since it's small. Use get_file_for_download (bucket "ernie-project-files") to hand one of those files over as a download.
+      try {
+        // Recent room history for Ernie's context — capped so a long-running
+        // Project's room doesn't grow this call unbounded. Each line is
+        // labeled with the real sender's name so Ernie can actually follow
+        // who said what, the way a person reading the room would.
+        const { data: historyRows, error: historyErr } = await supabase
+          .from("ernie_project_messages")
+          .select("sender_name, role, content, created_at")
+          .eq("project_id", projectId)
+          .order("created_at", { ascending: false })
+          .limit(MAX_HISTORY_MESSAGES);
+        if (historyErr) throw historyErr;
+
+        const orderedHistory = [...(historyRows ?? [])].reverse();
+        const transcript = orderedHistory
+          .map((m) => `${m.role === "ernie" ? "Ernie" : m.sender_name}: ${m.content || "(no text — attached a file)"}`)
+          .join("\n");
+
+        const roomContext = `You're reading a live, shared team chat room inside the Ernie Project "${project.name}"${
+          project.description ? ` — ${project.description}` : ""
+        }. Multiple people can post here, each message labeled with their real name; you (Ernie) are effectively one more participant in the room, not a 1:1 assistant.
 
 Here is the recent conversation, oldest first:
 ${transcript}
 
-Decide for yourself whether to say anything right now, the way a team member reading this channel would — most ordinary back-and-forth between people doesn't need your input, and jumping in on everything would be annoying. Reply only when you have something genuinely useful to add, are clearly being asked something you can help with, or are directly addressed by name. Decide this BEFORE calling any tools — if you're not going to reply, don't call any tools either.
+The message that was just posted, from ${senderName}${
+          messageText ? `: "${messageText}"` : " — no text, just attached file(s)"
+        }.`;
 
-If you decide NOT to say anything right now, respond with exactly this and nothing else: ${NO_REPLY_SENTINEL}
+        // --- Phase 1: decide, cheaply and without tools, whether Ernie ----
+        // should say anything at all. This is what lets the room stay quiet
+        // (no "Ernie is thinking…" shown to anyone) for the ordinary
+        // back-and-forth most messages are — the client only ever sees a
+        // "will_reply" event, below, once this comes back yes.
+        const decisionRes = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-api-key": process.env.ANTHROPIC_API_KEY!,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: ANTHROPIC_MODEL,
+            max_tokens: 5,
+            system: `${roomContext}\n\nDecide only whether YOU (Ernie) should reply to the message that was just posted, the way a team member reading this channel would — most ordinary back-and-forth between people doesn't need your input, and jumping in on everything would be annoying. Reply only when you have something genuinely useful to add, are clearly being asked something you can help with, or are directly addressed by name. Answer with exactly one word and nothing else: YES or NO.`,
+            messages: [{ role: "user", content: "YES or NO?" }],
+          }),
+        });
+        if (!decisionRes.ok) {
+          const detail = await decisionRes.text();
+          throw new Error(`Ernie's backend returned an error (${decisionRes.status}): ${detail}`);
+        }
+        const decisionData = await decisionRes.json();
+        const decisionText = (decisionData.content ?? [])
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shape
+          .filter((b: any) => b.type === "text")
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shape
+          .map((b: any) => b.text)
+          .join("")
+          .trim()
+          .toUpperCase();
+        const willReply = decisionText.startsWith("YES");
 
-Otherwise, just write your reply as you normally would — it will be posted into the room under your name, so don't prefix it with "Ernie:" or address anyone by way of a greeting unless that's natural for the reply itself.`;
+        if (!willReply) {
+          send({ type: "done", ernieReplied: false });
+          return;
+        }
 
-  let fileRows: ErnieFileRow[] = [];
-  if (fileIds.length > 0) {
-    const { data: filesData } = await supabase
-      .from("ernie_files")
-      .select("id, file_name, mime_type, size_bytes, storage_path")
-      .in("id", fileIds);
-    fileRows = filesData ?? [];
-  }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shape varies (text/image/document)
-  const triggeringMessageBlocks: any[] = [];
-  for (const file of fileRows) {
-    triggeringMessageBlocks.push(...(await buildFileContentBlocks(supabase, file)));
-  }
-  triggeringMessageBlocks.push({
-    type: "text",
-    text:
-      "(The message that was just posted, from " +
-      senderName +
-      (messageText ? `: "${messageText}"` : " — no text, just the attached file(s) above") +
-      ". Decide whether to reply, per the instructions above.)",
+        // Client starts showing "Ernie is thinking…" from here on — only
+        // now that it's actually true.
+        send({ type: "will_reply" });
+
+        // --- Phase 2: the real reply, with tools, same loop the general --
+        // chat route uses.
+        let fileRows: ErnieFileRow[] = [];
+        if (fileIds.length > 0) {
+          const { data: filesData } = await supabase
+            .from("ernie_files")
+            .select("id, file_name, mime_type, size_bytes, storage_path")
+            .in("id", fileIds);
+          fileRows = filesData ?? [];
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shape varies (text/image/document)
+        const triggeringMessageBlocks: any[] = [];
+        for (const file of fileRows) {
+          triggeringMessageBlocks.push(...(await buildFileContentBlocks(supabase, file)));
+        }
+        triggeringMessageBlocks.push({
+          type: "text",
+          text: "Write your reply now, using tools as needed — it'll be posted into the room under your name, so don't prefix it with \"Ernie:\" or add an unnecessary greeting.",
+        });
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic message content shape varies across the tool-use loop
+        const anthropicMessages: any[] = [{ role: "user", content: triggeringMessageBlocks }];
+
+        // Project files addendum — not needed for the cheap decide step
+        // above, only once Ernie is actually going to look things up.
+        const projectFilesPrompt = ` It has its own file library, separate from anyone's directly-uploaded files: query ernie_project_files (id, project_id, file_name, storage_path, description, mime_type, size_bytes, added_by, created_at) via run_read_only_query, filtered to project_id = '${project.id}', to see what's in it — read the whole table for this project rather than guessing a filter, since it's small. Use get_file_for_download (bucket "ernie-project-files") to hand one of those files over as a download.`;
+
+        let finalText = "";
+        const outputFileIds: string[] = [];
+        // A dummy id — runErnieTool's currentConversationId param only ever
+        // uses this to exclude "the conversation this came from" from a
+        // cross-conversation search tool; there's no ernie_conversations row
+        // for a Project room message, so there's nothing to exclude.
+        const noConversationId = undefined;
+
+        for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+          const isLastRound = round === MAX_TOOL_ROUNDS - 1;
+
+          const res = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-api-key": process.env.ANTHROPIC_API_KEY!,
+              "anthropic-version": "2023-06-01",
+            },
+            body: JSON.stringify({
+              model: ANTHROPIC_MODEL,
+              max_tokens: 2048,
+              system: buildErnieSystemPrompt(role, sections, isSuperAdmin, null) + `\n\n${roomContext}${projectFilesPrompt}`,
+              tools: [...getErnieTools(role, sections, isSuperAdmin), WEB_SEARCH_TOOL, WEB_FETCH_TOOL, CODE_EXECUTION_TOOL],
+              ...(isLastRound ? { tool_choice: { type: "none" } } : {}),
+              messages: anthropicMessages,
+            }),
+          });
+
+          if (!res.ok) {
+            const detail = await res.text();
+            throw new Error(`Ernie's backend returned an error (${res.status}): ${detail}`);
+          }
+
+          const data = await res.json();
+          const content = data.content ?? [];
+
+          for (const block of content) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shape varies
+            const b = block as any;
+            if (b.type === "server_tool_use" && b.name === "web_fetch") {
+              // No ernie_conversations row exists for a Project room message
+              // — logErnieToolExecution's conversation_id column references
+              // that table, so this is left null rather than passing
+              // projectId (which would just fail that foreign key and get
+              // silently swallowed).
+              await logErnieToolExecution(supabase, user.id, undefined, "web_fetch", { url: b.input?.url });
+            }
+            if (b.type === "server_tool_use" && (b.name === "bash_code_execution" || b.name === "text_editor_code_execution")) {
+              await logErnieToolExecution(supabase, user.id, undefined, b.name, b.input ?? {});
+            }
+            if (b.type === "bash_code_execution_tool_result") {
+              const result = b.content;
+              const files = result?.type === "bash_code_execution_result" ? result.content ?? [] : [];
+              for (const f of files) {
+                if (!f?.file_id) continue;
+                try {
+                  const captured = await captureCodeExecutionFile(supabase, user.id, f.file_id);
+                  outputFileIds.push(captured.id);
+                } catch {
+                  // A file the sandbox produced couldn't be captured —
+                  // Ernie's text reply still comes through; that file just
+                  // won't show up.
+                }
+              }
+            }
+          }
+
+          if (data.stop_reason === "tool_use") {
+            anthropicMessages.push({ role: "assistant", content });
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic tool_result content shape
+            const toolResults: any[] = [];
+            for (const block of content) {
+              if (block.type !== "tool_use") continue;
+              let result: unknown;
+              try {
+                result = await runErnieTool(supabase, block.name, block.input ?? {}, role, sections, noConversationId, isSuperAdmin, user.id);
+              } catch (toolErr) {
+                result = { error: toolErr instanceof Error ? toolErr.message : "Tool lookup failed" };
+              }
+              if (
+                (block.name === "edit_spreadsheet" ||
+                  block.name === "get_file_for_download" ||
+                  block.name === "export_pricing_data_as_spreadsheet" ||
+                  block.name === "fetch_url_as_file") &&
+                result &&
+                typeof result === "object" &&
+                "id" in result &&
+                typeof (result as { id: unknown }).id === "string"
+              ) {
+                outputFileIds.push((result as { id: string }).id);
+              }
+              toolResults.push({ type: "tool_result", tool_use_id: block.id, content: JSON.stringify(result) });
+            }
+            anthropicMessages.push({ role: "user", content: toolResults });
+            continue;
+          }
+
+          finalText = content
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shape
+            .filter((b: any) => b.type === "text")
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shape
+            .map((b: any) => b.text)
+            .join("\n")
+            .trim();
+          break;
+        }
+
+        // Phase 1 already decided Ernie should reply — an empty result here
+        // would just be the model failing to produce text despite that
+        // (e.g. burning every round on tool calls). Falls back to a plain
+        // message rather than silently posting nothing after the room was
+        // already told to expect a reply.
+        if (!finalText) {
+          finalText = "I wasn't able to put together a reply for that — try asking again.";
+        }
+
+        const { error: insertErnieErr } = await supabase.from("ernie_project_messages").insert({
+          project_id: projectId,
+          sender_id: null,
+          sender_name: "Ernie",
+          role: "ernie",
+          content: finalText,
+          file_ids: outputFileIds,
+        });
+        if (insertErnieErr) throw insertErnieErr;
+
+        send({ type: "done", ernieReplied: true });
+      } catch (err) {
+        send({ type: "error", error: err instanceof Error ? err.message : "Unexpected server error talking to Ernie" });
+      } finally {
+        controller.close();
+      }
+    },
   });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic message content shape varies across the tool-use loop
-  const anthropicMessages: any[] = [{ role: "user", content: triggeringMessageBlocks }];
-
-  let finalText = "";
-  const outputFileIds: string[] = [];
-  // A dummy id — runErnieTool's currentConversationId param only ever uses
-  // this to exclude "the conversation this came from" from a cross-
-  // conversation search tool; there's no ernie_conversations row for a
-  // Project room message, so there's nothing to exclude.
-  const noConversationId = undefined;
-
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const isLastRound = round === MAX_TOOL_ROUNDS - 1;
-
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY!,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: ANTHROPIC_MODEL,
-        max_tokens: 2048,
-        system: buildErnieSystemPrompt(role, sections, isSuperAdmin, null) + groupChatSystemPrompt,
-        tools: [...getErnieTools(role, sections, isSuperAdmin), WEB_SEARCH_TOOL, WEB_FETCH_TOOL, CODE_EXECUTION_TOOL],
-        ...(isLastRound ? { tool_choice: { type: "none" } } : {}),
-        messages: anthropicMessages,
-      }),
-    });
-
-    if (!res.ok) {
-      const detail = await res.text();
-      throw new Error(`Ernie's backend returned an error (${res.status}): ${detail}`);
-    }
-
-    const data = await res.json();
-    const content = data.content ?? [];
-
-    for (const block of content) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shape varies
-      const b = block as any;
-      if (b.type === "server_tool_use" && b.name === "web_fetch") {
-        // No ernie_conversations row exists for a Project room message —
-        // logErnieToolExecution's conversation_id column references that
-        // table, so this is left null rather than passing projectId (which
-        // would just fail that foreign key and get silently swallowed).
-        await logErnieToolExecution(supabase, user.id, undefined, "web_fetch", { url: b.input?.url });
-      }
-      if (b.type === "server_tool_use" && (b.name === "bash_code_execution" || b.name === "text_editor_code_execution")) {
-        await logErnieToolExecution(supabase, user.id, undefined, b.name, b.input ?? {});
-      }
-      if (b.type === "bash_code_execution_tool_result") {
-        const result = b.content;
-        const files = result?.type === "bash_code_execution_result" ? result.content ?? [] : [];
-        for (const f of files) {
-          if (!f?.file_id) continue;
-          try {
-            const captured = await captureCodeExecutionFile(supabase, user.id, f.file_id);
-            outputFileIds.push(captured.id);
-          } catch {
-            // A file the sandbox produced couldn't be captured — Ernie's
-            // text reply still comes through; that file just won't show up.
-          }
-        }
-      }
-    }
-
-    if (data.stop_reason === "tool_use") {
-      anthropicMessages.push({ role: "assistant", content });
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic tool_result content shape
-      const toolResults: any[] = [];
-      for (const block of content) {
-        if (block.type !== "tool_use") continue;
-        let result: unknown;
-        try {
-          result = await runErnieTool(supabase, block.name, block.input ?? {}, role, sections, noConversationId, isSuperAdmin, user.id);
-        } catch (toolErr) {
-          result = { error: toolErr instanceof Error ? toolErr.message : "Tool lookup failed" };
-        }
-        if (
-          (block.name === "edit_spreadsheet" ||
-            block.name === "get_file_for_download" ||
-            block.name === "export_pricing_data_as_spreadsheet" ||
-            block.name === "fetch_url_as_file") &&
-          result &&
-          typeof result === "object" &&
-          "id" in result &&
-          typeof (result as { id: unknown }).id === "string"
-        ) {
-          outputFileIds.push((result as { id: string }).id);
-        }
-        toolResults.push({ type: "tool_result", tool_use_id: block.id, content: JSON.stringify(result) });
-      }
-      anthropicMessages.push({ role: "user", content: toolResults });
-      continue;
-    }
-
-    finalText = content
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shape
-      .filter((b: any) => b.type === "text")
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shape
-      .map((b: any) => b.text)
-      .join("\n")
-      .trim();
-    break;
-  }
-
-  const staysSilent = !finalText || finalText.trim().toUpperCase() === NO_REPLY_SENTINEL;
-
-  if (!staysSilent) {
-    const { error: insertErnieErr } = await supabase.from("ernie_project_messages").insert({
-      project_id: projectId,
-      sender_id: null,
-      sender_name: "Ernie",
-      role: "ernie",
-      content: finalText,
-      file_ids: outputFileIds,
-    });
-    if (insertErnieErr) return NextResponse.json({ error: insertErnieErr.message }, { status: 500 });
-  }
-
-  return NextResponse.json({ ok: true, ernieReplied: !staysSilent });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }

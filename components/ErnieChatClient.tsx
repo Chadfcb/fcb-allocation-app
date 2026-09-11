@@ -242,6 +242,13 @@ export default function ErnieChatClient({
   // allocations"), driven by status events streamed from /api/ernie/chat —
   // purely a live UI thing, never persisted with the conversation.
   const [statusLabel, setStatusLabel] = useState<string | null>(null);
+  // Project-room-only equivalent of the "Ernie is thinking…" indicator
+  // below — General chat still just uses `loading` (every message there
+  // gets a reply). In a Project's shared room, most messages don't need
+  // Ernie at all, so this only flips true once the server's cheap "should I
+  // reply?" check comes back yes (see send()'s "will_reply" SSE event) —
+  // never just because a message was posted.
+  const [ernieThinking, setErnieThinking] = useState(false);
   const [initializing, setInitializing] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -337,7 +344,7 @@ export default function ErnieChatClient({
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+  }, [messages, loading, ernieThinking]);
 
   useLayoutEffect(() => {
     function updateHeight() {
@@ -1069,13 +1076,57 @@ export default function ErnieChatClient({
             fileIds: filesForThisMessage.map((f) => f.id),
           }),
         });
-        if (!res.ok) {
+
+        const isStream = (res.headers.get("content-type") ?? "").includes("text/event-stream");
+        if (!res.ok || !isStream || !res.body) {
           const data = await res.json().catch(() => ({}) as { error?: string });
           setError(data.error ?? "Something went wrong posting that.");
+          return;
+        }
+
+        // Per Chad (2026-09-11): don't show "Ernie is thinking…" in a
+        // Project's room unless he's actually about to respond. The server
+        // runs a cheap "should I reply?" check before anything else and
+        // only ever sends "will_reply" once that comes back yes — an
+        // ordinary message nobody's asking Ernie about just gets "done"
+        // (ernieReplied: false) with no thinking indicator ever shown.
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          let separatorIndex: number;
+          while ((separatorIndex = buffer.indexOf("\n\n")) !== -1) {
+            const rawEvent = buffer.slice(0, separatorIndex);
+            buffer = buffer.slice(separatorIndex + 2);
+            const dataLine = rawEvent.split("\n").find((line) => line.startsWith("data: "));
+            if (!dataLine) continue;
+
+            let event: { type?: string; error?: string };
+            try {
+              event = JSON.parse(dataLine.slice("data: ".length));
+            } catch {
+              continue;
+            }
+
+            if (event.type === "will_reply") {
+              setErnieThinking(true);
+            } else if (event.type === "done") {
+              setErnieThinking(false);
+            } else if (event.type === "error") {
+              setErnieThinking(false);
+              setError(event.error ?? "Something went wrong posting that.");
+            }
+          }
         }
       } catch {
         setError("Couldn't reach Ernie — check your connection and try again.");
       } finally {
+        setErnieThinking(false);
         setLoading(false);
       }
       return;
@@ -1778,7 +1829,14 @@ export default function ErnieChatClient({
               });
             })()}
 
-          {loading && (
+          {/* Outside a Project, every message gets a reply, so `loading`
+              alone is the right signal. Inside a Project's shared room, per
+              Chad, this should only show once Ernie has actually decided to
+              reply — `ernieThinking` (set from the "will_reply" SSE event in
+              send()) is what tracks that; `loading` there just covers the
+              brief "posting your message" window and shouldn't put up a
+              thinking indicator for every message that goes by. */}
+          {(activeProject ? ernieThinking : loading) && (
             <div className="flex items-center gap-3">
               {/* eslint-disable-next-line @next/next/no-img-element -- plain img keeps gif animation intact, and lets the src swap between the static frame and the animated gif */}
               <img src="/ernie/thinking.gif" alt="" className="h-[52px] w-[52px] shrink-0 object-contain" />
