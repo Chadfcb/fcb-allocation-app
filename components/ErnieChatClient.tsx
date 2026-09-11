@@ -1462,57 +1462,6 @@ export default function ErnieChatClient({
           </div>
         )}
 
-        {createProjectOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-            <div className="w-full max-w-md rounded-xl border border-[#262c1f] bg-[#12150e] p-5 shadow-xl">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="font-[family-name:var(--font-archivo)] text-base font-bold text-[#eef1e9]">
-                  New Ernie Project
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => setCreateProjectOpen(false)}
-                  className="text-[#8a9282] hover:text-[#eef1e9]"
-                  aria-label="Close"
-                >
-                  ✕
-                </button>
-              </div>
-              <label className="mb-1 block font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#8a9282]">
-                Name
-              </label>
-              <input
-                type="text"
-                value={newProjectName}
-                onChange={(e) => setNewProjectName(e.target.value)}
-                placeholder="e.g. 2027 Distributor Contracts"
-                className="mb-3 w-full rounded-lg border border-[#262c1f] bg-[#181c13] p-2.5 font-[family-name:var(--font-plex-sans)] text-sm text-[#eef1e9] outline-none focus:border-[#6ABC46]/50"
-              />
-              <label className="mb-1 block font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#8a9282]">
-                Description (optional)
-              </label>
-              <textarea
-                value={newProjectDescription}
-                onChange={(e) => setNewProjectDescription(e.target.value)}
-                rows={3}
-                placeholder="What this Project is for — helps Ernie use its files well."
-                className="mb-3 w-full resize-none rounded-lg border border-[#262c1f] bg-[#181c13] p-2.5 font-[family-name:var(--font-plex-sans)] text-sm text-[#eef1e9] outline-none focus:border-[#6ABC46]/50"
-              />
-              {createProjectError && <p className="mb-2 text-xs text-red-400">{createProjectError}</p>}
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  onClick={createProject}
-                  disabled={creatingProject}
-                  className="rounded-full bg-[#6ABC46] px-4 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-semibold text-[#12150e] transition-opacity hover:opacity-90 disabled:opacity-50"
-                >
-                  {creatingProject ? "Creating…" : "Create Project"}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
         {manageAccessOpen && activeProject && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
             <div className="flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-[#262c1f] bg-[#12150e] p-5 shadow-xl">
@@ -1558,67 +1507,6 @@ export default function ErnieChatClient({
                         </span>
                       </span>
                     </label>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {completedOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-            <div className="flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-[#262c1f] bg-[#12150e] p-5 shadow-xl">
-              <div className="mb-1 flex items-center justify-between">
-                <h2 className="font-[family-name:var(--font-archivo)] text-base font-bold text-[#eef1e9]">
-                  Completed Projects
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => setCompletedOpen(false)}
-                  className="text-[#8a9282] hover:text-[#eef1e9]"
-                  aria-label="Close"
-                >
-                  ✕
-                </button>
-              </div>
-              <p className="mb-3 font-[family-name:var(--font-plex-sans)] text-xs text-[#8a9282]">
-                Closed Projects — reopen one to bring it back to the active tab row, or delete it for good.
-              </p>
-              {projectActionError && <p className="mb-2 text-xs text-red-400">{projectActionError}</p>}
-              <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
-                {completedLoading ? (
-                  <p className="py-6 text-center text-sm text-[#8a9282]">Loading…</p>
-                ) : completedProjects.length === 0 ? (
-                  <p className="py-6 text-center text-sm text-[#8a9282]">No completed Projects.</p>
-                ) : (
-                  completedProjects.map((p) => (
-                    <div
-                      key={p.id}
-                      className="flex items-center justify-between gap-2 rounded-lg border border-[#262c1f] bg-[#181c13] px-3 py-2.5"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm text-[#eef1e9]">{p.name}</p>
-                        {p.description && <p className="truncate text-xs text-[#8f9885]">{p.description}</p>}
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => reopenProject(p.id)}
-                          disabled={projectActionBusyId === p.id}
-                          className="rounded-full border border-[#262c1f] bg-[#12150e] px-2.5 py-1 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] hover:border-[#6ABC46]/50 hover:text-[#7fce5c] disabled:opacity-50"
-                        >
-                          {projectActionBusyId === p.id ? "…" : "Reopen"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => deleteProjectForever(p)}
-                          disabled={projectActionBusyId === p.id}
-                          className="rounded-full border border-red-900/50 bg-[#12150e] px-2.5 py-1 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-red-400 hover:border-red-500/60 hover:text-red-300 disabled:opacity-50"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
                   ))
                 )}
               </div>
@@ -1807,6 +1695,133 @@ export default function ErnieChatClient({
       </div>
       )}
         </>
+      )}
+
+      {/* Fixed 2026-09-11, per Chad ("clicking the new project button in
+          Ernie Ai doesnt do anything at all") — both of these modals used
+          to live inside the {mode === "projects" && !activeProject ? ... :
+          (<>...</>)} branch above, alongside the rest of the chat UI. That
+          branch only renders its "else" (the <>...</> fragment) when a
+          Project is already active — so with no Project selected yet
+          (exactly when someone would click "+ New Project" for the first
+          time, or open "Completed Projects" before picking one), the
+          fragment containing these modals was never mounted at all. The
+          buttons that open them (both mode === "projects" only, see above)
+          still worked and set the state, but there was nothing in the DOM
+          for that state to render into, so nothing visibly happened.
+          Moving them here — as permanent siblings of that branch, always
+          mounted whenever this component is — means they open regardless
+          of whether a Project happens to be selected. */}
+      {createProjectOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-md rounded-xl border border-[#262c1f] bg-[#12150e] p-5 shadow-xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="font-[family-name:var(--font-archivo)] text-base font-bold text-[#eef1e9]">
+                New Ernie Project
+              </h2>
+              <button
+                type="button"
+                onClick={() => setCreateProjectOpen(false)}
+                className="text-[#8a9282] hover:text-[#eef1e9]"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <label className="mb-1 block font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#8a9282]">
+              Name
+            </label>
+            <input
+              type="text"
+              value={newProjectName}
+              onChange={(e) => setNewProjectName(e.target.value)}
+              placeholder="e.g. 2027 Distributor Contracts"
+              className="mb-3 w-full rounded-lg border border-[#262c1f] bg-[#181c13] p-2.5 font-[family-name:var(--font-plex-sans)] text-sm text-[#eef1e9] outline-none focus:border-[#6ABC46]/50"
+            />
+            <label className="mb-1 block font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#8a9282]">
+              Description (optional)
+            </label>
+            <textarea
+              value={newProjectDescription}
+              onChange={(e) => setNewProjectDescription(e.target.value)}
+              rows={3}
+              placeholder="What this Project is for — helps Ernie use its files well."
+              className="mb-3 w-full resize-none rounded-lg border border-[#262c1f] bg-[#181c13] p-2.5 font-[family-name:var(--font-plex-sans)] text-sm text-[#eef1e9] outline-none focus:border-[#6ABC46]/50"
+            />
+            {createProjectError && <p className="mb-2 text-xs text-red-400">{createProjectError}</p>}
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={createProject}
+                disabled={creatingProject}
+                className="rounded-full bg-[#6ABC46] px-4 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-semibold text-[#12150e] transition-opacity hover:opacity-90 disabled:opacity-50"
+              >
+                {creatingProject ? "Creating…" : "Create Project"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {completedOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-[#262c1f] bg-[#12150e] p-5 shadow-xl">
+            <div className="mb-1 flex items-center justify-between">
+              <h2 className="font-[family-name:var(--font-archivo)] text-base font-bold text-[#eef1e9]">
+                Completed Projects
+              </h2>
+              <button
+                type="button"
+                onClick={() => setCompletedOpen(false)}
+                className="text-[#8a9282] hover:text-[#eef1e9]"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="mb-3 font-[family-name:var(--font-plex-sans)] text-xs text-[#8a9282]">
+              Closed Projects — reopen one to bring it back to the active tab row, or delete it for good.
+            </p>
+            {projectActionError && <p className="mb-2 text-xs text-red-400">{projectActionError}</p>}
+            <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
+              {completedLoading ? (
+                <p className="py-6 text-center text-sm text-[#8a9282]">Loading…</p>
+              ) : completedProjects.length === 0 ? (
+                <p className="py-6 text-center text-sm text-[#8a9282]">No completed Projects.</p>
+              ) : (
+                completedProjects.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-[#262c1f] bg-[#181c13] px-3 py-2.5"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm text-[#eef1e9]">{p.name}</p>
+                      {p.description && <p className="truncate text-xs text-[#8f9885]">{p.description}</p>}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => reopenProject(p.id)}
+                        disabled={projectActionBusyId === p.id}
+                        className="rounded-full border border-[#262c1f] bg-[#12150e] px-2.5 py-1 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] hover:border-[#6ABC46]/50 hover:text-[#7fce5c] disabled:opacity-50"
+                      >
+                        {projectActionBusyId === p.id ? "…" : "Reopen"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteProjectForever(p)}
+                        disabled={projectActionBusyId === p.id}
+                        className="rounded-full border border-red-900/50 bg-[#12150e] px-2.5 py-1 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-red-400 hover:border-red-500/60 hover:text-red-300 disabled:opacity-50"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
     </div>
