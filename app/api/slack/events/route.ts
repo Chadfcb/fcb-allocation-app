@@ -15,12 +15,16 @@ import type { Role } from "@/lib/types/db";
 //     tracked in ernie_slack_active_channels (sql/ernie_slack_active_channels.sql),
 //     the only state this route keeps.
 //   - Data access: the Slack user who triggered a reply is matched to a
-//     real FCB app account by email (Slack has no idea who's typing
-//     otherwise -- see resolveAppUser below), and Ernie gets exactly the
-//     data tools that person's app account would have, via the same
-//     getErnieTools()/hasSection() gating the main app chat uses. No match
-//     (or no Ernie access granted) -> plain chat, no data tools. Web
-//     search/fetch are always available regardless of who's asking.
+//     real FCB app account via a manual mapping table
+//     (ernie_slack_user_map / sql_ernie_slack_user_map.sql) -- NOT by email
+//     lookup through Slack's API, which turned out to return
+//     "user_not_found" for real, verified users in this workspace even with
+//     the right scopes granted (see resolveAppUser below for the full
+//     story). Ernie gets exactly the data tools that mapped person's app
+//     account would have, via the same getErnieTools()/hasSection() gating
+//     the main app chat uses. No mapping row (or no Ernie access granted)
+//     -> plain chat, no data tools. Web search/fetch are always available
+//     regardless of who's asking.
 //   - A deliberately-curated subset of Ernie's tools, not all of them --
 //     see SLACK_ALLOWED_TOOL_NAMES below for why.
 //
@@ -155,35 +159,19 @@ async function getBotIdentity() {
 }
 
 const slackDisplayNameCache = new Map<string, string>();
+// Note: Slack's users.info has proven unreliable in this workspace (returns
+// user_not_found for real, verified users even with the right scopes --
+// see resolveAppUser's comment above), so this quietly falls back to the
+// raw Slack user id as the "name" when that happens. Cosmetic only --
+// history labeling may show an id instead of a real name; doesn't affect
+// data access or Ernie's ability to reply.
 async function getSlackDisplayName(userId: string): Promise<string> {
   if (slackDisplayNameCache.has(userId)) return slackDisplayNameCache.get(userId)!;
   const data = await slackApi("users.info", { user: userId });
-  if (!data?.ok) {
-    console.error("[slack/events] users.info failed while resolving display name:", JSON.stringify(data), "for input:", JSON.stringify(userId));
-  }
   const name: string =
     data?.user?.profile?.display_name || data?.user?.profile?.real_name || data?.user?.real_name || userId;
   slackDisplayNameCache.set(userId, name);
   return name;
-}
-
-async function getSlackUserEmail(userId: string): Promise<string | null> {
-  console.error(
-    "[slack/events] getSlackUserEmail raw input:",
-    JSON.stringify(userId),
-    "length:",
-    userId.length,
-  );
-  const data = await slackApi("users.info", { user: userId });
-  if (!data?.ok) {
-    console.error("[slack/events] users.info failed while resolving email:", JSON.stringify(data));
-    return null;
-  }
-  const email = data?.user?.profile?.email ?? null;
-  if (!email) {
-    console.error("[slack/events] users.info succeeded but returned no email for user:", userId);
-  }
-  return email;
 }
 
 interface AppUser {
@@ -194,26 +182,36 @@ interface AppUser {
   personNotes: string | null;
 }
 
-// Maps the Slack user who triggered this to a real FCB app account by
-// email -- Slack tells us a Slack user id and profile, never an app login,
-// so email is the bridge. No match (different email, or no FCB account at
-// all) -> null, meaning Ernie still chats but gets no data tools for that
-// person. Uses the service-role client since there's no browser session
-// here to run this as.
+// Maps the Slack user who triggered this to a real FCB app account via a
+// manual mapping table (ernie_slack_user_map / sql_ernie_slack_user_map.sql)
+// instead of Slack's users.info email lookup -- that lookup turned out to
+// return "user_not_found" for real, verified users in this workspace even
+// with the right scopes granted (a Slack platform-side quirk, not something
+// fixable in our code), so this sidesteps it entirely. No mapping row for
+// this Slack user -> null, meaning Ernie still chats but gets no data tools
+// for that person. Uses the service-role client since there's no browser
+// session here to run this as.
 async function resolveAppUser(
   supabase: ReturnType<typeof createAdminClient>,
   slackUserId: string,
 ): Promise<AppUser | null> {
-  const email = await getSlackUserEmail(slackUserId);
-  if (!email) return null;
+  const { data: mapping } = await supabase
+    .from("ernie_slack_user_map")
+    .select("app_user_id")
+    .eq("slack_user_id", slackUserId)
+    .maybeSingle();
+  if (!mapping) {
+    console.error(`[slack/events] No ernie_slack_user_map row for Slack user id: ${slackUserId}`);
+    return null;
+  }
 
   const { data: profile } = await supabase
     .from("profiles")
     .select("id, role, is_super_admin")
-    .ilike("email", email)
+    .eq("id", mapping.app_user_id)
     .maybeSingle();
   if (!profile) {
-    console.error(`[slack/events] No FCB profiles row matched Slack email: ${email}`);
+    console.error(`[slack/events] Mapped app_user_id has no profiles row: ${mapping.app_user_id}`);
     return null;
   }
 
@@ -480,7 +478,6 @@ export async function POST(req: NextRequest) {
         history = [{ role: "user", text: `${name}: ${strippedText || "Hello!"}` }];
       }
 
-      console.error("[slack/events] Resolving app user for Slack user id:", event.user, "team:", payload.team_id);
       const appUser = event.user ? await resolveAppUser(supabase, event.user) : null;
       const anthropicMessages = history.map((h) => ({ role: h.role, content: h.text }));
       const reply = await askErnie(anthropicMessages, appUser, supabase);
