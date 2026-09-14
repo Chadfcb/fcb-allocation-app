@@ -883,8 +883,12 @@ export default function InventoryPage() {
     // distributor's price list, if one was picked, instead of leaving every
     // product at $0 until someone types each price in by hand. Copies only
     // — the source distributor's own prices are never touched.
+    // Restricted to core distributors only (Chad, 2026-09-14) — the dropdown
+    // already only lists them, but re-check here too in case of stale state.
     const copyFromId = newDistributorCopyPricingFrom;
-    const copyFromDistributor = distributors.find((d) => d.id === copyFromId);
+    const copyFromDistributor = distributors.find(
+      (d) => d.id === copyFromId && d.is_core_distributor
+    );
     if (copyFromId && copyFromDistributor) {
       const rowsToCopy = Object.values(distributorPrices).filter(
         (row) => row.distributor_id === copyFromId
@@ -2638,15 +2642,17 @@ export default function InventoryPage() {
                     <select
                       value={newDistributorCopyPricingFrom}
                       onChange={(e) => setNewDistributorCopyPricingFrom(e.target.value)}
-                      title="Start this distributor's Distributor Pricing from an existing distributor's price list, instead of blank/$0 for every product"
-                      className={`${EDIT_INPUT} w-28 px-1 py-0.5 text-[10px]`}
+                      title="Start this distributor's Distributor Pricing from one of the core distributors' price lists, instead of blank/$0 for every product"
+                      className={`${EDIT_INPUT} w-32 px-1 py-0.5 text-[10px]`}
                     >
-                      <option value="">Copy prices from…</option>
-                      {distributors.map((d) => (
-                        <option key={d.id} value={d.id}>
-                          {d.name}
-                        </option>
-                      ))}
+                      <option value="">Copy prices from core…</option>
+                      {distributors
+                        .filter((d) => d.is_core_distributor)
+                        .map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.name}
+                          </option>
+                        ))}
                     </select>
                     <button
                       onClick={handleAddDistributor}
