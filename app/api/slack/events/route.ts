@@ -166,7 +166,15 @@ async function getSlackDisplayName(userId: string): Promise<string> {
 
 async function getSlackUserEmail(userId: string): Promise<string | null> {
   const data = await slackApi("users.info", { user: userId });
-  return data?.user?.profile?.email ?? null;
+  if (!data?.ok) {
+    console.error("[slack/events] users.info failed while resolving email:", JSON.stringify(data));
+    return null;
+  }
+  const email = data?.user?.profile?.email ?? null;
+  if (!email) {
+    console.error("[slack/events] users.info succeeded but returned no email for user:", userId);
+  }
+  return email;
 }
 
 interface AppUser {
@@ -195,7 +203,10 @@ async function resolveAppUser(
     .select("id, role, is_super_admin")
     .ilike("email", email)
     .maybeSingle();
-  if (!profile) return null;
+  if (!profile) {
+    console.error(`[slack/events] No FCB profiles row matched Slack email: ${email}`);
+    return null;
+  }
 
   const isSuperAdmin = profile.is_super_admin === true;
   const sections = isSuperAdmin ? [] : await getUserSections(supabase, profile.id);
