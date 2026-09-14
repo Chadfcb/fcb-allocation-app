@@ -3,10 +3,12 @@
 import { useState } from "react";
 import { usePathname } from "next/navigation";
 
-// Floating "Report an issue" button, present on every page via app/(app)/
-// layout.tsx. Lets anyone signed in flag a bug or suggest an improvement
-// without leaving the page they're on -- posts to /api/feedback, which
-// saves it and emails Chad. (2026-09-14, per Chad's request.)
+// "Feedback" button, present in the header on every page via app/(app)/
+// layout.tsx. Multi-use: lets anyone signed in report a bug OR submit a
+// new idea, without leaving the page they're on -- posts to /api/feedback,
+// which saves it and emails Chad. (2026-09-14, per Chad's request; renamed
+// and moved to the top header 2026-09-14 -- this is not a "report an
+// issue"-only button.)
 export default function FeedbackButton() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -57,9 +59,9 @@ export default function FeedbackButton() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-5 right-5 z-40 rounded-full border border-neutral-700 bg-neutral-900 px-4 py-2 text-sm font-medium text-neutral-200 shadow-lg hover:bg-neutral-800"
+        className="rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-medium text-neutral-200 hover:bg-neutral-800"
       >
-        Report an issue
+        Feedback
       </button>
 
       {open && (
@@ -81,7 +83,7 @@ export default function FeedbackButton() {
             ) : (
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                  <h2 className="text-sm font-semibold text-neutral-100">Report an issue or suggestion</h2>
+                  <h2 className="text-sm font-semibold text-neutral-100">Report an issue or share an idea</h2>
                   <p className="mt-1 text-xs text-neutral-500">
                     This page ({pathname}) is included automatically.
                   </p>

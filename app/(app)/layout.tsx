@@ -22,7 +22,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="border-b border-neutral-800 bg-neutral-950">
-          <div className="flex items-center justify-end px-4 py-3">
+          <div className="flex items-center justify-end gap-3 px-4 py-3">
+            <FeedbackButton />
             <div className="flex items-center gap-3 text-sm text-neutral-400">
               <span>
                 {profile?.email} <span className="text-neutral-600">·</span>{" "}
@@ -34,7 +35,6 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         </header>
         <main className="mx-auto w-full max-w-[2200px] px-4 py-6">{children}</main>
       </div>
-      <FeedbackButton />
     </div>
   );
 }
