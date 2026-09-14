@@ -364,8 +364,38 @@ export async function POST(req: NextRequest) {
             body: JSON.stringify({
               model: ANTHROPIC_MODEL,
               max_tokens: 2048,
-              system: buildErnieSystemPrompt(role, sections, isSuperAdmin, personNotes) + projectSystemPrompt,
-              tools: [...getErnieTools(role, sections, isSuperAdmin), WEB_SEARCH_TOOL, WEB_FETCH_TOOL, CODE_EXECUTION_TOOL],
+              // Prompt caching (added 2026-09-14, "basic"/5-minute tier —
+              // no ttl override means the default 5-min cache, cheapest to
+              // write at 1.25x normal input cost, vs. 2x for a 1-hour
+              // cache). The system prompt + full tool list are identical
+              // on every one of this loop's own rounds (up to
+              // MAX_TOOL_ROUNDS) for a single reply, AND identical across
+              // separate messages/conversations for the same user role —
+              // so this is re-sent and re-billed at full price today for
+              // no reason. Marking cache_control on the system block and
+              // on the last tool (a breakpoint caches everything *up to
+              // and including* the marked block, so one marker on the
+              // final tool covers the whole tools array regardless of how
+              // many custom tools getErnieTools() returns for this role)
+              // gets a ~90% discount on those tokens for any call that
+              // reuses them within the cache's 5-minute window — which
+              // covers this whole tool-use loop on its own, easily.
+              // Conversation history itself isn't cached yet (would need
+              // restructuring how priorMessages get sent) — a possible
+              // later upgrade, not part of this pass.
+              system: [
+                {
+                  type: "text",
+                  text: buildErnieSystemPrompt(role, sections, isSuperAdmin, personNotes) + projectSystemPrompt,
+                  cache_control: { type: "ephemeral" },
+                },
+              ],
+              tools: [
+                ...getErnieTools(role, sections, isSuperAdmin),
+                WEB_SEARCH_TOOL,
+                WEB_FETCH_TOOL,
+                { ...CODE_EXECUTION_TOOL, cache_control: { type: "ephemeral" } },
+              ],
               ...(isLastRound ? { tool_choice: { type: "none" } } : {}),
               messages: anthropicMessages,
             }),
