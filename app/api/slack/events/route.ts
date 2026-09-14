@@ -97,6 +97,7 @@ const SLACK_ALLOWED_TOOL_NAMES = new Set([
   "get_users",
   "list_social_media_calendar_events",
   "list_chain_calendar_events",
+  "get_tasks",
 ]);
 
 // Slack event_ids we've already handled -- Slack retries delivery on slow

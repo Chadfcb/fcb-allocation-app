@@ -780,6 +780,21 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
     },
   },
   {
+    name: "get_tasks",
+    description:
+      "List tasks from the Tasks section (/tasks), each with its category/subcategory name, status, due date, notes, and assignee names (resolved from profiles — no separate lookup needed). Use this instead of run_read_only_query for anything about tasks: what's open, what's past due, what's assigned to someone, etc. Filter with status and/or overdue_only as needed; omit both to get everything.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        status: { type: "string", enum: ["open", "resolved"], description: "Omit for both." },
+        overdue_only: {
+          type: "boolean",
+          description: "true = only tasks with a due_date before today that are still open (i.e. actually past due and not done). Resolved tasks are never considered overdue.",
+        },
+      },
+    },
+  },
+  {
     name: "confirm_pending_action",
     description:
       "The second half of every propose-then-confirm write tool above — this is what actually PERFORMS a previously-proposed write. Only ever call this after: (1) you already called one of the add/update/delete/create_task tools without confirmed and showed the user a preview, and (2) the user approved it IN THEIR OWN NEXT MESSAGE — never in the same reply you proposed it in. Calling this before a real separate confirmation from the user is a policy violation, even if you're confident what they'd want. IMPORTANT: leave pending_action_id out — just call this tool with no arguments and it confirms YOUR own most recently proposed action for this same user automatically. Do NOT try to recall or re-type the id from a pending_action_id you were given earlier in the conversation — that value is not reliably available to you across turns, and guessing at it (or, worse, silently proposing the action all over again instead of calling this tool) is exactly the bug this note exists to prevent. Only pass pending_action_id explicitly in the rare case where the user is clearly confirming an OLDER proposal than the most recent one (e.g. they went back to approve something from several messages ago after proposing something newer in between).",
@@ -848,6 +863,7 @@ const ADMIN_ONLY_TOOL_NAMES = new Set([
   "list_chain_calendar_events",
   "create_task",
   "update_task",
+  "get_tasks",
   "confirm_pending_action",
 ]);
 
@@ -886,6 +902,7 @@ const TOOL_SECTIONS: Record<string, AnySectionKey[] | null> = {
   list_chain_calendar_events: ["events_calendar"],
   create_task: ["tasks"],
   update_task: ["tasks"],
+  get_tasks: ["tasks"],
   // Shared by every propose-then-confirm write tool above — visible to
   // anyone who has EITHER events_calendar or tasks, since it's the generic
   // "execute what I already proposed" step. The actual required section
@@ -2038,6 +2055,52 @@ export async function runErnieTool(
       });
     }
 
+    case "get_tasks": {
+      let query = supabase.from("task_items").select("*");
+      if (input.status) query = query.eq("status", input.status as string);
+      const { data: items, error } = await query.order("due_date", { ascending: true, nullsFirst: false });
+      if (error) throw error;
+
+      const today = new Date().toISOString().slice(0, 10);
+      let rows = items ?? [];
+      if (input.overdue_only) {
+        rows = rows.filter((r) => r.status === "open" && r.due_date && r.due_date < today);
+      }
+
+      const [{ data: subcategories }, { data: categories }, { data: assignees }, { data: profiles }] =
+        await Promise.all([
+          supabase.from("task_subcategories").select("id, category_id, name"),
+          supabase.from("task_categories").select("id, name"),
+          supabase.from("task_item_assignees").select("item_id, user_id"),
+          supabase.from("profiles").select("id, full_name"),
+        ]);
+      const subcategoriesById = indexBy(subcategories ?? [], "id");
+      const categoriesById = indexBy(categories ?? [], "id");
+      const profilesById = indexBy(profiles ?? [], "id");
+      const assigneesByItem = new Map<string, string[]>();
+      for (const a of assignees ?? []) {
+        const list = assigneesByItem.get(a.item_id) ?? [];
+        list.push(profilesById.get(a.user_id)?.full_name ?? "Unknown");
+        assigneesByItem.set(a.item_id, list);
+      }
+
+      return rows.map((r) => {
+        const subcategory = r.subcategory_id ? subcategoriesById.get(r.subcategory_id) : null;
+        const category = subcategory?.category_id ? categoriesById.get(subcategory.category_id) : null;
+        return {
+          id: r.id,
+          title: r.title,
+          notes: r.notes,
+          status: r.status,
+          due_date: r.due_date,
+          overdue: r.status === "open" && !!r.due_date && r.due_date < today,
+          category: category?.name ?? null,
+          subcategory: subcategory?.name ?? null,
+          assignees: assigneesByItem.get(r.id) ?? [],
+        };
+      });
+    }
+
     case "create_task": {
       if (!userId) return { error: "No signed-in user to attribute this task to." };
 
@@ -2654,8 +2717,8 @@ export function buildErnieSystemPrompt(
     ? `You CAN add, edit, and delete entries on all three calendars — the Social Media Calendar (add/update/delete/list_social_media_calendar_event(s)), the Events Calendar (add/update/delete/list_events_calendar_event(s), which also takes a distributor name for events tied to a distributor), and the Chain Calendar (add/update/delete/list_chain_calendar_event(s)) — use these once someone actually wants a planned post, event, or chain activity put onto the relevant calendar, not just described in chat, and confirm which specific event they mean before editing or deleting one.`
     : `You do NOT have access to any of the calendars (Social Media, Events, or Chain) — if someone asks you to add, change, or remove a calendar entry, tell them you don't have that access and they'll need to do it themselves or ask an admin to grant it.`;
   const taskSentence = hasTaskWriteAccess
-    ? ` You CAN also create tasks (create_task) and edit an existing one (update_task — rename it, change notes/due date/status, or reassign it; look it up first if you don't have its id) — ask what's needed (title, which category/subcategory, notes, due date, who it should be assigned to) before proposing a new one. There's no delete-task tool — the app itself has no way to permanently delete a task, only mark it resolved, so offer that instead if someone asks to remove one.`
-    : ` You do NOT have access to create tasks — if someone asks you to create one, tell them you don't have that access and they'll need to do it themselves or ask an admin to grant it.`;
+    ? ` You CAN also read tasks (get_tasks — list everything, or filter by status/overdue_only), create tasks (create_task), and edit an existing one (update_task — rename it, change notes/due date/status, or reassign it; look it up first if you don't have its id) — ask what's needed (title, which category/subcategory, notes, due date, who it should be assigned to) before proposing a new one. There's no delete-task tool — the app itself has no way to permanently delete a task, only mark it resolved, so offer that instead if someone asks to remove one.`
+    : ` You do NOT have access to the Tasks section at all (read or write) — if someone asks about tasks, tell them you don't have that access and they'll need to check the Tasks page themselves or ask an admin to grant it.`;
   const hasAnyWriteAccess = hasCalendarWriteAccess || hasTaskWriteAccess;
   const writeAccessSentence = hasAnyWriteAccess
     ? `${calendarSentence}${taskSentence} CRITICAL: never describe a "preview" of a calendar event or task in your reply unless you actually called the real add/update/delete/create_task tool THIS SAME TURN and are relaying the exact preview text it gave back — inventing preview-sounding text without calling the tool leaves nothing real staged, and a later "confirm" will then find nothing of yours to confirm (or, worse, silently confirm some unrelated leftover instead). Never propose and execute in the same turn — always wait for a genuine new message confirming it, and when that confirmation comes, call confirm_pending_action with no arguments (it automatically confirms your own most recent proposal — never try to recall or re-type a pending_action_id yourself). Every write is logged to the app's Audit Log, same as if a person made it, so it can be undone if it's wrong. Everything else in the app stays completely read-only: for anything outside these calendars and tasks, tell people you're read-only and they'll need to make that change on the relevant page themselves.`
