@@ -240,6 +240,10 @@ export default function InventoryPage() {
   const [activeEditMode, setActiveEditMode] = useState<EditMode | null>(null);
   const [newDistributorName, setNewDistributorName] = useState("");
   const [newDistributorColor, setNewDistributorColor] = useState("");
+  // Which existing distributor's Distributor Pricing to copy onto a brand-new
+  // distributor, so it doesn't start out with every product priced at $0 and
+  // needing to be typed in one by one. "" means start blank, same as before.
+  const [newDistributorCopyPricingFrom, setNewDistributorCopyPricingFrom] = useState("");
   const [addingDistributor, setAddingDistributor] = useState(false);
   const [addDistributorError, setAddDistributorError] = useState<string | null>(null);
   const [customPackagingItems, setCustomPackagingItems] = useState<CustomPackagingItem[]>([]);
@@ -831,6 +835,11 @@ export default function InventoryPage() {
       );
       setNewDistributorName("");
       setNewDistributorColor("");
+      // Reactivating an archived distributor brings its old prices back too
+      // (they were never deleted), so a "copy from" pick here would just be
+      // discarded rather than applied — clear it instead of leaving it
+      // looking like it did something.
+      setNewDistributorCopyPricingFrom("");
       setAddingDistributor(false);
 
       await logChange(supabase, {
@@ -869,8 +878,58 @@ export default function InventoryPage() {
         return a.name.localeCompare(b.name);
       })
     );
+
+    // Start this brand-new distributor's Distributor Pricing from another
+    // distributor's price list, if one was picked, instead of leaving every
+    // product at $0 until someone types each price in by hand. Copies only
+    // — the source distributor's own prices are never touched.
+    const copyFromId = newDistributorCopyPricingFrom;
+    const copyFromDistributor = distributors.find((d) => d.id === copyFromId);
+    if (copyFromId && copyFromDistributor) {
+      const rowsToCopy = Object.values(distributorPrices).filter(
+        (row) => row.distributor_id === copyFromId
+      );
+
+      if (rowsToCopy.length > 0) {
+        const { data: copiedRows, error: copyError } = await supabase
+          .from("distributor_prices")
+          .upsert(
+            rowsToCopy.map((row) => ({
+              distributor_id: data.id,
+              product_id: row.product_id,
+              price: row.price,
+              updated_by: userId,
+              updated_at: new Date().toISOString(),
+            })),
+            { onConflict: "distributor_id,product_id" }
+          )
+          .select();
+
+        if (!copyError && copiedRows) {
+          setDistributorPrices((prev) => {
+            const next = { ...prev };
+            (copiedRows as DistributorPrice[]).forEach((row) => {
+              next[`${row.product_id}:${row.distributor_id}`] = row;
+            });
+            return next;
+          });
+
+          await logChange(supabase, {
+            weekId: week?.id ?? null,
+            tableName: "distributors",
+            recordId: data.id,
+            fieldName: "price_list_copied_from",
+            oldValue: null,
+            newValue: copyFromDistributor.name,
+            changedBy: userId,
+          });
+        }
+      }
+    }
+
     setNewDistributorName("");
     setNewDistributorColor("");
+    setNewDistributorCopyPricingFrom("");
     setAddingDistributor(false);
 
     await logChange(supabase, {
@@ -2573,6 +2632,19 @@ export default function InventoryPage() {
                           style={{ backgroundColor: c.hex, color: "#000000" }}
                         >
                           {c.label}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      value={newDistributorCopyPricingFrom}
+                      onChange={(e) => setNewDistributorCopyPricingFrom(e.target.value)}
+                      title="Start this distributor's Distributor Pricing from an existing distributor's price list, instead of blank/$0 for every product"
+                      className={`${EDIT_INPUT} w-28 px-1 py-0.5 text-[10px]`}
+                    >
+                      <option value="">Copy prices from…</option>
+                      {distributors.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name}
                         </option>
                       ))}
                     </select>
