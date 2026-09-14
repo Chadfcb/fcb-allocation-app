@@ -158,6 +158,9 @@ const slackDisplayNameCache = new Map<string, string>();
 async function getSlackDisplayName(userId: string): Promise<string> {
   if (slackDisplayNameCache.has(userId)) return slackDisplayNameCache.get(userId)!;
   const data = await slackApi("users.info", { user: userId });
+  if (!data?.ok) {
+    console.error("[slack/events] users.info failed while resolving display name:", JSON.stringify(data), "for input:", JSON.stringify(userId));
+  }
   const name: string =
     data?.user?.profile?.display_name || data?.user?.profile?.real_name || data?.user?.real_name || userId;
   slackDisplayNameCache.set(userId, name);
@@ -165,6 +168,12 @@ async function getSlackDisplayName(userId: string): Promise<string> {
 }
 
 async function getSlackUserEmail(userId: string): Promise<string | null> {
+  console.error(
+    "[slack/events] getSlackUserEmail raw input:",
+    JSON.stringify(userId),
+    "length:",
+    userId.length,
+  );
   const data = await slackApi("users.info", { user: userId });
   if (!data?.ok) {
     console.error("[slack/events] users.info failed while resolving email:", JSON.stringify(data));
