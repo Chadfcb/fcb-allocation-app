@@ -147,7 +147,11 @@ export async function POST(req: NextRequest) {
 
     try {
       const reply = await askClaude(text || "Hello!");
-      await postToSlack(event.channel, reply, event.thread_ts ?? event.ts);
+      // Chad's preference (2026-09-14): always post as a fresh top-level
+      // message in the channel, never as a threaded reply -- even when
+      // the @mention itself came from inside a thread. No thread_ts is
+      // passed here on purpose.
+      await postToSlack(event.channel, reply);
     } catch (err) {
       console.error("[slack/events] Error handling app_mention:", err);
     }
