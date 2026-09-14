@@ -35,10 +35,13 @@ export default function SalesPricingPage() {
     } = await supabase.auth.getUser();
     setUserId(user?.id ?? null);
 
+    // Same fix as /pricing (Distributor Pricing): a "core" distributor's
+    // price list must never disappear just because it's toggled off the
+    // current week's Inventory & Allocation grid.
     const { data: distributorData } = await supabase
       .from("distributors")
       .select("*")
-      .eq("active", true)
+      .or("active.eq.true,is_core_distributor.eq.true")
       .order("sort_order", { ascending: true, nullsFirst: false })
       .order("name");
     setDistributors((distributorData as Distributor[]) ?? []);

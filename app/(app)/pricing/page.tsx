@@ -76,10 +76,17 @@ export default function PricingPage() {
     const { data: dividerData } = await supabase.from("section_dividers").select("*");
     setDividers((dividerData as SectionDivider[]) ?? []);
 
+    // Show every distributor that's either active this week OR a standing
+    // "core" distributor (Chad's named roster — see is_core_distributor on
+    // the distributors table), never just the weekly-active ones. A core
+    // distributor's pricing must never disappear from this page just
+    // because someone toggled it off the current week's Inventory &
+    // Allocation grid — that was silently hiding real prices (and making
+    // them look unset/$0) for Markstein and Matagrano until this fix.
     const { data: distributorData } = await supabase
       .from("distributors")
       .select("*")
-      .eq("active", true)
+      .or("active.eq.true,is_core_distributor.eq.true")
       .order("sort_order", { ascending: true, nullsFirst: false })
       .order("name");
     setDistributors((distributorData as Distributor[]) ?? []);
