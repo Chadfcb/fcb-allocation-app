@@ -471,6 +471,7 @@ export async function POST(req: NextRequest) {
         history = [{ role: "user", text: `${name}: ${strippedText || "Hello!"}` }];
       }
 
+      console.error("[slack/events] Resolving app user for Slack user id:", event.user, "team:", payload.team_id);
       const appUser = event.user ? await resolveAppUser(supabase, event.user) : null;
       const anthropicMessages = history.map((h) => ({ role: h.role, content: h.text }));
       const reply = await askErnie(anthropicMessages, appUser, supabase);
