@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getProfile } from "@/lib/getProfile";
 import SignOutButton from "@/components/SignOutButton";
 import Sidebar from "@/components/Sidebar";
+import FeedbackButton from "@/components/FeedbackButton";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const profile = await getProfile();
@@ -33,6 +34,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         </header>
         <main className="mx-auto w-full max-w-[2200px] px-4 py-6">{children}</main>
       </div>
+      <FeedbackButton />
     </div>
   );
 }
