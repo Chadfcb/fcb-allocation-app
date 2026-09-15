@@ -1376,10 +1376,22 @@ export default function ErnieChatClient({
     }
     if (isVideo) {
       return (
+        // Deliberately wider than the old h-28 w-44 thumbnail (Chad,
+        // 2026-09-15: "clicking fullscreen doesnt work... it opens to
+        // fullscreen very fast then closes it very fast"). At that narrower
+        // width Chrome's native <video> controls collapse Fullscreen/PiP/
+        // playback-speed into a "⋮" overflow popup — and there's a known
+        // Chromium quirk where invoking Fullscreen from inside that popup
+        // (as opposed to a direct control-bar icon) loses the click's user-
+        // activation by the time the popup finishes closing, so the browser
+        // grants fullscreen and then immediately revokes it. Wide enough,
+        // Chrome puts the Fullscreen button directly in the main control
+        // bar instead, which doesn't have this problem.
         <video
           src={previewUrl}
           controls
-          className="h-28 w-44 rounded-md border border-[#262c1f] bg-black object-contain"
+          playsInline
+          className="h-40 w-64 rounded-md border border-[#262c1f] bg-black object-contain"
         />
       );
     }
