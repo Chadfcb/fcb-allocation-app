@@ -339,6 +339,11 @@ export async function POST(req: NextRequest) {
         // on the assistant's own ernie_messages row the same way a user
         // message's fileIds already work.
         const outputFileIds: string[] = [];
+        // animate_image only ever starts a render (see lib/ernie/tools.ts,
+        // lib/ernie/files.ts) — this is how the client learns which job(s)
+        // to start polling app/api/ernie/video-jobs/[id] for, right away
+        // rather than only discovering a pending render on next page load.
+        const videoJobIds: string[] = [];
 
         for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
           // On the last round, force a plain-text answer instead of allowing
@@ -520,6 +525,12 @@ export async function POST(req: NextRequest) {
               ) {
                 outputFileIds.push((result as { id: string }).id);
               }
+              if (block.name === "animate_image") {
+                const videoJob = result as { pending?: unknown; job_id?: unknown } | null;
+                if (videoJob?.pending === true && typeof videoJob.job_id === "string") {
+                  videoJobIds.push(videoJob.job_id);
+                }
+              }
               if (block.name === "fetch_url_as_file") {
                 await logErnieToolExecution(supabase, user.id, conversationId, "fetch_url_as_file", {
                   url: (block.input as { url?: string } | undefined)?.url,
@@ -579,7 +590,7 @@ export async function POST(req: NextRequest) {
           .update({ updated_at: new Date().toISOString() })
           .eq("id", conversationId);
 
-        send({ type: "done", text: finalText, conversationId, outputFileIds });
+        send({ type: "done", text: finalText, conversationId, outputFileIds, videoJobIds });
       } catch (err) {
         send({
           type: "error",

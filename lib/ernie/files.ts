@@ -24,7 +24,7 @@ import Papa from "papaparse";
 import mammoth from "mammoth";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { storageFileName } from "@/lib/events";
-import { ERNIE_FILES_BUCKET, ERNIE_MAX_FILE_BYTES } from "@/lib/ernie/fileLimits";
+import { ERNIE_FILES_BUCKET, ERNIE_MAX_FILE_BYTES, ERNIE_MAX_VIDEO_FILE_BYTES } from "@/lib/ernie/fileLimits";
 
 export type ErnieFileKind =
   | "image"
@@ -1145,6 +1145,253 @@ export async function generateOrEditImageWithGemini(
   if (insertErr) throw new Error(`Generated the image but couldn't save its record: ${insertErr.message}`);
 
   return { ...inserted, note: `${params.sourceFile ? "Edited" : "Generated"} "${finalName}".` };
+}
+
+// ---------------------------------------------------------------------
+// Ernie's image animation (animate_image, added 2026-09-15, per Chad:
+// "what if we want ernie to be able to animate images"). Google's Veo video
+// model, same GEMINI_API_KEY as the image tools above — but unlike a still
+// image, a render takes anywhere from ~30 seconds to several minutes, far
+// longer than any one chat request should ever block for. So this works in
+// two steps instead of one call: startImageAnimation kicks the render off
+// and immediately returns (nothing to wait on inside the tool-use loop —
+// Ernie just tells the person it's rendering), and checkVideoJob (called
+// from app/api/ernie/video-jobs/[id]/route.ts, polled by the client every
+// few seconds) asks Google whether that specific render is done yet, and
+// once it is, downloads the finished video into the same ernie_files/
+// Storage pipeline every other Ernie output uses and posts a real "here's
+// your video" message into whichever conversation/room asked for it — so
+// it shows up in the chat on its own, the person never has to come back
+// and ask.
+// ---------------------------------------------------------------------
+
+const GEMINI_VIDEO_MODEL = "veo-3.1-generate-preview";
+
+// startImageAnimation's implementation (see lib/ernie/tools.ts). Exactly
+// one of conversationId/projectId should be set — general/personal Ernie
+// chat passes conversationId, an Ernie Project's shared room passes
+// projectId — that's where checkVideoJob posts the finished video once
+// it's ready.
+export async function startImageAnimation(
+  supabase: SupabaseClient,
+  userId: string,
+  params: {
+    prompt: string;
+    sourceFile: Pick<ErnieFileRow, "id" | "storage_path" | "mime_type" | "source_bucket">;
+    durationSeconds?: number;
+    aspectRatio?: string;
+    conversationId?: string;
+    projectId?: string;
+  },
+): Promise<{ pending: true; job_id: string; note: string } | { error: string }> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return { error: "Server is missing GEMINI_API_KEY — video generation isn't configured yet." };
+
+  const prompt = params.prompt.trim();
+  if (!prompt) return { error: "A prompt describing the motion/action is required." };
+
+  const bucket = params.sourceFile.source_bucket || ERNIE_FILES_BUCKET;
+  const { data, error } = await supabase.storage.from(bucket).download(params.sourceFile.storage_path);
+  if (error || !data) {
+    return { error: "Couldn't load the source image to animate — it may not exist, or you don't have access to it." };
+  }
+  const sourceBuffer = Buffer.from(await data.arrayBuffer());
+
+  const duration = params.durationSeconds && [4, 6, 8].includes(params.durationSeconds) ? params.durationSeconds : 8;
+
+  let res: Response;
+  try {
+    res = await fetch(`${GEMINI_API_BASE}/models/${GEMINI_VIDEO_MODEL}:predictLongRunning`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify({
+        instances: [
+          {
+            prompt,
+            image: {
+              inlineData: {
+                mimeType: params.sourceFile.mime_type || "image/png",
+                data: sourceBuffer.toString("base64"),
+              },
+            },
+          },
+        ],
+        parameters: {
+          aspectRatio: params.aspectRatio || "16:9",
+          durationSeconds: String(duration),
+        },
+      }),
+      signal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
+    });
+  } catch (err) {
+    return {
+      error:
+        err instanceof Error && err.name === "TimeoutError"
+          ? "Starting the animation took too long and was cancelled — try again."
+          : "Couldn't reach the video generation service.",
+    };
+  }
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    return { error: `Couldn't start that animation (HTTP ${res.status}). ${errText.slice(0, 300)}` };
+  }
+
+  const json = await res.json();
+  const operationName: string | undefined = json?.name;
+  if (!operationName) {
+    return { error: "The video service didn't return a job to track — try again." };
+  }
+
+  const { data: job, error: insertErr } = await supabase
+    .from("ernie_video_jobs")
+    .insert({
+      user_id: userId,
+      conversation_id: params.conversationId ?? null,
+      project_id: params.projectId ?? null,
+      source_file_id: params.sourceFile.id,
+      prompt,
+      operation_name: operationName,
+      status: "pending",
+    })
+    .select("id")
+    .single();
+  if (insertErr) return { error: `Started the render but couldn't track it: ${insertErr.message}` };
+
+  return {
+    pending: true,
+    job_id: job.id,
+    note: `Animation started (${duration}s) — this usually takes 1-3 minutes. It'll show up as a new message in this conversation the moment it's ready; there's nothing else to do in the meantime.`,
+  };
+}
+
+// checkVideoJob's implementation (see app/api/ernie/video-jobs/[id]/route.ts,
+// the only caller — invoked by the client polling that route every few
+// seconds while a job is pending). Idempotent: calling this again on an
+// already-done or already-errored job just returns its stored result
+// without re-hitting Google or re-posting the completion message.
+export async function checkVideoJob(
+  supabase: SupabaseClient,
+  jobId: string,
+): Promise<
+  | { status: "pending" }
+  | { status: "done"; file: { id: string; file_name: string; mime_type: string | null; size_bytes: number } }
+  | { status: "error"; error: string }
+> {
+  const { data: job, error } = await supabase
+    .from("ernie_video_jobs")
+    .select("id, user_id, conversation_id, project_id, operation_name, status, result_file_id, error_message")
+    .eq("id", jobId)
+    .maybeSingle();
+  if (error || !job) return { status: "error", error: "No such video job (it may not exist, or belong to someone else)." };
+
+  if (job.status === "done" && job.result_file_id) {
+    const { data: file } = await supabase
+      .from("ernie_files")
+      .select("id, file_name, mime_type, size_bytes")
+      .eq("id", job.result_file_id)
+      .maybeSingle();
+    if (file) return { status: "done", file };
+  }
+  if (job.status === "error") return { status: "error", error: job.error_message || "That animation failed." };
+
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return { status: "error", error: "Server is missing GEMINI_API_KEY." };
+
+  let res: Response;
+  try {
+    res = await fetch(`${GEMINI_API_BASE}/${job.operation_name}`, {
+      headers: { "x-goog-api-key": apiKey },
+      signal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
+    });
+  } catch {
+    return { status: "pending" }; // A transient network hiccup checking on it isn't the same as the render having failed — just try again next poll.
+  }
+  if (!res.ok) return { status: "pending" };
+
+  const json = await res.json();
+  if (!json.done) return { status: "pending" };
+
+  const videoUri: string | undefined = json?.response?.generateVideoResponse?.generatedSamples?.[0]?.video?.uri;
+  if (!videoUri) {
+    const failMessage = json?.error?.message || "The render finished without producing a video.";
+    await supabase.from("ernie_video_jobs").update({ status: "error", error_message: failMessage, updated_at: new Date().toISOString() }).eq("id", jobId);
+    return { status: "error", error: failMessage };
+  }
+
+  let videoRes: Response;
+  try {
+    videoRes = await fetch(videoUri, { headers: { "x-goog-api-key": apiKey } });
+  } catch {
+    return { status: "pending" }; // Download hiccup — the render itself is done, retry the download on the next poll rather than failing the whole job.
+  }
+  if (!videoRes.ok) return { status: "pending" };
+
+  const buffer = Buffer.from(await videoRes.arrayBuffer());
+  if (buffer.length > ERNIE_MAX_VIDEO_FILE_BYTES) {
+    const failMessage = "The finished video was too large to save.";
+    await supabase.from("ernie_video_jobs").update({ status: "error", error_message: failMessage, updated_at: new Date().toISOString() }).eq("id", jobId);
+    return { status: "error", error: failMessage };
+  }
+
+  const mimeType = videoRes.headers.get("content-type")?.split(";")[0]?.trim() || "video/mp4";
+  const finalName = `ernie-animation-${jobId.slice(0, 8)}.mp4`;
+  const path = `${job.user_id}/${storageFileName(finalName)}`;
+
+  const { error: uploadErr } = await supabase.storage.from(ERNIE_FILES_BUCKET).upload(path, buffer, {
+    contentType: mimeType,
+    upsert: false,
+  });
+  if (uploadErr) {
+    return { status: "error", error: `Finished rendering but couldn't save it: ${uploadErr.message}` };
+  }
+
+  const { data: inserted, error: insertErr } = await supabase
+    .from("ernie_files")
+    .insert({
+      user_id: job.user_id,
+      direction: "output",
+      source_file_id: null,
+      file_name: finalName,
+      mime_type: mimeType,
+      size_bytes: buffer.length,
+      storage_path: path,
+    })
+    .select("id, file_name, mime_type, size_bytes")
+    .single();
+  if (insertErr) {
+    return { status: "error", error: `Finished rendering but couldn't save its record: ${insertErr.message}` };
+  }
+
+  await supabase
+    .from("ernie_video_jobs")
+    .update({ status: "done", result_file_id: inserted.id, updated_at: new Date().toISOString() })
+    .eq("id", jobId);
+
+  // Post the finished video as a real chat message so it shows up on its
+  // own — a Project room's members already get this live via the same
+  // Realtime subscription that carries every other message; general/
+  // personal chat has no such subscription, so the client polling this
+  // route is what actually surfaces it there (see ErnieChatClient.tsx).
+  if (job.project_id) {
+    await supabase.from("ernie_project_messages").insert({
+      project_id: job.project_id,
+      sender_id: null,
+      sender_name: "Ernie",
+      role: "ernie",
+      content: "Here's your animation:",
+      file_ids: [inserted.id],
+    });
+  } else if (job.conversation_id) {
+    await supabase.from("ernie_messages").insert({
+      conversation_id: job.conversation_id,
+      role: "assistant",
+      content: "Here's your animation:",
+      file_ids: [inserted.id],
+    });
+  }
+
+  return { status: "done", file: inserted };
 }
 
 // Best-effort audit trail for Ernie's internet/sandbox use (see

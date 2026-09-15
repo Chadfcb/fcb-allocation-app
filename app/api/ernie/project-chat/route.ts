@@ -294,6 +294,10 @@ The message that was just posted, from ${senderName}${
 
         let finalText = "";
         const outputFileIds: string[] = [];
+        // See the matching comment in app/api/ernie/chat/route.ts —
+        // animate_image only starts a render; this is how the client learns
+        // which job(s) to poll app/api/ernie/video-jobs/[id] for right away.
+        const videoJobIds: string[] = [];
         // A dummy id — runErnieTool's currentConversationId param only ever
         // uses this to exclude "the conversation this came from" from a
         // cross-conversation search tool; there's no ernie_conversations row
@@ -378,7 +382,7 @@ The message that was just posted, from ${senderName}${
               if (block.type !== "tool_use") continue;
               let result: unknown;
               try {
-                result = await runErnieTool(supabase, block.name, block.input ?? {}, role, sections, noConversationId, isSuperAdmin, user.id, requestId);
+                result = await runErnieTool(supabase, block.name, block.input ?? {}, role, sections, noConversationId, isSuperAdmin, user.id, requestId, projectId);
               } catch (toolErr) {
                 result = { error: toolErr instanceof Error ? toolErr.message : "Tool lookup failed" };
               }
@@ -395,6 +399,12 @@ The message that was just posted, from ${senderName}${
                 typeof (result as { id: unknown }).id === "string"
               ) {
                 outputFileIds.push((result as { id: string }).id);
+              }
+              if (block.name === "animate_image") {
+                const videoJob = result as { pending?: unknown; job_id?: unknown } | null;
+                if (videoJob?.pending === true && typeof videoJob.job_id === "string") {
+                  videoJobIds.push(videoJob.job_id);
+                }
               }
               if (result && typeof result === "object" && "__contentBlocks" in result) {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shape
@@ -444,7 +454,7 @@ The message that was just posted, from ${senderName}${
         });
         if (insertErnieErr) throw insertErnieErr;
 
-        send({ type: "done", ernieReplied: true });
+        send({ type: "done", ernieReplied: true, videoJobIds });
       } catch (err) {
         send({ type: "error", error: err instanceof Error ? err.message : "Unexpected server error talking to Ernie" });
       } finally {

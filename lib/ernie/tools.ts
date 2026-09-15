@@ -79,6 +79,7 @@ import {
   clearStagedFileData,
   fetchUrlAsFile,
   generateOrEditImageWithGemini,
+  startImageAnimation,
   type SpreadsheetEditInput,
   type SpreadsheetSheetInput,
 } from "@/lib/ernie/files";
@@ -412,6 +413,35 @@ This is a generative re-render guided by the original image and your instruction
         output_file_name: {
           type: "string",
           description: "Optional file name (without extension needed) for the edited image. Omit to derive one from the original.",
+        },
+      },
+      required: ["file_id", "prompt"],
+    },
+  },
+  {
+    name: "animate_image",
+    description:
+      `Animate an existing image — one the user uploaded, or one Ernie generated/edited earlier — into a short video, using Google's Veo model. Describe the motion/action you want (camera movement, what happens in the scene, mood) as the prompt; the image itself is used as the starting frame.
+
+IMPORTANT: rendering takes 1-3+ minutes — far too long to happen inside this reply. Calling this tool only STARTS the render and immediately hands back a "started" confirmation, not a finished video. As soon as this tool returns, tell the user in your own words that the animation is rendering and will show up in this same conversation on its own once it's ready — do NOT say you're "working on it" and then keep calling tools waiting for it to finish, and do NOT call this tool again for the same request just because you haven't seen a result yet. This costs real money per call (video is meaningfully more expensive than a still image), so don't call it speculatively or re-render something that already started.`,
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        file_id: {
+          type: "string",
+          description: "The id of the image to animate (from list_uploaded_files, or one generated/edited earlier in this conversation).",
+        },
+        prompt: {
+          type: "string",
+          description: "A specific description of the motion/action/camera movement for the animation.",
+        },
+        duration_seconds: {
+          type: "number",
+          description: "Clip length: 4, 6, or 8 seconds. Omit to default to 8.",
+        },
+        aspect_ratio: {
+          type: "string",
+          description: 'Aspect ratio, e.g. "16:9" or "9:16". Omit to default to "16:9".',
         },
       },
       required: ["file_id", "prompt"],
@@ -1013,6 +1043,7 @@ const TOOL_STATUS_LABELS: Record<string, string> = {
   edit_spreadsheet: "Editing your spreadsheet",
   generate_image: "Creating your image",
   edit_image: "Editing your image",
+  animate_image: "Starting your animation",
   get_file_for_download: "Fetching that file",
   fetch_url_as_file: "Fetching that from the web",
   stage_uploaded_file_for_query: "Loading your file for analysis",
@@ -1553,6 +1584,12 @@ export async function runErnieTool(
   // that makes propose-then-confirm a real structural guarantee rather
   // than just a prompted convention. See loadConfirmedPendingAction above.
   requestId?: string,
+  // Only ever set from app/api/ernie/project-chat/route.ts (general/personal
+  // chat has no Project) — animate_image needs this so the finished video's
+  // "here it is" message (posted later, once rendering completes — see
+  // checkVideoJob in lib/ernie/files.ts) lands back in the same shared room
+  // that asked for it, rather than nowhere.
+  projectId?: string,
 ): Promise<unknown> {
   // Defense in depth: getErnieTools() already keeps a tool a user isn't
   // granted out of their tool list, so Claude has nothing to call here —
@@ -2664,6 +2701,40 @@ export async function runErnieTool(
       }
     }
 
+    case "animate_image": {
+      const fileId = input.file_id as string | undefined;
+      const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
+      if (!fileId) return { error: "No file_id provided." };
+      if (!prompt) return { error: "No prompt provided." };
+
+      const { data: file, error } = await supabase
+        .from("ernie_files")
+        .select("id, file_name, mime_type, size_bytes, storage_path, source_bucket")
+        .eq("id", fileId)
+        .maybeSingle();
+      if (error) throw error;
+      if (!file) {
+        return { error: "No file found with that id (it may not exist, or belong to someone else)." };
+      }
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return { error: "Not signed in." };
+
+      const durationSeconds = typeof input.duration_seconds === "number" ? input.duration_seconds : undefined;
+      const aspectRatio = typeof input.aspect_ratio === "string" ? input.aspect_ratio : undefined;
+
+      return await startImageAnimation(supabase, user.id, {
+        prompt,
+        sourceFile: file,
+        durationSeconds,
+        aspectRatio,
+        conversationId: projectId ? undefined : currentConversationId,
+        projectId,
+      });
+    }
+
     case "get_file_for_download": {
       // Deliberately NOT in ADMIN_ONLY_TOOL_NAMES — access is enforced by
       // the target bucket's own RLS at fetch time (see
@@ -2882,6 +2953,8 @@ Before you ever tell someone something "isn't tracked," "doesn't exist," or "has
 Anyone can attach files to a message (drag-and-drop onto the chat, or the attach button) — a freshly-attached file's contents are included automatically, with no tool call needed. Images, PDFs, spreadsheets (.xlsx), CSV, and plain text files are all read directly; any other file type can still be uploaded but you can't read its contents yet, so say that plainly rather than guessing what's in it. If someone refers to a file from earlier without re-attaching it, use list_uploaded_files to find it and read_uploaded_file to pull its contents back up — this works for PDFs too, not just spreadsheets/CSV/text/images, so don't ask for a PDF to be re-attached; just call read_uploaded_file with its file_id. For spreadsheets and CSV specifically, you can also edit them with edit_spreadsheet: read the file first so you know its real sheet names and current cell values, then give it the exact cells to change — it edits that file in place (preserving everything else: formatting, other sheets, formulas) and hands back a new file to download. Never claim you've edited or analyzed a file without actually having its contents in front of you.
 
 You can also create and edit actual images (added 2026-09-15) — generate_image makes a brand-new image from a text description (a label concept, a marketing graphic, a mockup, anything someone describes), and edit_image takes an image someone uploaded or one you generated earlier and produces a new, edited version of it based on an instruction (change the background, recolor something, add or remove an element, restyle it). Both hand back a real downloadable/viewable image in this chat, the same way edit_spreadsheet hands back a file. Write a specific, detailed prompt rather than a vague one — describe subject, style, composition, colors, and mood for a generation, and exactly what should change for an edit. This is a generative model re-rendering the image, not a pixel-level surgical tool — very good at localized edits, but say so plainly if someone needs guaranteed pixel-exact precision (e.g. touching up print-ready artwork), since that's a job for real editing software. Each call costs real money, so don't call either tool speculatively or generate multiple variations unless asked. Like any image model, it won't generate real people's likenesses, other companies' trademarked logos/characters, or anything deceptive — treat a refusal as final, not something to route around.
+
+You can also animate an existing image into a short video with animate_image (Google's Veo model) — describe the motion/action you want and it uses the image as the starting frame. Unlike the two tools above, this NEVER finishes inside the same reply — rendering genuinely takes 1-3+ minutes, so calling this tool only starts the render and hands back a "started" confirmation. As soon as it returns, tell the person (in your own words) that it's rendering and will show up in this same conversation on its own once ready — never say you're "still working on it" and keep calling tools waiting for a result, and never call it again for the same request just because you haven't seen the finished video yet. This costs meaningfully more than a still image per call, so only use it when actually asked to animate something.
 
 The automatic preview of an attached spreadsheet/CSV is capped at 300 rows — fine for looking at or editing a file, but NOT enough to actually calculate anything across a bigger one. Whenever someone wants a real calculation over a file with more rows than that — total units sold by product, a weighted average, matching it against another dataset, anything you'd normally reach for a spreadsheet formula or a SQL query to get right — call stage_uploaded_file_for_query first. That loads every row into a table you can then query for real with run_read_only_query (filtered to that file's file_id), so the arithmetic is done by the database, not guessed at by reading rows as text. This is also how to combine an uploaded file with the app's own data in one answer — e.g. matching an Ekos sales export against Contribution Margin figures — since both live in tables run_read_only_query can join in a single query. Call clear_staged_file_data when you're done with a file's staged data, as good tidiness (not required — re-staging the same file already replaces its old rows automatically).
 

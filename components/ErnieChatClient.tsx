@@ -441,6 +441,7 @@ export default function ErnieChatClient({
         if (cancelled) return true;
         setMessages(data.messages ?? []);
         setConversationId(data.conversation.id);
+        resumePendingVideoJobs({ conversationId: data.conversation.id });
         return true;
       } catch {
         return false;
@@ -653,6 +654,7 @@ export default function ErnieChatClient({
         const files = await resolveRoomFiles(allFileIds);
         const filesById = new Map(files.map((f) => [f.id, f]));
         if (!cancelled) setMessages(rows.map((r) => roomRowToChatMessage(r, filesById)));
+        resumePendingVideoJobs({ projectId: activeProjectId });
       } catch {
         if (!cancelled) setError("Couldn't load this Project's chat — check your connection and try again.");
       } finally {
@@ -998,6 +1000,67 @@ export default function ErnieChatClient({
     await supabase.from("ernie_files").delete().eq("id", f.id);
   }
 
+  // Polls a still-rendering animate_image job (added 2026-09-15) every few
+  // seconds until it's done or errored — see app/api/ernie/video-jobs/[id]/
+  // route.ts. General/personal chat has no live subscription, so a
+  // finished video is appended to THIS tab's own message list directly
+  // here; inside a Project's shared room, the server already posts a real
+  // ernie_project_messages row the moment the job completes, and the
+  // existing Realtime subscription (see the room-loading effect above)
+  // delivers that to every open tab on its own — adding it again here would
+  // just double it up, so isProjectJob skips the local append in that case.
+  const pollingJobIds = useRef<Set<string>>(new Set());
+  const unmountedRef = useRef(false);
+  useEffect(
+    () => () => {
+      unmountedRef.current = true;
+    },
+    [],
+  );
+
+  function pollVideoJob(jobId: string, isProjectJob: boolean) {
+    if (pollingJobIds.current.has(jobId)) return;
+    pollingJobIds.current.add(jobId);
+
+    const tick = async () => {
+      if (unmountedRef.current) return;
+      try {
+        const res = await fetch(`/api/ernie/video-jobs/${jobId}`);
+        const data = await res.json();
+        if (data.status === "pending") {
+          setTimeout(tick, 8000);
+          return;
+        }
+        pollingJobIds.current.delete(jobId);
+        if (isProjectJob) return;
+        if (data.status === "done" && data.file) {
+          setMessages((prev) => [...prev, { role: "assistant", text: "Here's your animation:", files: [data.file] }]);
+        } else if (data.status === "error") {
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", text: `That animation didn't finish: ${data.error ?? "unknown error"}` },
+          ]);
+        }
+      } catch {
+        setTimeout(tick, 8000);
+      }
+    };
+    setTimeout(tick, 8000);
+  }
+
+  // Resumes polling for any of this user's own still-pending animation jobs
+  // tied to a conversation/room that just loaded — covers reopening a
+  // conversation or reloading the page while a render was mid-flight, since
+  // otherwise nothing would ever check on it again.
+  async function resumePendingVideoJobs(opts: { conversationId?: string; projectId?: string }) {
+    let query = supabase.from("ernie_video_jobs").select("id, project_id").eq("status", "pending");
+    query = opts.projectId ? query.eq("project_id", opts.projectId) : query.eq("conversation_id", opts.conversationId ?? "");
+    const { data } = await query;
+    for (const job of data ?? []) {
+      pollVideoJob(job.id, Boolean(job.project_id));
+    }
+  }
+
   async function handleDownloadFile(f: ErnieFile) {
     setDownloadingId(f.id);
     try {
@@ -1106,7 +1169,7 @@ export default function ErnieChatClient({
             const dataLine = rawEvent.split("\n").find((line) => line.startsWith("data: "));
             if (!dataLine) continue;
 
-            let event: { type?: string; error?: string };
+            let event: { type?: string; error?: string; videoJobIds?: string[] };
             try {
               event = JSON.parse(dataLine.slice("data: ".length));
             } catch {
@@ -1117,6 +1180,7 @@ export default function ErnieChatClient({
               setErnieThinking(true);
             } else if (event.type === "done") {
               setErnieThinking(false);
+              for (const jobId of event.videoJobIds ?? []) pollVideoJob(jobId, true);
             } else if (event.type === "error") {
               setErnieThinking(false);
               setError(event.error ?? "Something went wrong posting that.");
@@ -1184,6 +1248,7 @@ export default function ErnieChatClient({
             conversationId?: string;
             error?: string;
             outputFileIds?: string[];
+            videoJobIds?: string[];
           };
           try {
             event = JSON.parse(dataLine.slice("data: ".length));
@@ -1204,6 +1269,7 @@ export default function ErnieChatClient({
               outputFiles = (data as ErnieFile[] | null) ?? undefined;
             }
             setMessages((prev) => [...prev, { role: "assistant", text: event.text ?? "", files: outputFiles }]);
+            for (const jobId of event.videoJobIds ?? []) pollVideoJob(jobId, false);
             if (event.conversationId && event.conversationId !== conversationId) {
               setConversationId(event.conversationId);
               // Only the general (non-Project) conversation pointer is
@@ -1266,16 +1332,18 @@ export default function ErnieChatClient({
     }
   }
 
-  // Small inline preview box for image attachments — either direction: an
-  // image the user attaches to a message, or one Ernie generates/edits back
-  // (added 2026-09-15, per Chad: "when we give an image to ernie, or he
-  // gives it back to us, i want a small preview box to display it in that
-  // same chat"). Below the metadata row (name/size/download/remove) exactly
-  // as before; only image mime types get the extra preview box, everything
-  // else (spreadsheets, PDFs, etc.) renders exactly like it always has.
+  // Small inline preview box for image AND video attachments — either
+  // direction: something the user attaches to a message, or something
+  // Ernie generates/edits/animates back (images added 2026-09-15 per Chad:
+  // "when we give an image to ernie, or he gives it back to us, i want a
+  // small preview box to display it in that same chat"; video added the
+  // same day alongside animate_image). Below the metadata row (name/size/
+  // download/remove) exactly as before; only image/video mime types get
+  // the extra preview box, everything else (spreadsheets, PDFs, etc.)
+  // renders exactly like it always has.
   const previewUrlCache = useRef<Map<string, string>>(new Map());
 
-  function ImagePreviewBox({ f }: { f: ErnieFile }) {
+  function MediaPreviewBox({ f, isVideo }: { f: ErnieFile; isVideo: boolean }) {
     const [previewUrl, setPreviewUrl] = useState<string | null>(previewUrlCache.current.get(f.id) ?? null);
 
     useEffect(() => {
@@ -1306,6 +1374,15 @@ export default function ErnieChatClient({
         </div>
       );
     }
+    if (isVideo) {
+      return (
+        <video
+          src={previewUrl}
+          controls
+          className="h-28 w-44 rounded-md border border-[#262c1f] bg-black object-contain"
+        />
+      );
+    }
     return (
       // eslint-disable-next-line @next/next/no-img-element -- a signed Supabase Storage URL, not a static asset next/image can optimize
       <img
@@ -1328,11 +1405,12 @@ export default function ErnieChatClient({
     onDownload?: () => void;
   }) {
     const isImage = (f.mime_type || "").startsWith("image/");
+    const isVideo = (f.mime_type || "").startsWith("video/");
     return (
       <div className="flex flex-col items-start gap-1">
-        {isImage && <ImagePreviewBox f={f} />}
+        {(isImage || isVideo) && <MediaPreviewBox f={f} isVideo={isVideo} />}
         <div className="flex items-center gap-1.5 rounded-md border border-[#262c1f] bg-[#181c13] px-2 py-1 text-xs text-[#eef1e9]">
-          {!isImage && <span>{fileIcon(f.file_name)}</span>}
+          {!isImage && !isVideo && <span>{fileIcon(f.file_name)}</span>}
           <span className="max-w-[160px] truncate" title={f.file_name}>
             {f.file_name}
           </span>
