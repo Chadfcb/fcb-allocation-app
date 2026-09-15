@@ -654,7 +654,7 @@ export default function ErnieChatClient({
         const files = await resolveRoomFiles(allFileIds);
         const filesById = new Map(files.map((f) => [f.id, f]));
         if (!cancelled) setMessages(rows.map((r) => roomRowToChatMessage(r, filesById)));
-        resumePendingVideoJobs({ projectId: activeProjectId });
+        resumePendingVideoJobs({ projectId: activeProjectId ?? undefined });
       } catch {
         if (!cancelled) setError("Couldn't load this Project's chat — check your connection and try again.");
       } finally {
