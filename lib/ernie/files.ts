@@ -1209,16 +1209,14 @@ export async function startImageAnimation(
           {
             prompt,
             image: {
-              inlineData: {
-                mimeType: params.sourceFile.mime_type || "image/png",
-                data: sourceBuffer.toString("base64"),
-              },
+              bytesBase64Encoded: sourceBuffer.toString("base64"),
+              mimeType: params.sourceFile.mime_type || "image/png",
             },
           },
         ],
         parameters: {
           aspectRatio: params.aspectRatio || "16:9",
-          durationSeconds: String(duration),
+          durationSeconds: duration,
         },
       }),
       signal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
