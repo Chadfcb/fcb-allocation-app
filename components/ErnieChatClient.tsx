@@ -392,8 +392,28 @@ export default function ErnieChatClient({
         setPanelHeight(nextHeight);
       }
     }
+    // Guarded update: entering/exiting native <video> fullscreen (Chad,
+    // 2026-09-15: "clicking fullscreen doesnt work... opens to fullscreen
+    // very fast then closes it very fast") ALSO fires a window "resize"
+    // event, because window.innerHeight briefly reports the full-screen
+    // height even though nothing about this page's own layout actually
+    // changed. Confirmed live (fullscreenchange/resize/mutation timestamps
+    // instrumented in the browser): that resize was reaching this same
+    // updateHeight(), which recomputed panelHeight against the now-huge
+    // window.innerHeight, set a wrong/oversized height on this panel, and
+    // the resulting re-render's DOM churn was what made the browser
+    // immediately exit fullscreen again ~15ms later — a self-inflicted
+    // fullscreen bounce, not a video/Veo bug. Skipping the recalculation
+    // while a fullscreen element is active avoids that churn; the
+    // fullscreenchange listener re-syncs once fullscreen actually ends, in
+    // case the real window was also resized in the meantime.
+    function updateHeightUnlessFullscreen() {
+      if (document.fullscreenElement) return;
+      updateHeight();
+    }
     updateHeight();
-    window.addEventListener("resize", updateHeight);
+    window.addEventListener("resize", updateHeightUnlessFullscreen);
+    document.addEventListener("fullscreenchange", updateHeight);
 
     // Fixed 2026-09-10, per Chad ("the ernie chat area, continues to go on
     // down past the screen... we want it to stop once it gets to the
@@ -412,12 +432,13 @@ export default function ErnieChatClient({
     const parent = panelRef.current?.parentElement ?? null;
     let observer: ResizeObserver | null = null;
     if (parent && typeof ResizeObserver !== "undefined") {
-      observer = new ResizeObserver(() => updateHeight());
+      observer = new ResizeObserver(() => updateHeightUnlessFullscreen());
       observer.observe(parent);
     }
 
     return () => {
-      window.removeEventListener("resize", updateHeight);
+      window.removeEventListener("resize", updateHeightUnlessFullscreen);
+      document.removeEventListener("fullscreenchange", updateHeight);
       observer?.disconnect();
     };
   }, []);
