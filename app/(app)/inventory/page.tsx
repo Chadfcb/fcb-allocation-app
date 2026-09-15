@@ -219,6 +219,12 @@ export default function InventoryPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [dividers, setDividers] = useState<SectionDivider[]>([]);
   const [distributors, setDistributors] = useState<Distributor[]>([]);
+  // Every core distributor, regardless of this week's active toggle — used
+  // only to populate the "Copy prices from core…" dropdown below, so a core
+  // distributor toggled off this week (e.g. Markstein, Superior) still shows
+  // up there. `distributors` above stays active-only; don't reuse it for
+  // this (Chad, 2026-09-15 — Markstein/Superior were missing from the list).
+  const [coreDistributorsAll, setCoreDistributorsAll] = useState<Distributor[]>([]);
   const [inventory, setInventory] = useState<Record<string, InventoryWithRemaining>>({});
   const [allocations, setAllocations] = useState<Record<string, AllocationCell>>({}); // key: productId:distributorId
   const [pos, setPos] = useState<Record<string, DistributorPO>>({}); // key: distributorId
@@ -302,6 +308,7 @@ export default function InventoryPage() {
       productResult,
       dividerResult,
       distributorResult,
+      coreDistributorResult,
       priceResult,
       customPkgItemResult,
       customLabelItemResult,
@@ -327,6 +334,14 @@ export default function InventoryPage() {
         .select("*")
         .eq("active", true)
         .order("sort_order", { ascending: true, nullsFirst: false })
+        .order("name"),
+      // Unfiltered by active — feeds only the "Copy prices from core…"
+      // dropdown, so a core distributor toggled off this week still offers
+      // its price list to copy from.
+      supabase
+        .from("distributors")
+        .select("*")
+        .eq("is_core_distributor", true)
         .order("name"),
       // Distributor pricing is standing catalog data, not tied to a week —
       // set on the Distributor Pricing page, used here to drive Order Value
@@ -354,6 +369,7 @@ export default function InventoryPage() {
     setProducts((productResult.data as Product[]) ?? []);
     setDividers((dividerResult.data as SectionDivider[]) ?? []);
     setDistributors((distributorResult.data as Distributor[]) ?? []);
+    setCoreDistributorsAll((coreDistributorResult.data as Distributor[]) ?? []);
 
     const priceMap: Record<string, DistributorPrice> = {};
     (priceResult.data as DistributorPrice[] | null)?.forEach((row) => {
@@ -883,12 +899,11 @@ export default function InventoryPage() {
     // distributor's price list, if one was picked, instead of leaving every
     // product at $0 until someone types each price in by hand. Copies only
     // — the source distributor's own prices are never touched.
-    // Restricted to core distributors only (Chad, 2026-09-14) — the dropdown
-    // already only lists them, but re-check here too in case of stale state.
+    // Restricted to core distributors only (Chad, 2026-09-14) — looked up
+    // against every core distributor regardless of this week's active
+    // toggle (Chad, 2026-09-15), not just the ones in this week's grid.
     const copyFromId = newDistributorCopyPricingFrom;
-    const copyFromDistributor = distributors.find(
-      (d) => d.id === copyFromId && d.is_core_distributor
-    );
+    const copyFromDistributor = coreDistributorsAll.find((d) => d.id === copyFromId);
     if (copyFromId && copyFromDistributor) {
       const rowsToCopy = Object.values(distributorPrices).filter(
         (row) => row.distributor_id === copyFromId
@@ -2646,13 +2661,11 @@ export default function InventoryPage() {
                       className={`${EDIT_INPUT} w-32 px-1 py-0.5 text-[10px]`}
                     >
                       <option value="">Copy prices from core…</option>
-                      {distributors
-                        .filter((d) => d.is_core_distributor)
-                        .map((d) => (
-                          <option key={d.id} value={d.id}>
-                            {d.name}
-                          </option>
-                        ))}
+                      {coreDistributorsAll.map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name}
+                        </option>
+                      ))}
                     </select>
                     <button
                       onClick={handleAddDistributor}
