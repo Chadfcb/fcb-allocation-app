@@ -1645,6 +1645,18 @@ export default function ErnieChatClient({
                     mime_type: f.mime_type,
                     size_bytes: f.size_bytes,
                     storage_path: f.storage_path,
+                    // A Project's file library lives in its own "ernie-project-files"
+                    // Storage bucket (see handleProjectFiles' upload and
+                    // handleDownloadProjectFile below) — a different bucket than
+                    // ERNIE_FILES_BUCKET ("ernie-files"), which is where chat-attached
+                    // files live. Without this, MediaPreviewBox's `f.source_bucket ||
+                    // ERNIE_FILES_BUCKET` fallback always picked the wrong bucket for a
+                    // Project file, so createSignedUrl silently failed (error, no
+                    // signedUrl) and the preview sat on "Loading…" forever (Chad,
+                    // 2026-09-15: "previews are trying to show in the files section,
+                    // but not working") — Download still worked because
+                    // handleDownloadProjectFile already hardcodes the right bucket.
+                    source_bucket: "ernie-project-files",
                   }}
                   onDownload={() => handleDownloadProjectFile(f)}
                   onRemove={canManageProjects ? () => removeProjectFile(f) : undefined}
