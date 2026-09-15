@@ -1266,6 +1266,58 @@ export default function ErnieChatClient({
     }
   }
 
+  // Small inline preview box for image attachments — either direction: an
+  // image the user attaches to a message, or one Ernie generates/edits back
+  // (added 2026-09-15, per Chad: "when we give an image to ernie, or he
+  // gives it back to us, i want a small preview box to display it in that
+  // same chat"). Below the metadata row (name/size/download/remove) exactly
+  // as before; only image mime types get the extra preview box, everything
+  // else (spreadsheets, PDFs, etc.) renders exactly like it always has.
+  const previewUrlCache = useRef<Map<string, string>>(new Map());
+
+  function ImagePreviewBox({ f }: { f: ErnieFile }) {
+    const [previewUrl, setPreviewUrl] = useState<string | null>(previewUrlCache.current.get(f.id) ?? null);
+
+    useEffect(() => {
+      if (previewUrlCache.current.has(f.id)) return;
+      let cancelled = false;
+      (async () => {
+        const bucket = f.source_bucket || ERNIE_FILES_BUCKET;
+        // 1 hour is plenty for a chat someone's actively looking at; this is
+        // a view-only signed URL, same mechanism handleDownloadFile already
+        // uses, just longer-lived since it's just for display, not a
+        // one-shot download click.
+        const { data } = await supabase.storage.from(bucket).createSignedUrl(f.storage_path, 3600);
+        if (!cancelled && data?.signedUrl) {
+          previewUrlCache.current.set(f.id, data.signedUrl);
+          setPreviewUrl(data.signedUrl);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- f.id is the stable identity; re-running on the whole f object would refetch every render
+    }, [f.id]);
+
+    if (!previewUrl) {
+      return (
+        <div className="flex h-28 w-28 items-center justify-center rounded-md border border-[#262c1f] bg-[#181c13] text-[10px] text-[#5d6456]">
+          Loading…
+        </div>
+      );
+    }
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- a signed Supabase Storage URL, not a static asset next/image can optimize
+      <img
+        src={previewUrl}
+        alt={f.file_name}
+        title="Click to view full size"
+        className="h-28 w-28 cursor-zoom-in rounded-md border border-[#262c1f] object-cover"
+        onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}
+      />
+    );
+  }
+
   function FileChip({
     f,
     onRemove,
@@ -1275,28 +1327,32 @@ export default function ErnieChatClient({
     onRemove?: () => void;
     onDownload?: () => void;
   }) {
+    const isImage = (f.mime_type || "").startsWith("image/");
     return (
-      <div className="flex items-center gap-1.5 rounded-md border border-[#262c1f] bg-[#181c13] px-2 py-1 text-xs text-[#eef1e9]">
-        <span>{fileIcon(f.file_name)}</span>
-        <span className="max-w-[160px] truncate" title={f.file_name}>
-          {f.file_name}
-        </span>
-        {f.size_bytes != null && <span className="text-[#8f9885]">{formatBytes(f.size_bytes)}</span>}
-        {onDownload && (
-          <button
-            type="button"
-            onClick={onDownload}
-            disabled={downloadingId === f.id}
-            className="ml-1 text-[#8f9885] hover:text-[#7fce5c] disabled:opacity-50"
-          >
-            {downloadingId === f.id ? "…" : "Download"}
-          </button>
-        )}
-        {onRemove && (
-          <button type="button" onClick={onRemove} className="ml-1 text-[#5d6456] hover:text-red-400">
-            ✕
-          </button>
-        )}
+      <div className="flex flex-col items-start gap-1">
+        {isImage && <ImagePreviewBox f={f} />}
+        <div className="flex items-center gap-1.5 rounded-md border border-[#262c1f] bg-[#181c13] px-2 py-1 text-xs text-[#eef1e9]">
+          {!isImage && <span>{fileIcon(f.file_name)}</span>}
+          <span className="max-w-[160px] truncate" title={f.file_name}>
+            {f.file_name}
+          </span>
+          {f.size_bytes != null && <span className="text-[#8f9885]">{formatBytes(f.size_bytes)}</span>}
+          {onDownload && (
+            <button
+              type="button"
+              onClick={onDownload}
+              disabled={downloadingId === f.id}
+              className="ml-1 text-[#8f9885] hover:text-[#7fce5c] disabled:opacity-50"
+            >
+              {downloadingId === f.id ? "…" : "Download"}
+            </button>
+          )}
+          {onRemove && (
+            <button type="button" onClick={onRemove} className="ml-1 text-[#5d6456] hover:text-red-400">
+              ✕
+            </button>
+          )}
+        </div>
       </div>
     );
   }
