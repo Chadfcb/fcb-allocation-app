@@ -510,7 +510,9 @@ export async function POST(req: NextRequest) {
                 (block.name === "edit_spreadsheet" ||
                   block.name === "get_file_for_download" ||
                   block.name === "export_pricing_data_as_spreadsheet" ||
-                  block.name === "fetch_url_as_file") &&
+                  block.name === "fetch_url_as_file" ||
+                  block.name === "generate_image" ||
+                  block.name === "edit_image") &&
                 result &&
                 typeof result === "object" &&
                 "id" in result &&

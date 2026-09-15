@@ -78,6 +78,7 @@ import {
   stageFileForQuery,
   clearStagedFileData,
   fetchUrlAsFile,
+  generateOrEditImageWithGemini,
   type SpreadsheetEditInput,
   type SpreadsheetSheetInput,
 } from "@/lib/ernie/files";
@@ -368,6 +369,52 @@ Each edit is {sheet, cell, value}: sheet is the exact sheet name (omit for a CSV
         },
       },
       required: ["file_id", "edits"],
+    },
+  },
+  {
+    name: "generate_image",
+    description:
+      `Create a brand-new image from a text description (Google's Gemini/"Nano Banana Pro" image model, added 2026-09-15) and hand it back as a downloadable/viewable attachment in this chat — a label concept, a marketing graphic, an event flyer, a product mockup, whatever the user describes. This is a generative model, not a search or a stock-photo lookup: it draws something new based on the description, it doesn't find an existing picture.
+
+Write a specific, detailed prompt (subject, style, composition, colors, mood) — a vague one-line prompt gets a generic result. This costs real money per call (a fraction of a dollar), so don't call it speculatively or generate multiple variations unless the user asked for options. It won't generate real people's likenesses, another company's trademarked logos/characters, or anything deceptive — treat a refusal from the model as a hard no, not something to retry with a workaround.`,
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        prompt: {
+          type: "string",
+          description: "A detailed description of the image to create — subject, style, composition, colors, mood.",
+        },
+        output_file_name: {
+          type: "string",
+          description: 'Optional file name (without extension needed) for the generated image. Omit for a generic name like "ernie-image".',
+        },
+      },
+      required: ["prompt"],
+    },
+  },
+  {
+    name: "edit_image",
+    description:
+      `Edit an existing image — one the user uploaded, or one Ernie generated earlier in this chat — using Google's Gemini/"Nano Banana Pro" image model, and hand back a NEW image with the requested change (the original file is left untouched). Use this for things like changing a background, restyling, recoloring, adding/removing an element, or combining an instruction with a reference image.
+
+This is a generative re-render guided by the original image and your instructions, not a surgical pixel-level edit — it's very good at localized changes but there's no hard guarantee that everything outside the requested change stays byte-for-byte identical; say so if the user needs pixel-exact precision (e.g. touching up a print-ready file), since that's a job for real editing software instead. Write a specific instruction describing exactly what should change. This costs real money per call, so don't call it speculatively.`,
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        file_id: {
+          type: "string",
+          description: "The id of the image file to edit (from list_uploaded_files, or one Ernie generated earlier in this conversation).",
+        },
+        prompt: {
+          type: "string",
+          description: "A specific instruction describing exactly what to change about the image.",
+        },
+        output_file_name: {
+          type: "string",
+          description: "Optional file name (without extension needed) for the edited image. Omit to derive one from the original.",
+        },
+      },
+      required: ["file_id", "prompt"],
     },
   },
   {
@@ -964,6 +1011,8 @@ const TOOL_STATUS_LABELS: Record<string, string> = {
   list_uploaded_files: "Checking your uploaded files",
   read_uploaded_file: "Reading your uploaded file",
   edit_spreadsheet: "Editing your spreadsheet",
+  generate_image: "Creating your image",
+  edit_image: "Editing your image",
   get_file_for_download: "Fetching that file",
   fetch_url_as_file: "Fetching that from the web",
   stage_uploaded_file_for_query: "Loading your file for analysis",
@@ -2565,6 +2614,56 @@ export async function runErnieTool(
       }
     }
 
+    case "generate_image": {
+      const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
+      if (!prompt) return { error: "No prompt provided." };
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return { error: "Not signed in." };
+
+      try {
+        const outputFileName = input.output_file_name as string | undefined;
+        return await generateOrEditImageWithGemini(supabase, user.id, { prompt, outputFileName });
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : "Couldn't generate that image." };
+      }
+    }
+
+    case "edit_image": {
+      const fileId = input.file_id as string | undefined;
+      const prompt = typeof input.prompt === "string" ? input.prompt.trim() : "";
+      if (!fileId) return { error: "No file_id provided." };
+      if (!prompt) return { error: "No prompt provided." };
+
+      const { data: file, error } = await supabase
+        .from("ernie_files")
+        .select("id, file_name, mime_type, size_bytes, storage_path, source_bucket")
+        .eq("id", fileId)
+        .maybeSingle();
+      if (error) throw error;
+      if (!file) {
+        return { error: "No file found with that id (it may not exist, or belong to someone else)." };
+      }
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return { error: "Not signed in." };
+
+      try {
+        const outputFileName = input.output_file_name as string | undefined;
+        return await generateOrEditImageWithGemini(supabase, user.id, {
+          prompt,
+          outputFileName: outputFileName || file.file_name,
+          sourceFile: file,
+        });
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : "Couldn't edit that image." };
+      }
+    }
+
     case "get_file_for_download": {
       // Deliberately NOT in ADMIN_ONLY_TOOL_NAMES — access is enforced by
       // the target bucket's own RLS at fetch time (see
@@ -2781,6 +2880,8 @@ You also have run_read_only_query, a general-purpose tool that runs any read-onl
 Before you ever tell someone something "isn't tracked," "doesn't exist," or "has no data source in this app" — for ANY concept, not just files — check TWO things first, not just the database: (1) select file_name, description from ernie_reference_documents (it's small, read the whole table, don't try to filter by keyword) and actually look for it in the description text; (2) consider whether it might be a fixed value computed in code rather than stored data — if so, use read_app_file on the relevant lib/ file (lib/contributionMargin.ts, lib/marginAnalysis.ts, lib/costPerCase.ts, lib/pallets.ts, lib/packaging.ts are the ones that hold fixed constants/formulas behind the Sales and Inventory pages) and read the real number straight from the source, which is a better answer than a reference note anyway. Checking the database schema for a matching column/table name is NOT the same check and does not satisfy either of these — a concept like "excise tax" will never be a column name even when a real, on-the-record answer exists as a note or in the code itself. Only say something isn't tracked anywhere after all of this has also come back empty.
 
 Anyone can attach files to a message (drag-and-drop onto the chat, or the attach button) — a freshly-attached file's contents are included automatically, with no tool call needed. Images, PDFs, spreadsheets (.xlsx), CSV, and plain text files are all read directly; any other file type can still be uploaded but you can't read its contents yet, so say that plainly rather than guessing what's in it. If someone refers to a file from earlier without re-attaching it, use list_uploaded_files to find it and read_uploaded_file to pull its contents back up — this works for PDFs too, not just spreadsheets/CSV/text/images, so don't ask for a PDF to be re-attached; just call read_uploaded_file with its file_id. For spreadsheets and CSV specifically, you can also edit them with edit_spreadsheet: read the file first so you know its real sheet names and current cell values, then give it the exact cells to change — it edits that file in place (preserving everything else: formatting, other sheets, formulas) and hands back a new file to download. Never claim you've edited or analyzed a file without actually having its contents in front of you.
+
+You can also create and edit actual images (added 2026-09-15) — generate_image makes a brand-new image from a text description (a label concept, a marketing graphic, a mockup, anything someone describes), and edit_image takes an image someone uploaded or one you generated earlier and produces a new, edited version of it based on an instruction (change the background, recolor something, add or remove an element, restyle it). Both hand back a real downloadable/viewable image in this chat, the same way edit_spreadsheet hands back a file. Write a specific, detailed prompt rather than a vague one — describe subject, style, composition, colors, and mood for a generation, and exactly what should change for an edit. This is a generative model re-rendering the image, not a pixel-level surgical tool — very good at localized edits, but say so plainly if someone needs guaranteed pixel-exact precision (e.g. touching up print-ready artwork), since that's a job for real editing software. Each call costs real money, so don't call either tool speculatively or generate multiple variations unless asked. Like any image model, it won't generate real people's likenesses, other companies' trademarked logos/characters, or anything deceptive — treat a refusal as final, not something to route around.
 
 The automatic preview of an attached spreadsheet/CSV is capped at 300 rows — fine for looking at or editing a file, but NOT enough to actually calculate anything across a bigger one. Whenever someone wants a real calculation over a file with more rows than that — total units sold by product, a weighted average, matching it against another dataset, anything you'd normally reach for a spreadsheet formula or a SQL query to get right — call stage_uploaded_file_for_query first. That loads every row into a table you can then query for real with run_read_only_query (filtered to that file's file_id), so the arithmetic is done by the database, not guessed at by reading rows as text. This is also how to combine an uploaded file with the app's own data in one answer — e.g. matching an Ekos sales export against Contribution Margin figures — since both live in tables run_read_only_query can join in a single query. Call clear_staged_file_data when you're done with a file's staged data, as good tidiness (not required — re-staging the same file already replaces its old rows automatically).
 

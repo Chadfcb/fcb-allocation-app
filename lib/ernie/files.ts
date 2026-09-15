@@ -1014,6 +1014,139 @@ export async function captureCodeExecutionFile(
   return inserted;
 }
 
+// Ernie's image creation/editing (added 2026-09-15, per Chad: "allow ernie
+// to be able to create and manipulate images that are give to him"). This
+// is a separate vendor call from everything else in this file — Anthropic's
+// Claude API powers Ernie itself, but Anthropic has no image-generation
+// model, so this reaches out to Google's Gemini API directly (Nano Banana
+// Pro / gemini-3-pro-image-preview) with a plain server-side fetch, same
+// shape as fetchUrlAsFile above. It's still read/generate-only against the
+// outside world — nothing here ever writes to app data — and the only
+// observable effect is a new image handed back into this same
+// ernie_files/Storage pipeline every other Ernie output already uses, so it
+// shows up as an ordinary chat attachment exactly like an edited
+// spreadsheet does.
+const GEMINI_IMAGE_MODEL = "gemini-3-pro-image-preview";
+const GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta";
+const GEMINI_TIMEOUT_MS = 60000;
+
+interface GeminiContentPart {
+  text?: string;
+  inlineData?: { mimeType: string; data: string };
+}
+
+// generate_image / edit_image's shared implementation (see
+// lib/ernie/tools.ts). Omit sourceFile to create a brand-new image from the
+// prompt alone; pass it (the file the user uploaded or Ernie produced
+// earlier) to have Gemini edit that image instead — either way the result
+// is saved as a NEW ernie_files row, never overwriting the original, same
+// as edit_spreadsheet always producing a new file rather than editing one
+// in place.
+export async function generateOrEditImageWithGemini(
+  supabase: SupabaseClient,
+  userId: string,
+  params: {
+    prompt: string;
+    outputFileName?: string;
+    sourceFile?: Pick<ErnieFileRow, "storage_path" | "mime_type" | "source_bucket">;
+  },
+): Promise<{ id: string; file_name: string; mime_type: string | null; size_bytes: number; note: string }> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("Server is missing GEMINI_API_KEY — image generation isn't configured yet.");
+  }
+
+  const prompt = params.prompt.trim();
+  if (!prompt) throw new Error("A prompt describing the image (or the edit to make) is required.");
+
+  const parts: GeminiContentPart[] = [];
+
+  if (params.sourceFile) {
+    const bucket = params.sourceFile.source_bucket || ERNIE_FILES_BUCKET;
+    const { data, error } = await supabase.storage.from(bucket).download(params.sourceFile.storage_path);
+    if (error || !data) {
+      throw new Error(
+        "Couldn't load the source image to edit — it may not exist, or you don't currently have access to it.",
+      );
+    }
+    const sourceBuffer = Buffer.from(await data.arrayBuffer());
+    parts.push({
+      inlineData: {
+        mimeType: params.sourceFile.mime_type || "image/png",
+        data: sourceBuffer.toString("base64"),
+      },
+    });
+  }
+
+  parts.push({ text: prompt });
+
+  let res: Response;
+  try {
+    res = await fetch(`${GEMINI_API_BASE}/models/${GEMINI_IMAGE_MODEL}:generateContent?key=${apiKey}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts }],
+        generationConfig: { responseModalities: ["TEXT", "IMAGE"] },
+      }),
+      signal: AbortSignal.timeout(GEMINI_TIMEOUT_MS),
+    });
+  } catch (err) {
+    throw new Error(
+      err instanceof Error && err.name === "TimeoutError"
+        ? "Image generation took too long and was cancelled."
+        : "Couldn't reach the image generation service.",
+    );
+  }
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Image generation failed (HTTP ${res.status}). ${errText.slice(0, 300)}`);
+  }
+
+  const json = await res.json();
+  const responseParts: GeminiContentPart[] = json?.candidates?.[0]?.content?.parts ?? [];
+  const imagePart = responseParts.find((p) => p.inlineData?.data);
+  if (!imagePart?.inlineData) {
+    const textPart = responseParts.find((p) => p.text)?.text;
+    throw new Error(
+      textPart
+        ? `The model didn't return an image: ${textPart.slice(0, 300)}`
+        : "The model didn't return an image — try rephrasing the request.",
+    );
+  }
+
+  const mimeType = imagePart.inlineData.mimeType || "image/png";
+  const ext = mimeType === "image/jpeg" ? "jpg" : mimeType.split("/")[1] || "png";
+  const baseName = (params.outputFileName?.trim() || "ernie-image").replace(/\.[^.]*$/, "");
+  const finalName = `${baseName}.${ext}`;
+  const buffer = Buffer.from(imagePart.inlineData.data, "base64");
+  const path = `${userId}/${storageFileName(finalName)}`;
+
+  const { error: uploadErr } = await supabase.storage.from(ERNIE_FILES_BUCKET).upload(path, buffer, {
+    contentType: mimeType,
+    upsert: false,
+  });
+  if (uploadErr) throw new Error(`Generated the image but couldn't save it: ${uploadErr.message}`);
+
+  const { data: inserted, error: insertErr } = await supabase
+    .from("ernie_files")
+    .insert({
+      user_id: userId,
+      direction: "output",
+      source_file_id: null,
+      file_name: finalName,
+      mime_type: mimeType,
+      size_bytes: buffer.length,
+      storage_path: path,
+    })
+    .select("id, file_name, mime_type, size_bytes")
+    .single();
+  if (insertErr) throw new Error(`Generated the image but couldn't save its record: ${insertErr.message}`);
+
+  return { ...inserted, note: `${params.sourceFile ? "Edited" : "Generated"} "${finalName}".` };
+}
+
 // Best-effort audit trail for Ernie's internet/sandbox use (see
 // sql/ernie_tool_execution_log.sql) — a logging failure here must never
 // break or block the actual chat response, so every call site swallows
