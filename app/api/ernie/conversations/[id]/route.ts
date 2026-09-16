@@ -61,13 +61,24 @@ export async function GET(
       file_name: string;
       mime_type: string | null;
       size_bytes: number | null;
+      storage_path: string;
       source_bucket: string | null;
     }
   >();
   if (allFileIds.length > 0) {
+    // storage_path is required here, not just mime_type/size — without it
+    // (this select used to omit it entirely) every file in a RESTORED
+    // conversation comes back with storage_path undefined, so the client's
+    // createSignedUrl(bucket, f.storage_path) call throws immediately
+    // (Supabase's storage client's internal path-building calls
+    // .replace() on it) and every preview sits on "Loading…" forever. A
+    // brand-new file still previews fine because it's fetched separately,
+    // with storage_path, right when the chat route produces it — the bug
+    // only shows up once a conversation is reloaded (Chad, 2026-09-16:
+    // "when i did that all the previews got stuck on loading as well").
     const { data: fileRows } = await supabase
       .from("ernie_files")
-      .select("id, file_name, mime_type, size_bytes, source_bucket")
+      .select("id, file_name, mime_type, size_bytes, storage_path, source_bucket")
       .in("id", allFileIds);
     for (const f of fileRows ?? []) filesById.set(f.id, f);
   }
