@@ -109,8 +109,6 @@ const NEW_SIDEBAR_IDS: string[] = [
   "/finance/distributor-data",
   // Batch Ingredients — new Operations sub-link, added 2026-09-16, per Chad.
   "/batch-ingredients",
-  // Skeleton Hero — new standalone top-level page, added 2026-09-16, per Chad.
-  "/skeleton-hero",
 ];
 
 function NewBadge() {
@@ -750,14 +748,12 @@ export default function Sidebar({
   const showPosSection = role === "admin" || visiblePos.length > 0;
   const showErnie = can(ERNIE_SECTION);
   const showTasks = can("tasks");
-  const showSkeletonHero = can("skeleton_hero_game");
   const showAuditLog = can("audit_log");
 
   const nothingVisible =
     role !== "admin" &&
     !showErnie &&
     !showTasks &&
-    !showSkeletonHero &&
     !showAuditLog &&
     visibleFinance.length === 0 &&
     visibleOperations.length === 0 &&
@@ -839,21 +835,6 @@ export default function Sidebar({
           <Link href="/tasks" className={`mt-1 ${linkClass("/tasks")}`} onClick={() => dismissNew("/tasks")}>
             Tasks
             {showsNew("/tasks") && <NewBadge />}
-          </Link>
-        )}
-
-        {/* Skeleton Hero — the Ernie mini-game, added 2026-09-16 per Chad.
-            Gated by the "skeleton_hero_game" section, same standalone
-            top-level pattern as Tasks (own Users > Edit toggle, no
-            sub-links, not nested under any category). */}
-        {showSkeletonHero && (
-          <Link
-            href="/skeleton-hero"
-            className={`mt-1 ${linkClass("/skeleton-hero")}`}
-            onClick={() => dismissNew("/skeleton-hero")}
-          >
-            Skeleton Hero
-            {showsNew("/skeleton-hero") && <NewBadge />}
           </Link>
         )}
 

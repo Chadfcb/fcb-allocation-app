@@ -35,8 +35,7 @@ export type SectionKey =
   | "tasks"
   | "chain_authorizations"
   | "chain_mandates"
-  | "football_pos"
-  | "skeleton_hero_game";
+  | "football_pos";
 
 // Ernie AI is deliberately its own grantable section, separate from every
 // page section above — an admin may want someone to have, say, Purchase
@@ -82,7 +81,6 @@ export type GroupKey =
   | "events_calendar"
   | "pos_labels"
   | "tasks"
-  | "skeleton_hero"
   | "audit_log";
 
 export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[] }[] = [
@@ -172,14 +170,6 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
     key: "tasks",
     label: "Tasks",
     items: [{ key: "tasks", label: "Tasks" }],
-  },
-  {
-    // Skeleton Hero — the Ernie mini-game, added 2026-09-16 per Chad. Its
-    // own standalone Users > Edit toggle, same pattern as Tasks: one page,
-    // one section, not nested under any other category.
-    key: "skeleton_hero",
-    label: "Skeleton Hero",
-    items: [{ key: "skeleton_hero_game", label: "Skeleton Hero" }],
   },
   {
     key: "audit_log",
