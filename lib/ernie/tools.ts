@@ -3103,6 +3103,41 @@ export async function runErnieTool(
 
       const summary = summaries.join("\n");
       if (!requestId) return { error: "Internal error: missing request id — can't stage this action." };
+
+      // Guard against the exact failure seen live on 2026-09-17: Ernie kept
+      // re-calling propose_actions for the SAME bundle every time Chad said
+      // "do it"/"yes"/etc, instead of calling confirm_pending_action --
+      // producing 7 duplicate pending rows in ernie_pending_actions, none
+      // ever executed. Rather than hope a prompt tweak reliably stops that,
+      // detect it here: if this user already has an unconfirmed bundle
+      // pending from the last few minutes with this EXACT same summary,
+      // it's not a new proposal -- hand back the EXISTING one instead of
+      // creating another duplicate, with a message forceful enough that
+      // Ernie should call confirm_pending_action in this same turn rather
+      // than replying with yet another "here's the plan."
+      const DUPLICATE_WINDOW_MINUTES = 15;
+      const duplicateCutoff = new Date(Date.now() - DUPLICATE_WINDOW_MINUTES * 60 * 1000).toISOString();
+      const { data: duplicateRow } = await supabase
+        .from("ernie_pending_actions")
+        .select("id, summary")
+        .eq("created_by", userId)
+        .eq("action_type", "propose_actions")
+        .eq("status", "pending")
+        .eq("summary", summary)
+        .gte("created_at", duplicateCutoff)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (duplicateRow) {
+        return {
+          pending: true,
+          pending_action_id: duplicateRow.id,
+          summary: duplicateRow.summary,
+          message:
+            "STOP -- this exact bundle is ALREADY staged and waiting, from a moment ago in this same conversation. Nothing new was created just now; do not reply with another \"here's the plan\" preview, and do not call propose_actions again for this. If the user's last message was them approving/agreeing (e.g. \"do it\", \"yes\", \"go ahead\", or similar, however phrased) -- call confirm_pending_action right now, in this same turn, with no arguments, instead of sending a text reply first.",
+        };
+      }
+
       return await createPendingAction(supabase, {
         userId,
         requestId,
@@ -3627,7 +3662,7 @@ export function buildErnieSystemPrompt(
     ? ` If a single request naturally has more than one part — a new subcategory AND a task filed under it, an event you're adding AND another one you're changing, etc. — use propose_actions to stage the WHOLE list as one bundle instead of trying to narrate a multi-step plan in your own words; the same CRITICAL rule below applies to every step inside it: nothing has happened for ANY step until you actually called propose_actions and got a real preview back, and the whole bundle is approved and executed together with a single confirm_pending_action. Never tell someone you'll "do both steps" or "do that next" unless you actually called the matching propose tool (a single one, or propose_actions for several) and are relaying its real preview. Concretely: if you catch yourself about to type something shaped like "Here's the plan: 1. New subcategory X under Y. 2. Task Z filed under it — @-mention me to confirm" — STOP. That is only a valid reply if you already called propose_actions THIS SAME TURN and are quoting the real summary it handed back, word for word. If you haven't called it yet, call it now instead of hand-writing that sentence yourself — composing what a preview would probably look like is exactly the mistake that leaves nothing actually staged.`
     : "";
   const writeAccessSentence = hasAnyWriteAccess
-    ? `${calendarSentence}${taskSentence}${bundleSentence} CRITICAL: never describe a "preview" of a calendar event or task in your reply unless you actually called the real add/update/delete/create_task/propose_actions tool THIS SAME TURN and are relaying the exact preview text it gave back — inventing preview-sounding text without calling the tool leaves nothing real staged, and a later "confirm" will then find nothing of yours to confirm (or, worse, silently confirm some unrelated leftover instead). Never propose and execute in the same turn — always wait for a genuine new message confirming it, and when that confirmation comes, call confirm_pending_action with no arguments (it automatically confirms your own most recent proposal — never try to recall or re-type a pending_action_id yourself). Every write is logged to the app's Audit Log, same as if a person made it, so it can be undone if it's wrong. Everything else in the app stays completely read-only: for anything outside these calendars and tasks, tell people you're read-only and they'll need to make that change on the relevant page themselves.`
+    ? `${calendarSentence}${taskSentence}${bundleSentence} CRITICAL: never describe a "preview" of a calendar event or task in your reply unless you actually called the real add/update/delete/create_task/propose_actions tool THIS SAME TURN and are relaying the exact preview text it gave back — inventing preview-sounding text without calling the tool leaves nothing real staged, and a later "confirm" will then find nothing of yours to confirm (or, worse, silently confirm some unrelated leftover instead). Never propose and execute in the same turn — always wait for a genuine new message confirming it, and when that confirmation comes, call confirm_pending_action with no arguments (it automatically confirms your own most recent proposal — never try to recall or re-type a pending_action_id yourself). EQUALLY CRITICAL, and a real bug that has actually happened: once you've already shown someone a preview and they come back agreeing in ANY form — "do it", "yes", "go ahead", "confirm", repeating themselves more emphatically, however they phrase approval — that is a confirmation, not a new request. Call confirm_pending_action, not the propose tool again. Calling the propose tool again in response to an approval creates ANOTHER duplicate pending action and STILL writes nothing, which just makes the person repeat themselves forever while thinking something is wrong with you — check the recent conversation history yourself before replying: if you (or a previous turn) already staged something matching what's being asked, the next tool call should be confirm_pending_action, never another propose. Every write is logged to the app's Audit Log, same as if a person made it, so it can be undone if it's wrong. Everything else in the app stays completely read-only: for anything outside these calendars and tasks, tell people you're read-only and they'll need to make that change on the relevant page themselves.`
     : `You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`;
 
   const dataAccessParagraph =
