@@ -1,4 +1,4 @@
-﻿import type { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Role } from "@/lib/types/db";
 
 // Single source of truth for the per-user, per-section access system that
@@ -24,6 +24,7 @@ export type SectionKey =
   | "distributor_pricing"
   | "weeks"
   | "upcs"
+  | "batch_ingredients"
   | "audit_log"
   | "price_list"
   | "margin_analysis"
@@ -34,7 +35,8 @@ export type SectionKey =
   | "tasks"
   | "chain_authorizations"
   | "chain_mandates"
-  | "football_pos";
+  | "football_pos"
+  | "skeleton_hero_game";
 
 // Ernie AI is deliberately its own grantable section, separate from every
 // page section above — an admin may want someone to have, say, Purchase
@@ -73,7 +75,15 @@ export interface SectionInfo {
 // edits a new top-level category needs.
 //
 // Order here is also the display order in the Users > Edit checklist.
-export type GroupKey = "finance" | "operations" | "sales" | "events_calendar" | "pos_labels" | "tasks" | "audit_log";
+export type GroupKey =
+  | "finance"
+  | "operations"
+  | "sales"
+  | "events_calendar"
+  | "pos_labels"
+  | "tasks"
+  | "skeleton_hero"
+  | "audit_log";
 
 export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[] }[] = [
   {
@@ -110,6 +120,11 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
       // Chad, right before he asked to move Audit Log out of Operations
       // entirely (see the new "audit_log" group below).
       { key: "upcs", label: "UPC's" },
+      // Batch Ingredients — new standalone page added 2026-09-16, per
+      // Chad: a sub-category of Operations, positioned right below UPC's.
+      // Full CRUD on each brand's recipe (previously only a read-only tab
+      // on Sales > Cost Per Case, which stays in place unchanged).
+      { key: "batch_ingredients", label: "Batch Ingredients" },
     ],
   },
   {
@@ -121,11 +136,9 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
       { key: "cost_per_case", label: "Cost Per Case" },
       { key: "contribution_margin", label: "Contribution Margin" },
       // Added 2026-09-05, per Chad — imported from a chain
-      // authorizations/mandates spreadsheet. Per Chad: "only the main
-      // category is gated for access... if someone is given access to
-      // Sales, they have access to all sub categories" — these are NOT
-      // their own Users > Edit toggle, they just ride along with Sales,
-      // same as every other item in this group.
+      // authorizations/mandates spreadsheet. Not their own Users > Edit
+      // toggle, they just ride along with Sales, same as every other
+      // item in this group.
       { key: "chain_authorizations", label: "Chain Authorizations" },
       { key: "chain_mandates", label: "Chain Mandates" },
     ],
@@ -159,6 +172,14 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
     key: "tasks",
     label: "Tasks",
     items: [{ key: "tasks", label: "Tasks" }],
+  },
+  {
+    // Skeleton Hero — the Ernie mini-game, added 2026-09-16 per Chad. Its
+    // own standalone Users > Edit toggle, same pattern as Tasks: one page,
+    // one section, not nested under any other category.
+    key: "skeleton_hero",
+    label: "Skeleton Hero",
+    items: [{ key: "skeleton_hero_game", label: "Skeleton Hero" }],
   },
   {
     key: "audit_log",

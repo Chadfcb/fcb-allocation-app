@@ -107,6 +107,10 @@ const NEW_SIDEBAR_IDS: string[] = [
   "/finance/cashflow-dashboard",
   // Distributor Data — new Finance sub-link, added 2026-09-09, per Chad.
   "/finance/distributor-data",
+  // Batch Ingredients — new Operations sub-link, added 2026-09-16, per Chad.
+  "/batch-ingredients",
+  // Skeleton Hero — new standalone top-level page, added 2026-09-16, per Chad.
+  "/skeleton-hero",
 ];
 
 function NewBadge() {
@@ -139,6 +143,12 @@ const OPERATIONS_LINKS: { href: string; label: string; section: SectionKey }[] =
   // out of operations." UPC's (new, same date) is no longer a flat link
   // here either — like Labels, it's now its own expandable brand tree
   // (see UPC_BRANDS / showUpcTree below) rendered right after Labels.
+  //
+  // Batch Ingredients — new standalone page, added 2026-09-16 per Chad,
+  // positioned right below UPC's. Placed after the Weeks entry here (not
+  // before it) so it lands in opsAfterLabels below, which renders after
+  // the Labels/UPC's tree block rather than before it.
+  { href: "/batch-ingredients", label: "Batch Ingredients", section: "batch_ingredients" },
 ];
 
 // Sales sub-links get added here one at a time as each piece of the old FCB
@@ -740,12 +750,14 @@ export default function Sidebar({
   const showPosSection = role === "admin" || visiblePos.length > 0;
   const showErnie = can(ERNIE_SECTION);
   const showTasks = can("tasks");
+  const showSkeletonHero = can("skeleton_hero_game");
   const showAuditLog = can("audit_log");
 
   const nothingVisible =
     role !== "admin" &&
     !showErnie &&
     !showTasks &&
+    !showSkeletonHero &&
     !showAuditLog &&
     visibleFinance.length === 0 &&
     visibleOperations.length === 0 &&
@@ -827,6 +839,21 @@ export default function Sidebar({
           <Link href="/tasks" className={`mt-1 ${linkClass("/tasks")}`} onClick={() => dismissNew("/tasks")}>
             Tasks
             {showsNew("/tasks") && <NewBadge />}
+          </Link>
+        )}
+
+        {/* Skeleton Hero — the Ernie mini-game, added 2026-09-16 per Chad.
+            Gated by the "skeleton_hero_game" section, same standalone
+            top-level pattern as Tasks (own Users > Edit toggle, no
+            sub-links, not nested under any category). */}
+        {showSkeletonHero && (
+          <Link
+            href="/skeleton-hero"
+            className={`mt-1 ${linkClass("/skeleton-hero")}`}
+            onClick={() => dismissNew("/skeleton-hero")}
+          >
+            Skeleton Hero
+            {showsNew("/skeleton-hero") && <NewBadge />}
           </Link>
         )}
 
