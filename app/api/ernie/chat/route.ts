@@ -560,13 +560,39 @@ export async function POST(req: NextRequest) {
             continue;
           }
 
-          finalText = content
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+          const textThisRound = content
             .filter((b: any) => b.type === "text")
             // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
             .map((b: any) => b.text)
             .join("\n")
             .trim();
+
+          // A round can end without stop_reason "tool_use" and still have
+          // done something real but invisible — most commonly, the model
+          // reached for the code sandbox (a server_tool_use resolved
+          // above) instead of generate_image/edit_image for an image task,
+          // which can never actually succeed (the sandbox has no internet
+          // access, so it can't reach the image model) and often comes
+          // back with no accompanying text. Previously this silently fell
+          // through to the generic "I wasn't able to put together an
+          // answer" message below with no way to tell what happened. Give
+          // it one more explicit nudge instead of accepting silence as
+          // "done," unless this was already the forced-text-only last
+          // round (isLastRound) — that round is the actual final chance,
+          // so if it comes back empty even after this, the generic
+          // fallback below is still the right last resort.
+          if (!textThisRound && !isLastRound) {
+            anthropicMessages.push({ role: "assistant", content });
+            anthropicMessages.push({
+              role: "user",
+              content:
+                "That round didn't produce a text reply or a tool call. If this involves creating, editing, or extending an image, use generate_image or edit_image — never the code sandbox, which has no internet access and can never reach the image model. Otherwise, either call the right tool or give a plain-text answer now.",
+            });
+            continue;
+          }
+
+          finalText = textThisRound;
           break;
         }
 
