@@ -913,6 +913,48 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
     },
   },
   {
+    name: "propose_actions",
+    description:
+      "Propose SEVERAL related task/subcategory/calendar-event actions together as ONE bundle, for when a single request from the user naturally has more than one part — e.g. \"create a new 'Bottling' subcategory under Operations, then file a task under it\" is two actions that belong in one bundle, not two separate proposals. Use this INSTEAD OF calling the individual action tools directly whenever a request has 2+ parts that should happen together. The user sees the whole numbered list of what will happen and approves it ONCE — nothing happens until they do, via confirm_pending_action same as any single action. Supported action_type values: create_task, update_task, create_task_subcategory, add_social_media_calendar_event, update_social_media_calendar_event, add_events_calendar_event, update_events_calendar_event, add_chain_calendar_event, update_chain_calendar_event — each step's \"input\" takes exactly the same fields as that action's own tool (everything except confirmed/pending_action_id, which don't apply inside a bundle). If a later step needs something an EARLIER step in this same bundle is about to create (e.g. a task that goes under a brand-new subcategory, or an update to something you're also creating in this bundle), put \"$step0\", \"$step1\", etc. (the 0-indexed position of that earlier step in this actions array) in place of the real id — it's filled in automatically once that earlier step actually runs. Steps run in the order given; if one fails partway through, earlier steps in the bundle have already happened and are NOT rolled back, so say so plainly if that occurs. For a request that's really just one action, call that action's own tool directly instead of wrapping it here — this tool requires at least 2 steps.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        actions: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              action_type: {
+                type: "string",
+                enum: [
+                  "create_task",
+                  "update_task",
+                  "create_task_subcategory",
+                  "add_social_media_calendar_event",
+                  "update_social_media_calendar_event",
+                  "add_events_calendar_event",
+                  "update_events_calendar_event",
+                  "add_chain_calendar_event",
+                  "update_chain_calendar_event",
+                ],
+              },
+              input: {
+                type: "object",
+                description:
+                  "The same fields that action's own tool takes (minus confirmed/pending_action_id). Use \"$step0\", \"$step1\", etc. for a value that should come from an earlier step in this same list, instead of a real id.",
+              },
+            },
+            required: ["action_type", "input"],
+          },
+          description: "2 to 8 steps, run in the order given.",
+        },
+        confirmed: { type: "boolean" },
+        pending_action_id: { type: "string" },
+      },
+      required: ["actions"],
+    },
+  },
+  {
     name: "update_person_notes",
     description:
       `Update your running private notes on the person you're currently talking to — how they like you to communicate (tone, brevity, format), and durable work context about them that's come up naturally (their role, what they handle in the app, whether they're new to it, etc.). These notes are private to this one person: only they can ever see or edit them (not even an admin can), and you only ever read/write the CURRENT signed-in user's own notes — you have no way to see or affect anyone else's.
@@ -969,6 +1011,7 @@ const ADMIN_ONLY_TOOL_NAMES = new Set([
   "get_tasks",
   "get_task_categories",
   "confirm_pending_action",
+  "propose_actions",
 ]);
 
 // Which section(s) unlock each formerly-admin-only tool — mirrors the RLS
@@ -1017,6 +1060,12 @@ const TOOL_SECTIONS: Record<string, AnySectionKey[] | null> = {
   // just what makes the tool visible at all, same defense-in-depth pattern
   // canUseTool already applies everywhere else.
   confirm_pending_action: ["events_calendar", "tasks"],
+  // Same reasoning as confirm_pending_action just above -- a bundle can mix
+  // task and calendar steps, so this just needs to be visible to anyone
+  // with either; propose_actions itself re-checks each individual step's
+  // real required section (see PENDING_ACTION_SECTIONS/loadConfirmedPendingAction)
+  // before resolving it and again before executing it.
+  propose_actions: ["events_calendar", "tasks"],
 };
 
 function canUseTool(
@@ -1579,6 +1628,19 @@ async function loadConfirmedPendingAction(
   if (requiredSection && !hasSection(params.role, params.sections, requiredSection, params.isSuperAdmin)) {
     return { error: "This account no longer has the access this action needs — it can't be confirmed." };
   }
+  // A bundle (propose_actions) has no single required section of its own --
+  // it can mix task and calendar steps -- so re-check every individual
+  // step's own section here too, same defense-in-depth spirit as the single
+  // check just above.
+  if (row.action_type === "propose_actions") {
+    const steps = (row.payload as { steps?: { action_type: string }[] }).steps ?? [];
+    for (const step of steps) {
+      const stepSection = PENDING_ACTION_SECTIONS[step.action_type];
+      if (stepSection && !hasSection(params.role, params.sections, stepSection, params.isSuperAdmin)) {
+        return { error: "This account no longer has the access one of this bundle's steps needs — it can't be confirmed." };
+      }
+    }
+  }
 
   const { error: updateErr } = await supabase
     .from("ernie_pending_actions")
@@ -1598,6 +1660,451 @@ async function resolveDistributorId(supabase: SupabaseClient, name: string): Pro
     return { error: `More than one distributor matches "${name}": ${data.map((d) => d.name).join(", ")}. Be more specific.` };
   }
   return { id: data[0].id };
+}
+
+// ---------------------------------------------------------------------------
+// propose_actions (bundling several actions into one proposal) -- added
+// 2026-09-17 per Chad, after Ernie was seen narrating a two-step plan
+// ("I'll create a subcategory, then file the task under it") without
+// actually calling any tool for it, then having nothing to confirm. Rather
+// than force every multi-part request through several separate round trips,
+// propose_actions lets Ernie stage a whole list of steps as ONE pending
+// action, confirmed all at once via the SAME confirm_pending_action tool
+// every other action already uses -- see the case for it in runErnieTool
+// below. A step can reference something an EARLIER step in the same bundle
+// is about to create (e.g. a task filed under a subcategory that doesn't
+// exist yet) using a "$stepN" placeholder in place of a real id; that
+// placeholder is substituted with the real id only once execution actually
+// reaches that step, in order, during confirm.
+//
+// resolveBundleStep/executeBundleStep below are intentionally separate,
+// fresh implementations of the same logic already living in each
+// individual tool's own case (create_task, create_task_subcategory,
+// add/update_*_calendar_event) rather than a shared refactor of those
+// existing, already-working cases -- kept this way deliberately to avoid
+// touching code that's already shipped and tested. If one of those
+// individual tools' behavior changes, the matching branch below should be
+// updated to match.
+
+const BUNDLEABLE_ACTION_TYPES = new Set([
+  "create_task",
+  "update_task",
+  "create_task_subcategory",
+  "add_social_media_calendar_event",
+  "update_social_media_calendar_event",
+  "add_events_calendar_event",
+  "update_events_calendar_event",
+  "add_chain_calendar_event",
+  "update_chain_calendar_event",
+]);
+
+function isStepPlaceholder(value: unknown): value is string {
+  return typeof value === "string" && /^\$step\d+$/.test(value);
+}
+function placeholderIndex(value: string): number {
+  return parseInt(value.slice(5), 10);
+}
+
+async function resolveBundleStep(
+  supabase: SupabaseClient,
+  actionType: string,
+  input: Record<string, unknown>,
+  userId: string,
+  stepIndex: number,
+): Promise<{ error: string } | { payload: Record<string, unknown>; targetTable: string; summary: string }> {
+  // A step can only reference something an EARLIER step in this same
+  // bundle creates -- never itself or a later one.
+  const checkPlaceholder = (value: unknown, fieldLabel: string): { error: string } | null => {
+    if (!isStepPlaceholder(value)) return null;
+    const idx = placeholderIndex(value as string);
+    if (idx >= stepIndex) {
+      return {
+        error: `${fieldLabel} references step ${idx + 1}, which isn't before this step (step ${stepIndex + 1}) — a step can only use something an earlier step creates.`,
+      };
+    }
+    return null;
+  };
+
+  switch (actionType) {
+    case "create_task": {
+      const subcategoryId = input.subcategory_id as string | undefined;
+      const title = (input.title as string | undefined)?.trim();
+      if (!subcategoryId) return { error: "subcategory_id is required." };
+      if (!title) return { error: "title is required." };
+      const placeholderErr = checkPlaceholder(subcategoryId, "subcategory_id");
+      if (placeholderErr) return placeholderErr;
+
+      let subcategoryLabel = `the subcategory created in step ${isStepPlaceholder(subcategoryId) ? placeholderIndex(subcategoryId) + 1 : 0}`;
+      if (!isStepPlaceholder(subcategoryId)) {
+        const { data: subcategory, error: subErr } = await supabase
+          .from("task_subcategories")
+          .select("id, name")
+          .eq("id", subcategoryId)
+          .maybeSingle();
+        if (subErr) return { error: subErr.message };
+        if (!subcategory) return { error: "No task subcategory found with that id." };
+        subcategoryLabel = `"${subcategory.name}"`;
+      }
+
+      let assigneeNames = "";
+      const assigneeIds = Array.isArray(input.assignee_user_ids) ? (input.assignee_user_ids as string[]) : [];
+      if (assigneeIds.length > 0) {
+        const { data: assigneeProfiles } = await supabase.from("profiles").select("id, full_name, email").in("id", assigneeIds);
+        assigneeNames = (assigneeProfiles ?? []).map((p) => p.full_name?.trim() || p.email).join(", ");
+      }
+
+      const payload = {
+        subcategory_id: subcategoryId,
+        title,
+        notes: (input.notes as string | undefined)?.trim() || null,
+        due_date: (input.due_date as string | undefined) || null,
+        created_by: userId,
+        assignee_user_ids: assigneeIds,
+      };
+      const summary = `Create a task under ${subcategoryLabel}: "${title}"${input.due_date ? `, due ${input.due_date}` : ""}${
+        assigneeNames ? `, assigned to ${assigneeNames}` : ""
+      }${input.notes ? `. Notes: ${input.notes}` : ""}.`;
+      return { payload, targetTable: "task_items", summary };
+    }
+
+    case "create_task_subcategory": {
+      const categoryId = input.category_id as string | undefined;
+      const name = (input.name as string | undefined)?.trim();
+      if (!categoryId) return { error: "category_id is required." };
+      if (!name) return { error: "name is required." };
+
+      const { data: category, error: catErr } = await supabase
+        .from("task_categories")
+        .select("id, name")
+        .eq("id", categoryId)
+        .maybeSingle();
+      if (catErr) return { error: catErr.message };
+      if (!category) return { error: "No task category found with that id." };
+
+      const key = name.toLowerCase().replace(/\s+/g, "-");
+      const { data: existingSubs, error: existingErr } = await supabase
+        .from("task_subcategories")
+        .select("id, name")
+        .eq("category_id", categoryId)
+        .eq("key", key);
+      if (existingErr) return { error: existingErr.message };
+      if (existingSubs && existingSubs.length > 0) {
+        return { error: `A subcategory named "${existingSubs[0].name}" already exists under "${category.name}".` };
+      }
+
+      const payload = { category_id: categoryId, key, name, created_by: userId };
+      const summary = `Create a new subcategory "${name}" under "${category.name}".`;
+      return { payload, targetTable: "task_subcategories", summary };
+    }
+
+    case "update_task": {
+      const TASK_ITEM_FIELDS = ["title", "notes", "due_date", "status"] as const;
+      const id = input.id as string | undefined;
+      if (!id) return { error: "id is required." };
+      const placeholderErr = checkPlaceholder(id, "id");
+      if (placeholderErr) return placeholderErr;
+
+      let existing: Record<string, unknown> | null = null;
+      if (!isStepPlaceholder(id)) {
+        const { data, error: fetchErr } = await supabase.from("task_items").select("*").eq("id", id).maybeSingle();
+        if (fetchErr) return { error: fetchErr.message };
+        if (!data) return { error: "No task found with that id." };
+        existing = data;
+      }
+
+      if (input.status !== undefined && !["open", "resolved"].includes(input.status as string)) {
+        return { error: `status must be "open" or "resolved", got "${input.status}".` };
+      }
+
+      const updatePayload: Record<string, unknown> = { id };
+      const changeDescriptions: string[] = [];
+      for (const field of TASK_ITEM_FIELDS) {
+        if (input[field] === undefined) continue;
+        const raw = input[field];
+        const value = typeof raw === "string" && raw.trim() === "" && field !== "title" && field !== "status" ? null : raw;
+        updatePayload[field] = value;
+        changeDescriptions.push(existing ? `${field}: "${existing[field] ?? ""}" → "${value ?? ""}"` : `${field} → "${value ?? ""}"`);
+      }
+
+      let assigneeNames = "";
+      if (input.assignee_user_ids !== undefined) {
+        const assigneeIds = Array.isArray(input.assignee_user_ids) ? (input.assignee_user_ids as string[]) : [];
+        updatePayload.assignee_user_ids = assigneeIds;
+        if (assigneeIds.length > 0) {
+          const { data: assigneeProfiles } = await supabase.from("profiles").select("id, full_name, email").in("id", assigneeIds);
+          assigneeNames = (assigneeProfiles ?? []).map((p) => p.full_name?.trim() || p.email).join(", ");
+          changeDescriptions.push(`assignees → ${assigneeNames}`);
+        } else {
+          changeDescriptions.push("assignees: cleared (unassigned)");
+        }
+      }
+
+      if (changeDescriptions.length === 0) return { error: "No fields were provided to change." };
+
+      const label = existing ? `"${existing.title}"` : "the task from an earlier step";
+      const summary = `Update ${label}: ${changeDescriptions.join("; ")}.`;
+      return { payload: updatePayload, targetTable: "task_items", summary };
+    }
+
+    case "add_social_media_calendar_event":
+    case "add_events_calendar_event":
+    case "add_chain_calendar_event": {
+      const table = actionType === "add_social_media_calendar_event" ? "social_media_events" : actionType === "add_events_calendar_event" ? "events" : "chain_events";
+      const types =
+        table === "social_media_events"
+          ? ["post", "campaign", "story", "promotion", "other"]
+          : table === "events"
+          ? ["festival", "tasting", "donation", "work-with", "other"]
+          : ["demo", "reset", "ad", "display", "other"];
+      const defaultType = table === "social_media_events" ? "post" : "other";
+      const hasColor = table !== "events";
+      const hasDistributor = table === "events";
+
+      const title = (input.title as string | undefined)?.trim();
+      const startDate = input.start_date as string | undefined;
+      if (!title) return { error: "title is required." };
+      if (!startDate) return { error: "start_date is required." };
+      const eventType = (input.type as string | undefined) || defaultType;
+      if (!types.includes(eventType)) return { error: `type must be one of ${types.join("/")}, got "${eventType}".` };
+
+      let distributorId: string | null = null;
+      let distributorLabel = "";
+      if (hasDistributor && input.distributor_name) {
+        const resolved = await resolveDistributorId(supabase, input.distributor_name as string);
+        if (resolved.error) return { error: resolved.error };
+        distributorId = resolved.id ?? null;
+        distributorLabel = `, distributor: ${input.distributor_name}`;
+      }
+
+      const payload: Record<string, unknown> = {
+        title,
+        start_date: startDate,
+        end_date: (input.end_date as string | undefined) || null,
+        time_label: (input.time_label as string | undefined)?.trim() || null,
+        type: eventType,
+        location: (input.location as string | undefined)?.trim() || null,
+        rep: (input.rep as string | undefined)?.trim() || null,
+        notes: (input.notes as string | undefined)?.trim() || null,
+        created_by: userId,
+        updated_by: userId,
+      };
+      if (hasColor) payload.color = (input.color as string | undefined) || null;
+      if (hasDistributor) payload.distributor_id = distributorId;
+
+      const calendarLabel = table === "social_media_events" ? "Social Media Calendar" : table === "events" ? "Events Calendar" : "Chain Calendar";
+      const summary = `Add to the ${calendarLabel}: "${title}" (${eventType}) on ${startDate}${
+        input.end_date ? ` through ${input.end_date}` : ""
+      }${input.time_label ? `, ${input.time_label}` : ""}${input.location ? ` at ${input.location}` : ""}${distributorLabel}${
+        input.rep ? `, rep: ${input.rep}` : ""
+      }${input.notes ? `. Notes: ${input.notes}` : ""}.`;
+
+      return { payload, targetTable: table, summary };
+    }
+
+    case "update_social_media_calendar_event":
+    case "update_events_calendar_event":
+    case "update_chain_calendar_event": {
+      const table = actionType === "update_social_media_calendar_event" ? "social_media_events" : actionType === "update_events_calendar_event" ? "events" : "chain_events";
+      const types =
+        table === "social_media_events"
+          ? ["post", "campaign", "story", "promotion", "other"]
+          : table === "events"
+          ? ["festival", "tasting", "donation", "work-with", "other"]
+          : ["demo", "reset", "ad", "display", "other"];
+      const hasColor = table !== "events";
+      const hasDistributor = table === "events";
+      const fields = hasColor
+        ? (["title", "start_date", "end_date", "time_label", "type", "location", "rep", "color", "notes"] as const)
+        : (["title", "start_date", "end_date", "time_label", "type", "location", "rep", "notes"] as const);
+
+      const id = input.id as string | undefined;
+      if (!id) return { error: "id is required." };
+      const placeholderErr = checkPlaceholder(id, "id");
+      if (placeholderErr) return placeholderErr;
+
+      let existing: Record<string, unknown> | null = null;
+      if (!isStepPlaceholder(id)) {
+        const { data, error: fetchErr } = await supabase.from(table).select("*").eq("id", id).maybeSingle();
+        if (fetchErr) return { error: fetchErr.message };
+        if (!data) return { error: "No calendar event found with that id." };
+        existing = data;
+      }
+
+      if (input.type !== undefined && !types.includes(input.type as string)) {
+        return { error: `type must be one of ${types.join("/")}, got "${input.type}".` };
+      }
+
+      const updatePayload: Record<string, unknown> = { id, updated_by: userId, updated_at: new Date().toISOString() };
+      const changeDescriptions: string[] = [];
+      for (const field of fields) {
+        if (input[field] === undefined) continue;
+        const raw = input[field];
+        const value = typeof raw === "string" && raw.trim() === "" && field !== "title" && field !== "start_date" ? null : raw;
+        updatePayload[field] = value;
+        changeDescriptions.push(existing ? `${field}: "${existing[field] ?? ""}" → "${value ?? ""}"` : `${field} → "${value ?? ""}"`);
+      }
+      if (hasDistributor && input.distributor_name !== undefined) {
+        if (input.distributor_name === "") {
+          updatePayload.distributor_id = null;
+          changeDescriptions.push("distributor: cleared");
+        } else {
+          const resolved = await resolveDistributorId(supabase, input.distributor_name as string);
+          if (resolved.error) return { error: resolved.error };
+          updatePayload.distributor_id = resolved.id;
+          changeDescriptions.push(`distributor → ${input.distributor_name}`);
+        }
+      }
+      if (changeDescriptions.length === 0) return { error: "No fields were provided to change." };
+
+      const calendarLabel = table === "social_media_events" ? "Social Media Calendar" : table === "events" ? "Events Calendar" : "Chain Calendar";
+      const label = existing ? `"${existing.title}"` : "the event from an earlier step";
+      const summary = `Update ${label} on the ${calendarLabel}: ${changeDescriptions.join("; ")}.`;
+      return { payload: updatePayload, targetTable: table, summary };
+    }
+
+    default:
+      return { error: `"${actionType}" can't be used inside a bundle.` };
+  }
+}
+
+function substitutePlaceholders(
+  payload: Record<string, unknown>,
+  resultIds: Map<number, string>,
+): { error: string } | { payload: Record<string, unknown> } {
+  const resolved: Record<string, unknown> = { ...payload };
+  for (const [key, value] of Object.entries(resolved)) {
+    if (isStepPlaceholder(value)) {
+      const idx = placeholderIndex(value as string);
+      const resultId = resultIds.get(idx);
+      if (!resultId) {
+        return { error: `This step needs the result of step ${idx + 1}, but that step hasn't produced one yet.` };
+      }
+      resolved[key] = resultId;
+    }
+  }
+  return { payload: resolved };
+}
+
+async function executeBundleStep(
+  supabase: SupabaseClient,
+  actionType: string,
+  payload: Record<string, unknown>,
+  targetTable: string,
+  userId: string,
+): Promise<{ error: string } | { result: unknown; resultId?: string }> {
+  switch (actionType) {
+    case "create_task": {
+      const { assignee_user_ids, ...taskPayload } = payload as Record<string, unknown> & { assignee_user_ids?: string[] };
+      const { data, error } = await supabase.from("task_items").insert(taskPayload).select().single();
+      if (error) return { error: error.message };
+      await supabase.from("task_item_activity").insert({ item_id: data.id, actor_id: userId, action: "created", detail: null });
+      if (assignee_user_ids && assignee_user_ids.length > 0) {
+        await supabase.from("task_item_assignees").insert(assignee_user_ids.map((assigneeId) => ({ item_id: data.id, user_id: assigneeId })));
+      }
+      return { result: { task: data }, resultId: data.id };
+    }
+
+    case "update_task": {
+      const { id, assignee_user_ids, ...itemUpdatePayload } = payload as Record<string, unknown> & { id: string; assignee_user_ids?: string[] };
+      const { data: existing, error: fetchErr } = await supabase.from("task_items").select("*").eq("id", id).maybeSingle();
+      if (fetchErr) return { error: fetchErr.message };
+      if (!existing) return { error: "That task no longer exists — it may have been deleted since this was proposed." };
+
+      let data = existing;
+      if (Object.keys(itemUpdatePayload).length > 0) {
+        const { data: updated, error } = await supabase.from("task_items").update(itemUpdatePayload).eq("id", id).select().single();
+        if (error) return { error: error.message };
+        data = updated;
+      }
+      if ("title" in itemUpdatePayload) {
+        await supabase.from("task_item_activity").insert({ item_id: id, actor_id: userId, action: "renamed", detail: itemUpdatePayload.title as string });
+      }
+      if ("due_date" in itemUpdatePayload) {
+        const newDue = itemUpdatePayload.due_date as string | null;
+        await supabase.from("task_item_activity").insert({
+          item_id: id,
+          actor_id: userId,
+          action: newDue ? "due_date_set" : "due_date_cleared",
+          detail: newDue,
+        });
+      }
+      if ("status" in itemUpdatePayload) {
+        await supabase.from("task_item_activity").insert({
+          item_id: id,
+          actor_id: userId,
+          action: itemUpdatePayload.status === "resolved" ? "resolved" : "reopened",
+          detail: null,
+        });
+      }
+      if (assignee_user_ids !== undefined) {
+        await supabase.from("task_item_assignees").delete().eq("item_id", id);
+        if (assignee_user_ids.length > 0) {
+          await supabase.from("task_item_assignees").insert(assignee_user_ids.map((assigneeId) => ({ item_id: id, user_id: assigneeId })));
+        }
+      }
+      return { result: { task: data }, resultId: id };
+    }
+
+    case "create_task_subcategory": {
+      const { data: stillClear, error: dupErr } = await supabase
+        .from("task_subcategories")
+        .select("id")
+        .eq("category_id", payload.category_id as string)
+        .eq("key", payload.key as string)
+        .maybeSingle();
+      if (dupErr) return { error: dupErr.message };
+      if (stillClear) return { error: "A subcategory with that name already exists in this category now — it may have been added since this was proposed." };
+
+      const { data, error } = await supabase.from("task_subcategories").insert(payload).select().single();
+      if (error) return { error: error.message };
+      return { result: { subcategory: data }, resultId: data.id };
+    }
+
+    case "add_social_media_calendar_event":
+    case "add_events_calendar_event":
+    case "add_chain_calendar_event": {
+      const { data, error } = await supabase.from(targetTable).insert(payload).select().single();
+      if (error) return { error: error.message };
+      await logChange(supabase, {
+        weekId: null,
+        tableName: targetTable,
+        recordId: data.id,
+        fieldName: "title",
+        oldValue: "",
+        newValue: (payload as Record<string, unknown>).title,
+        changedBy: userId,
+      });
+      return { result: { event: data }, resultId: data.id };
+    }
+
+    case "update_social_media_calendar_event":
+    case "update_events_calendar_event":
+    case "update_chain_calendar_event": {
+      const { id, ...updatePayload } = payload as Record<string, unknown> & { id: string };
+      const { data: existing, error: fetchErr } = await supabase.from(targetTable).select("*").eq("id", id).maybeSingle();
+      if (fetchErr) return { error: fetchErr.message };
+      if (!existing) return { error: "That event no longer exists — it may have been deleted since this was proposed." };
+
+      const { data, error } = await supabase.from(targetTable).update(updatePayload).eq("id", id).select().single();
+      if (error) return { error: error.message };
+      for (const field of Object.keys(updatePayload)) {
+        if (field === "updated_by" || field === "updated_at") continue;
+        await logChange(supabase, {
+          weekId: null,
+          tableName: targetTable,
+          recordId: id,
+          fieldName: field,
+          oldValue: (existing as Record<string, unknown>)[field],
+          newValue: (data as Record<string, unknown>)[field],
+          changedBy: userId,
+        });
+      }
+      return { result: { event: data }, resultId: id };
+    }
+
+    default:
+      return { error: `"${actionType}" isn't executable inside a bundle.` };
+  }
 }
 
 export async function runErnieTool(
@@ -2515,6 +3022,97 @@ export async function runErnieTool(
       });
     }
 
+    case "propose_actions": {
+      if (!userId) return { error: "No signed-in user to attribute these actions to." };
+
+      // Confirming a previously-proposed bundle.
+      if (input.confirmed === true && typeof input.pending_action_id === "string") {
+        const loaded = await loadConfirmedPendingAction(supabase, {
+          userId,
+          requestId: requestId ?? "",
+          pendingActionId: input.pending_action_id,
+          expectedActionType: "propose_actions",
+          role,
+          sections,
+          isSuperAdmin,
+        });
+        if ("error" in loaded) return { error: loaded.error };
+        const { steps } = loaded.row.payload as {
+          steps: { action_type: string; target_table: string; payload: Record<string, unknown> }[];
+        };
+
+        const results: unknown[] = [];
+        const resultIds = new Map<number, string>();
+        for (let i = 0; i < steps.length; i++) {
+          const step = steps[i];
+          const substituted = substitutePlaceholders(step.payload, resultIds);
+          if ("error" in substituted) {
+            return {
+              error: `Step ${i + 1} (${step.action_type}) couldn't run: ${substituted.error} ${
+                i > 0 ? `Steps 1-${i} already happened and were NOT undone.` : "Nothing happened yet."
+              }`,
+              completed: results,
+            };
+          }
+          const outcome = await executeBundleStep(supabase, step.action_type, substituted.payload, step.target_table, userId);
+          if ("error" in outcome) {
+            return {
+              error: `Step ${i + 1} (${step.action_type}) failed: ${outcome.error} ${
+                i > 0 ? `Steps 1-${i} already happened and were NOT undone — check what's there before retrying.` : "Nothing happened yet."
+              }`,
+              completed: results,
+            };
+          }
+          results.push(outcome.result);
+          if (outcome.resultId) resultIds.set(i, outcome.resultId);
+        }
+        return { ok: true, results };
+      }
+
+      // First call: propose. Validate and resolve every step up front so
+      // the preview shown to the user is accurate, without writing
+      // anything yet.
+      const rawActions = Array.isArray(input.actions)
+        ? (input.actions as { action_type: string; input: Record<string, unknown> }[])
+        : [];
+      if (rawActions.length < 2) {
+        return { error: "actions needs at least 2 steps — for a single action, call that action's own tool directly instead of propose_actions." };
+      }
+      if (rawActions.length > 8) {
+        return { error: "That's too many steps to bundle at once (max 8) — split it into more than one request." };
+      }
+
+      const steps: { action_type: string; target_table: string; payload: Record<string, unknown> }[] = [];
+      const summaries: string[] = [];
+      for (let i = 0; i < rawActions.length; i++) {
+        const step = rawActions[i];
+        if (!BUNDLEABLE_ACTION_TYPES.has(step.action_type)) {
+          return { error: `Step ${i + 1}: "${step.action_type}" can't be used inside a bundle. Supported: ${[...BUNDLEABLE_ACTION_TYPES].join(", ")}.` };
+        }
+        const requiredSection = PENDING_ACTION_SECTIONS[step.action_type];
+        if (requiredSection && !hasSection(role, sections, requiredSection, isSuperAdmin)) {
+          return { error: `Step ${i + 1}: this account doesn't have the access "${step.action_type}" needs.` };
+        }
+        const resolved = await resolveBundleStep(supabase, step.action_type, step.input ?? {}, userId, i);
+        if ("error" in resolved) {
+          return { error: `Step ${i + 1} (${step.action_type}): ${resolved.error}` };
+        }
+        steps.push({ action_type: step.action_type, target_table: resolved.targetTable, payload: resolved.payload });
+        summaries.push(`${i + 1}. ${resolved.summary}`);
+      }
+
+      const summary = summaries.join("\n");
+      if (!requestId) return { error: "Internal error: missing request id — can't stage this action." };
+      return await createPendingAction(supabase, {
+        userId,
+        requestId,
+        actionType: "propose_actions",
+        targetTable: "multiple",
+        payload: { steps },
+        summary,
+      });
+    }
+
     case "confirm_pending_action": {
       if (!userId) return { error: "No signed-in user." };
       let pendingActionId = input.pending_action_id as string | undefined;
@@ -3025,8 +3623,11 @@ export function buildErnieSystemPrompt(
     ? ` You CAN also read tasks (get_tasks — list everything, or filter by status/overdue_only), create tasks (create_task), and edit an existing one (update_task — rename it, change notes/due date/status, or reassign it; look it up first if you don't have its id) — ask what's needed (title, which category/subcategory, notes, due date, who it should be assigned to) before proposing a new one. There's no delete-task tool — the app itself has no way to permanently delete a task, only mark it resolved, so offer that instead if someone asks to remove one.`
     : ` You do NOT have access to the Tasks section at all (read or write) — if someone asks about tasks, tell them you don't have that access and they'll need to check the Tasks page themselves or ask an admin to grant it.`;
   const hasAnyWriteAccess = hasCalendarWriteAccess || hasTaskWriteAccess;
+  const bundleSentence = hasAnyWriteAccess
+    ? ` If a single request naturally has more than one part — a new subcategory AND a task filed under it, an event you're adding AND another one you're changing, etc. — use propose_actions to stage the WHOLE list as one bundle instead of trying to narrate a multi-step plan in your own words; the same CRITICAL rule below applies to every step inside it: nothing has happened for ANY step until you actually called propose_actions and got a real preview back, and the whole bundle is approved and executed together with a single confirm_pending_action. Never tell someone you'll "do both steps" or "do that next" unless you actually called the matching propose tool (a single one, or propose_actions for several) and are relaying its real preview.`
+    : "";
   const writeAccessSentence = hasAnyWriteAccess
-    ? `${calendarSentence}${taskSentence} CRITICAL: never describe a "preview" of a calendar event or task in your reply unless you actually called the real add/update/delete/create_task tool THIS SAME TURN and are relaying the exact preview text it gave back — inventing preview-sounding text without calling the tool leaves nothing real staged, and a later "confirm" will then find nothing of yours to confirm (or, worse, silently confirm some unrelated leftover instead). Never propose and execute in the same turn — always wait for a genuine new message confirming it, and when that confirmation comes, call confirm_pending_action with no arguments (it automatically confirms your own most recent proposal — never try to recall or re-type a pending_action_id yourself). Every write is logged to the app's Audit Log, same as if a person made it, so it can be undone if it's wrong. Everything else in the app stays completely read-only: for anything outside these calendars and tasks, tell people you're read-only and they'll need to make that change on the relevant page themselves.`
+    ? `${calendarSentence}${taskSentence}${bundleSentence} CRITICAL: never describe a "preview" of a calendar event or task in your reply unless you actually called the real add/update/delete/create_task/propose_actions tool THIS SAME TURN and are relaying the exact preview text it gave back — inventing preview-sounding text without calling the tool leaves nothing real staged, and a later "confirm" will then find nothing of yours to confirm (or, worse, silently confirm some unrelated leftover instead). Never propose and execute in the same turn — always wait for a genuine new message confirming it, and when that confirmation comes, call confirm_pending_action with no arguments (it automatically confirms your own most recent proposal — never try to recall or re-type a pending_action_id yourself). Every write is logged to the app's Audit Log, same as if a person made it, so it can be undone if it's wrong. Everything else in the app stays completely read-only: for anything outside these calendars and tasks, tell people you're read-only and they'll need to make that change on the relevant page themselves.`
     : `You have NO ability to write, edit, or delete anything in the app; if someone asks you to change something, tell them you're read-only and that they'll need to make that change on the relevant page themselves.`;
 
   const dataAccessParagraph =

@@ -7,8 +7,9 @@ import type { Role } from "@/lib/types/db";
 
 // Ernie in Slack (2026-09-14, per Chad; extended same day to add real data
 // access; reverted 2026-09-17 back to mention-only; extended again the same
-// day to let Ernie create AND edit tasks and calendar events from Slack --
-// see below).
+// day to let Ernie create AND edit tasks and calendar events from Slack,
+// then again the same day to let Ernie bundle several related actions into
+// one proposal via propose_actions -- see below).
 //
 // Behavior:
 //   - Reply ONLY when @mentioned, every time -- no "stay active" window,
@@ -105,6 +106,12 @@ const WEB_FETCH_TOOL = {
 // "ernie cant create sub category tasks, fix please") lets Ernie propose a
 // brand-new Subcategory under an existing Category -- same propose-then-
 // confirm safety as every write tool above, so it's safe to turn on here too.
+// propose_actions (added later still the same day, after Ernie was seen
+// narrating a "create a subcategory, then file the task under it" plan in
+// Slack without ever actually calling a tool for it) lets Ernie bundle
+// several of the write tools above into ONE proposal, confirmed together --
+// still nothing happens until confirm_pending_action runs, so it's safe to
+// expose the same way.
 const SLACK_ALLOWED_TOOL_NAMES = new Set([
   "list_weeks",
   "get_inventory_and_allocations",
@@ -130,6 +137,7 @@ const SLACK_ALLOWED_TOOL_NAMES = new Set([
   "update_events_calendar_event",
   "add_chain_calendar_event",
   "update_chain_calendar_event",
+  "propose_actions",
   "confirm_pending_action",
 ]);
 
@@ -333,7 +341,7 @@ async function askErnie(
 ): Promise<string> {
   const slackNote =
     " You're replying inside a Slack channel where more than one person may be talking -- each line of the conversation history is labeled with who said it. Keep replies short and Slack-appropriate: plain text, no markdown headers or asterisk bullets, and never mention threading (Ernie always posts as a new message here, never a threaded reply). When listing multiple items (e.g. events, orders, tasks), put each one on its own line -- a plain line break between items, not a comma-separated sentence and not markdown bullet syntax." +
-    " If you propose creating or changing a task, task subcategory, or calendar event (create_task/update_task/create_task_subcategory/add_social_media_calendar_event/update_social_media_calendar_event/add_events_calendar_event/update_events_calendar_event/add_chain_calendar_event/update_chain_calendar_event), remember you only see messages where you're @-mentioned -- so after you show someone the preview, explicitly tell them to @-mention you again with their approval (e.g. \"@Ernie yes, do that\") to confirm it. A plain reply with no @-mention won't reach you at all, so don't just say \"let me know\" -- say they need to tag you.";
+    " If you propose creating or changing a task, task subcategory, or calendar event (create_task/update_task/create_task_subcategory/add_social_media_calendar_event/update_social_media_calendar_event/add_events_calendar_event/update_events_calendar_event/add_chain_calendar_event/update_chain_calendar_event), or a bundle of several of these via propose_actions, remember you only see messages where you're @-mentioned -- so after you show someone the preview (the FULL numbered list, for a bundle), explicitly tell them to @-mention you again with their approval (e.g. \"@Ernie yes, do that\") to confirm it. A plain reply with no @-mention won't reach you at all, so don't just say \"let me know\" -- say they need to tag you. When a request has more than one part (e.g. a new subcategory AND a task filed under it), you MUST actually call propose_actions to stage it -- never just describe the steps in plain text and say \"tag me to confirm,\" since nothing is actually staged until you call the tool, and a later confirmation will find nothing to confirm.";
 
   let systemPrompt: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tool definitions mix Ernie's own shape with Anthropic's hosted-tool shape
