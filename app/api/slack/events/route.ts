@@ -6,14 +6,22 @@ import { hasSection, getUserSections, ERNIE_SECTION, type AnySectionKey } from "
 import type { Role } from "@/lib/types/db";
 
 // Ernie in Slack (2026-09-14, per Chad; extended same day to add real data
-// access + "stay in the conversation" behavior).
+// access; reverted 2026-09-17 back to mention-only -- see below).
 //
 // Behavior:
-//   - Reply when @mentioned. After that, keep replying to plain messages in
-//     that same channel -- no @mention needed -- until the channel's gone
-//     quiet for ACTIVE_WINDOW_MS, then go back to mention-only. This is
-//     tracked in ernie_slack_active_channels (sql/ernie_slack_active_channels.sql),
-//     the only state this route keeps.
+//   - Reply ONLY when @mentioned, every time -- no "stay active" window,
+//     no replying to a plain follow-up message with no @mention. This was
+//     briefly changed, the same day it was built, to keep replying to plain
+//     messages for a while after a mention -- but that switched the
+//     triggering event from Slack's app_mention to a plain "message" event,
+//     and a plain "message" event is never delivered at all for a DM or
+//     group DM unless the app has separately been granted im/mpim history
+//     permission, which it never was. That silently broke Ernie in exactly
+//     the group DM Chad and Eddie actually use him in, while leaving him
+//     working fine in ordinary channels the whole time. Per Chad
+//     (2026-09-17): revert to mention-only on the Slack side; the main
+//     FCB-Data app's Ernie (app/api/ernie/chat/route.ts) is untouched --
+//     this file only affects Slack.
 //   - Data access: the Slack user who triggered a reply is matched to a
 //     real FCB app account via a manual mapping table
 //     (ernie_slack_user_map / sql_ernie_slack_user_map.sql) -- NOT by email
@@ -32,10 +40,8 @@ import type { Role } from "@/lib/types/db";
 //   1. Verify the request actually came from Slack (HMAC over the raw body
 //      using SLACK_SIGNING_SECRET), and that it's fresh (anti-replay).
 //   2. Handle Slack's one-time url_verification handshake.
-//   3. Handle "message" events (covers @mentions too -- see the note where
-//      app_mention used to be handled separately, just below the event
-//      dedupe): ignore anything from a bot (loop guard) or a non-plain
-//      message subtype, decide whether to respond, ask Ernie, post back.
+//   3. Handle "app_mention" events only: ignore anything from a bot (loop
+//      guard), ask Ernie, post back.
 //
 // Required env vars (already set in Vercel): SLACK_SIGNING_SECRET,
 // SLACK_BOT_TOKEN, ANTHROPIC_API_KEY, plus the same NEXT_PUBLIC_SUPABASE_URL
@@ -48,12 +54,6 @@ const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN!;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY!;
 const ANTHROPIC_MODEL = "claude-sonnet-5";
 const MAX_TOOL_ROUNDS = 5;
-
-// How long (ms) a channel stays "active" -- Ernie replies to plain
-// messages, no @mention needed -- after its last activity, before going
-// back to mention-only. Chad's call, 2026-09-14: "until it's quiet for a
-// while," not forever and not a fixed end-of-day cutoff.
-const ACTIVE_WINDOW_MS = 20 * 60 * 1000; // 20 minutes
 
 // Anthropic's own hosted tools -- resolved server-side within the same API
 // response, no extra handling needed here beyond including them. Mirrors
@@ -232,22 +232,6 @@ async function resolveAppUser(
     sections,
     personNotes: notesRow?.notes ?? null,
   };
-}
-
-async function isChannelActive(supabase: ReturnType<typeof createAdminClient>, channelId: string): Promise<boolean> {
-  const { data } = await supabase
-    .from("ernie_slack_active_channels")
-    .select("last_activity_at")
-    .eq("channel_id", channelId)
-    .maybeSingle();
-  if (!data) return false;
-  return Date.now() - new Date(data.last_activity_at).getTime() < ACTIVE_WINDOW_MS;
-}
-
-async function markChannelActive(supabase: ReturnType<typeof createAdminClient>, channelId: string) {
-  await supabase
-    .from("ernie_slack_active_channels")
-    .upsert({ channel_id: channelId, last_activity_at: new Date().toISOString() }, { onConflict: "channel_id" });
 }
 
 interface HistoryTurn {
@@ -452,23 +436,15 @@ export async function POST(req: NextRequest) {
 
   const event = payload.event;
 
-  // Only plain "message" events matter here -- app_mention fires
-  // ALONGSIDE a "message" event for the very same @mention, and
-  // message.channels/message.groups (this app's subscribed bot events)
-  // already cover every message in a channel Ernie's a member of, mention
-  // or not. Handling app_mention too would just mean replying twice to the
-  // same @mention. Ignore anything from a bot (loop guard, including
-  // Ernie's own posts) and any non-plain subtype (edits, joins, etc).
-  if (event?.type === "message" && !event.subtype && !event.bot_id && typeof event.text === "string") {
+  // Mention-only, every time (reverted 2026-09-17 -- see file header).
+  // app_mention fires for an @mention anywhere Ernie's a member, including
+  // a DM or group DM, without needing the im/mpim history permission a
+  // plain "message" event would require. Ignore anything from a bot (loop
+  // guard) and anything without real text.
+  if (event?.type === "app_mention" && !event.bot_id && typeof event.text === "string") {
     try {
-      const { userId: botUserId, botId } = await getBotIdentity();
-      const isMentioned = event.text.includes(`<@${botUserId}>`);
+      const { botId } = await getBotIdentity();
       const supabase = createAdminClient();
-
-      const active = isMentioned || (await isChannelActive(supabase, event.channel));
-      if (!active) {
-        return NextResponse.json({ ok: true });
-      }
 
       let history = await fetchChannelHistory(event.channel, botId);
       if (history.length === 0) {
@@ -486,7 +462,6 @@ export async function POST(req: NextRequest) {
       // Chad's preference (2026-09-14): always post as a fresh top-level
       // message in the channel, never as a threaded reply.
       await postToSlack(event.channel, reply);
-      await markChannelActive(supabase, event.channel);
     } catch (err) {
       console.error("[slack/events] Error handling message:", err);
     }
