@@ -101,7 +101,10 @@ const WEB_FETCH_TOOL = {
 // is a new small read-only tool (added 2026-09-17, in lib/ernie/tools.ts)
 // that lets Ernie look up a task's required subcategory_id without needing
 // run_read_only_query, which stays excluded here for the RLS-bypass reason
-// above.
+// above. create_task_subcategory (added later the same day, per Chad:
+// "ernie cant create sub category tasks, fix please") lets Ernie propose a
+// brand-new Subcategory under an existing Category -- same propose-then-
+// confirm safety as every write tool above, so it's safe to turn on here too.
 const SLACK_ALLOWED_TOOL_NAMES = new Set([
   "list_weeks",
   "get_inventory_and_allocations",
@@ -120,6 +123,7 @@ const SLACK_ALLOWED_TOOL_NAMES = new Set([
   "get_task_categories",
   "create_task",
   "update_task",
+  "create_task_subcategory",
   "add_social_media_calendar_event",
   "update_social_media_calendar_event",
   "add_events_calendar_event",
@@ -329,7 +333,7 @@ async function askErnie(
 ): Promise<string> {
   const slackNote =
     " You're replying inside a Slack channel where more than one person may be talking -- each line of the conversation history is labeled with who said it. Keep replies short and Slack-appropriate: plain text, no markdown headers or asterisk bullets, and never mention threading (Ernie always posts as a new message here, never a threaded reply). When listing multiple items (e.g. events, orders, tasks), put each one on its own line -- a plain line break between items, not a comma-separated sentence and not markdown bullet syntax." +
-    " If you propose creating or changing a task or calendar event (create_task/update_task/add_social_media_calendar_event/update_social_media_calendar_event/add_events_calendar_event/update_events_calendar_event/add_chain_calendar_event/update_chain_calendar_event), remember you only see messages where you're @-mentioned -- so after you show someone the preview, explicitly tell them to @-mention you again with their approval (e.g. \"@Ernie yes, do that\") to confirm it. A plain reply with no @-mention won't reach you at all, so don't just say \"let me know\" -- say they need to tag you.";
+    " If you propose creating or changing a task, task subcategory, or calendar event (create_task/update_task/create_task_subcategory/add_social_media_calendar_event/update_social_media_calendar_event/add_events_calendar_event/update_events_calendar_event/add_chain_calendar_event/update_chain_calendar_event), remember you only see messages where you're @-mentioned -- so after you show someone the preview, explicitly tell them to @-mention you again with their approval (e.g. \"@Ernie yes, do that\") to confirm it. A plain reply with no @-mention won't reach you at all, so don't just say \"let me know\" -- say they need to tag you.";
 
   let systemPrompt: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tool definitions mix Ernie's own shape with Anthropic's hosted-tool shape

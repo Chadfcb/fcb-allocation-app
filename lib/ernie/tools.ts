@@ -858,9 +858,24 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
     },
   },
   {
+    name: "create_task_subcategory",
+    description:
+      "Propose a new Subcategory under an existing Task category (e.g. add \"Bottling\" under \"Operations\") — for when someone wants to file a task somewhere that doesn't exist yet. Call get_task_categories first to find the right category_id and to check a subcategory with that name doesn't already exist there. Same propose-then-confirm flow as the other write tools: leave confirmed out for a preview, present it, then call confirm_pending_action (no arguments) once approved in a new message.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        category_id: { type: "string", description: "The task_categories.id this subcategory belongs under." },
+        name: { type: "string", description: "Display name for the new subcategory, e.g. \"Bottling\"." },
+        confirmed: { type: "boolean" },
+        pending_action_id: { type: "string" },
+      },
+      required: ["category_id", "name"],
+    },
+  },
+  {
     name: "get_task_categories",
     description:
-      "List every Task category and subcategory (Category → Subcategory, from /tasks) with their ids. Call this before create_task to find the right subcategory_id — tasks can only be filed under an existing subcategory, so don't guess an id. Also useful for showing someone what categories already exist.",
+      "List every Task category and subcategory (Category → Subcategory, from /tasks) with their ids. Call this before create_task or create_task_subcategory to find the right id — tasks can only be filed under an existing subcategory, so don't guess an id. Also useful for showing someone what categories already exist.",
     input_schema: {
       type: "object" as const,
       properties: {},
@@ -950,6 +965,7 @@ const ADMIN_ONLY_TOOL_NAMES = new Set([
   "list_chain_calendar_events",
   "create_task",
   "update_task",
+  "create_task_subcategory",
   "get_tasks",
   "get_task_categories",
   "confirm_pending_action",
@@ -990,6 +1006,7 @@ const TOOL_SECTIONS: Record<string, AnySectionKey[] | null> = {
   list_chain_calendar_events: ["events_calendar"],
   create_task: ["tasks"],
   update_task: ["tasks"],
+  create_task_subcategory: ["tasks"],
   get_tasks: ["tasks"],
   get_task_categories: ["tasks"],
   // Shared by every propose-then-confirm write tool above — visible to
@@ -1490,6 +1507,7 @@ const PENDING_ACTION_SECTIONS: Record<string, AnySectionKey> = {
   delete_chain_calendar_event: "events_calendar",
   create_task: "tasks",
   update_task: "tasks",
+  create_task_subcategory: "tasks",
 };
 
 async function createPendingAction(
@@ -2410,6 +2428,89 @@ export async function runErnieTool(
         actionType: "update_task",
         targetTable: "task_items",
         payload: updatePayload,
+        summary,
+      });
+    }
+
+    case "create_task_subcategory": {
+      if (!userId) return { error: "No signed-in user to attribute this subcategory to." };
+
+      // Confirming a previously-proposed subcategory.
+      if (input.confirmed === true && typeof input.pending_action_id === "string") {
+        const loaded = await loadConfirmedPendingAction(supabase, {
+          userId,
+          requestId: requestId ?? "",
+          pendingActionId: input.pending_action_id,
+          expectedActionType: "create_task_subcategory",
+          role,
+          sections,
+          isSuperAdmin,
+        });
+        if ("error" in loaded) return { error: loaded.error };
+        const subcategoryPayload = loaded.row.payload as Record<string, unknown>;
+
+        // Someone may have added a subcategory with the same name in the
+        // meantime (e.g. from the Tasks page itself) between propose and
+        // confirm — re-check right before inserting, the same guard the
+        // app's own addSubcategory() applies client-side.
+        const { data: stillClear, error: dupErr } = await supabase
+          .from("task_subcategories")
+          .select("id")
+          .eq("category_id", subcategoryPayload.category_id as string)
+          .eq("key", subcategoryPayload.key as string)
+          .maybeSingle();
+        if (dupErr) throw dupErr;
+        if (stillClear) {
+          return { error: "A subcategory with that name already exists in this category now — it may have been added since this was proposed." };
+        }
+
+        const { data, error } = await supabase.from("task_subcategories").insert(subcategoryPayload).select().single();
+        if (error) throw error;
+        return { ok: true, subcategory: data };
+      }
+
+      // First call: propose.
+      const categoryId = input.category_id as string | undefined;
+      const name = (input.name as string | undefined)?.trim();
+      if (!categoryId) return { error: "category_id is required — look it up first with get_task_categories." };
+      if (!name) return { error: "name is required." };
+
+      const { data: category, error: catErr } = await supabase
+        .from("task_categories")
+        .select("id, name")
+        .eq("id", categoryId)
+        .maybeSingle();
+      if (catErr) throw catErr;
+      if (!category) return { error: "No task category found with that id." };
+
+      // Mirrors slugify() in components/TasksPageClient.tsx exactly, so a
+      // subcategory created here looks identical to one created in the app.
+      const key = name.toLowerCase().replace(/\s+/g, "-");
+      const { data: existingSubs, error: existingErr } = await supabase
+        .from("task_subcategories")
+        .select("id, name")
+        .eq("category_id", categoryId)
+        .eq("key", key);
+      if (existingErr) throw existingErr;
+      if (existingSubs && existingSubs.length > 0) {
+        return { error: `A subcategory named "${existingSubs[0].name}" already exists under "${category.name}".` };
+      }
+
+      const payload = {
+        category_id: categoryId,
+        key,
+        name,
+        created_by: userId,
+      };
+      const summary = `Create a new subcategory "${name}" under "${category.name}".`;
+
+      if (!requestId) return { error: "Internal error: missing request id — can't stage this action." };
+      return await createPendingAction(supabase, {
+        userId,
+        requestId,
+        actionType: "create_task_subcategory",
+        targetTable: "task_subcategories",
+        payload,
         summary,
       });
     }
