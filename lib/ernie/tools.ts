@@ -236,7 +236,8 @@ export const ERNIE_TOOLS = [
   },
   {
     name: "get_users",
-    description: "List the app's user accounts: name, email, and role (admin/basic).",
+    description:
+      "List the app's user accounts: id, name, email, and role (admin/basic). The id is what create_task/update_task's assignee_user_ids expects — match the person by name or email to find it.",
     input_schema: {
       type: "object" as const,
       properties: {},
@@ -814,7 +815,7 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
   {
     name: "create_task",
     description:
-      "Propose a new task in the Tasks section (/tasks). Tasks live under Category → Subcategory, so first find the right subcategory_id (run_read_only_query against task_categories/task_subcategories, or ask the user which category this belongs under if it's not obvious) — don't guess one. Resolve any assignee to their profiles.id the same way (run_read_only_query against profiles) before calling this. Same propose-then-confirm flow as the calendar tools: leave confirmed out for a preview, present it, then call confirm_pending_action (no arguments) once approved in a new message.",
+      "Propose a new task in the Tasks section (/tasks). Tasks live under Category → Subcategory, so first find the right subcategory_id (call get_task_categories, or ask the user which category this belongs under if it's not obvious) — don't guess one. Resolve any assignee to their profiles.id via get_users (match by name or email) before calling this. Same propose-then-confirm flow as the calendar tools: leave confirmed out for a preview, present it, then call confirm_pending_action (no arguments) once approved in a new message.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -854,6 +855,15 @@ Access mirrors this account's real permissions elsewhere in the app: a file unde
         pending_action_id: { type: "string" },
       },
       required: ["id"],
+    },
+  },
+  {
+    name: "get_task_categories",
+    description:
+      "List every Task category and subcategory (Category → Subcategory, from /tasks) with their ids. Call this before create_task to find the right subcategory_id — tasks can only be filed under an existing subcategory, so don't guess an id. Also useful for showing someone what categories already exist.",
+    input_schema: {
+      type: "object" as const,
+      properties: {},
     },
   },
   {
@@ -941,6 +951,7 @@ const ADMIN_ONLY_TOOL_NAMES = new Set([
   "create_task",
   "update_task",
   "get_tasks",
+  "get_task_categories",
   "confirm_pending_action",
 ]);
 
@@ -980,6 +991,7 @@ const TOOL_SECTIONS: Record<string, AnySectionKey[] | null> = {
   create_task: ["tasks"],
   update_task: ["tasks"],
   get_tasks: ["tasks"],
+  get_task_categories: ["tasks"],
   // Shared by every propose-then-confirm write tool above — visible to
   // anyone who has EITHER events_calendar or tasks, since it's the generic
   // "execute what I already proposed" step. The actual required section
@@ -1859,6 +1871,7 @@ export async function runErnieTool(
       const { data: allDistributors } = await supabase.from("distributors").select("id, name");
       const distributorsById = indexBy(allDistributors ?? [], "id");
       return rows.map((r) => ({
+        id: r.id,
         title: r.title,
         type: r.type,
         start_date: r.start_date,
@@ -2139,6 +2152,27 @@ export async function runErnieTool(
         payload: { id, title: existing.title },
         summary,
       });
+    }
+
+    case "get_task_categories": {
+      const [{ data: categories, error: catErr }, { data: subcategories, error: subErr }] = await Promise.all([
+        supabase.from("task_categories").select("id, name").order("name"),
+        supabase.from("task_subcategories").select("id, name, category_id").order("name"),
+      ]);
+      if (catErr) throw catErr;
+      if (subErr) throw subErr;
+
+      const subsByCategory = new Map<string, { id: string; name: string }[]>();
+      for (const s of subcategories ?? []) {
+        const list = subsByCategory.get(s.category_id) ?? [];
+        list.push({ id: s.id, name: s.name });
+        subsByCategory.set(s.category_id, list);
+      }
+      return (categories ?? []).map((c) => ({
+        id: c.id,
+        name: c.name,
+        subcategories: subsByCategory.get(c.id) ?? [],
+      }));
     }
 
     case "get_tasks": {
@@ -2498,7 +2532,7 @@ export async function runErnieTool(
     case "get_users": {
       const { data, error } = await supabase
         .from("profiles")
-        .select("full_name, email, role, created_at")
+        .select("id, full_name, email, role, created_at")
         .order("full_name");
       if (error) throw error;
       return data;

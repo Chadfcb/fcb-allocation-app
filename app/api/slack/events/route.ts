@@ -6,7 +6,9 @@ import { hasSection, getUserSections, ERNIE_SECTION, type AnySectionKey } from "
 import type { Role } from "@/lib/types/db";
 
 // Ernie in Slack (2026-09-14, per Chad; extended same day to add real data
-// access; reverted 2026-09-17 back to mention-only -- see below).
+// access; reverted 2026-09-17 back to mention-only; extended again the same
+// day to let Ernie create AND edit tasks and calendar events from Slack --
+// see below).
 //
 // Behavior:
 //   - Reply ONLY when @mentioned, every time -- no "stay active" window,
@@ -80,9 +82,26 @@ const WEB_FETCH_TOOL = {
 // route talks to the database with the SERVICE ROLE key, which bypasses
 // RLS entirely. Offering either of those two tools here would quietly hand
 // every Slack user admin-level access regardless of their real role, so
-// they're deliberately left out. Every write tool (calendar add/update/
-// delete, task creation, spreadsheet editing, file uploads, person notes)
-// is left out too -- this is read-only, chat-and-look-things-up, for now.
+// they're deliberately left out.
+//
+// Task/calendar-event creation were turned ON here 2026-09-17, per Chad
+// ("ernie in slack should be able to create tasks, and add events to
+// calendars, just like in the app"), then editing turned on the same day
+// too ("he needs the edit ability as well"). These are still fully safe to
+// expose: every one of create_task/update_task/add_*_calendar_event/
+// update_*_calendar_event never writes anything by itself -- calling one
+// without confirmed only validates the input and stores a preview (see the
+// big propose-then-confirm comment above add_social_media_calendar_event's
+// definition in lib/ernie/tools.ts); the actual write only happens once
+// confirm_pending_action runs, and that's gated by the SAME role/section
+// check all over again at that point, not just when the tool was first
+// offered. Every DELETE tool (delete_task's nonexistent -- tasks can only
+// be marked resolved -- and delete_*_calendar_event) is still deliberately
+// left out, since removing something wasn't asked for. get_task_categories
+// is a new small read-only tool (added 2026-09-17, in lib/ernie/tools.ts)
+// that lets Ernie look up a task's required subcategory_id without needing
+// run_read_only_query, which stays excluded here for the RLS-bypass reason
+// above.
 const SLACK_ALLOWED_TOOL_NAMES = new Set([
   "list_weeks",
   "get_inventory_and_allocations",
@@ -98,6 +117,16 @@ const SLACK_ALLOWED_TOOL_NAMES = new Set([
   "list_social_media_calendar_events",
   "list_chain_calendar_events",
   "get_tasks",
+  "get_task_categories",
+  "create_task",
+  "update_task",
+  "add_social_media_calendar_event",
+  "update_social_media_calendar_event",
+  "add_events_calendar_event",
+  "update_events_calendar_event",
+  "add_chain_calendar_event",
+  "update_chain_calendar_event",
+  "confirm_pending_action",
 ]);
 
 // Slack event_ids we've already handled -- Slack retries delivery on slow
@@ -299,11 +328,26 @@ async function askErnie(
   supabase: ReturnType<typeof createAdminClient>,
 ): Promise<string> {
   const slackNote =
-    " You're replying inside a Slack channel where more than one person may be talking -- each line of the conversation history is labeled with who said it. Keep replies short and Slack-appropriate: plain text, no markdown headers or asterisk bullets, and never mention threading (Ernie always posts as a new message here, never a threaded reply). When listing multiple items (e.g. events, orders, tasks), put each one on its own line -- a plain line break between items, not a comma-separated sentence and not markdown bullet syntax.";
+    " You're replying inside a Slack channel where more than one person may be talking -- each line of the conversation history is labeled with who said it. Keep replies short and Slack-appropriate: plain text, no markdown headers or asterisk bullets, and never mention threading (Ernie always posts as a new message here, never a threaded reply). When listing multiple items (e.g. events, orders, tasks), put each one on its own line -- a plain line break between items, not a comma-separated sentence and not markdown bullet syntax." +
+    " If you propose creating or changing a task or calendar event (create_task/update_task/add_social_media_calendar_event/update_social_media_calendar_event/add_events_calendar_event/update_events_calendar_event/add_chain_calendar_event/update_chain_calendar_event), remember you only see messages where you're @-mentioned -- so after you show someone the preview, explicitly tell them to @-mention you again with their approval (e.g. \"@Ernie yes, do that\") to confirm it. A plain reply with no @-mention won't reach you at all, so don't just say \"let me know\" -- say they need to tag you.";
 
   let systemPrompt: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tool definitions mix Ernie's own shape with Anthropic's hosted-tool shape
   let tools: any[] = [WEB_SEARCH_TOOL, WEB_FETCH_TOOL];
+
+  // One id for this entire Slack event -- i.e. this one call to askErnie,
+  // covering every round of its tool-use loop below. Passed to every
+  // runErnieTool() call so create_task/add_*_calendar_event's
+  // propose-then-confirm machinery (see loadConfirmedPendingAction in
+  // lib/ernie/tools.ts) can structurally guarantee confirm_pending_action is
+  // never honored inside the SAME Slack message that proposed the action --
+  // only a later message (a genuine new @mention from the user) carries a
+  // different requestId. Mirrors app/api/ernie/chat/route.ts's requestId
+  // exactly. Previously this was (incorrectly) generated fresh for every
+  // individual tool call below, which would have let that safety check be
+  // bypassed the moment task/calendar write tools were turned on here --
+  // fixed as part of turning them on (2026-09-17).
+  const requestId = crypto.randomUUID();
 
   if (appUser && hasSection(appUser.role, appUser.sections, ERNIE_SECTION, appUser.isSuperAdmin)) {
     systemPrompt =
@@ -372,7 +416,7 @@ async function askErnie(
             undefined,
             appUser?.isSuperAdmin ?? false,
             appUser?.userId,
-            crypto.randomUUID(),
+            requestId,
           );
         } catch (toolErr) {
           result = { error: toolErr instanceof Error ? toolErr.message : "Tool lookup failed" };
