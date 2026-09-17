@@ -446,11 +446,60 @@ async function askErnie(
       .map((b: any) => b.text)
       .join("\n")
       .trim();
+
+    // Guard against a real bug seen live on 2026-09-17/18: for a calendar
+    // event (and previously for a bundled task+subcategory), Ernie replied
+    // with fully fabricated "here's the preview... @-mention me to confirm"
+    // / "okay, this is genuinely staged now" text WITHOUT ever calling the
+    // propose/confirm tool that round -- i.e. stop_reason wasn't "tool_use"
+    // at all, so nothing was ever written to ernie_pending_actions. The
+    // system prompt already says in the strongest terms not to do this
+    // (see the "CRITICAL" sentence in buildErnieSystemPrompt), but that
+    // alone didn't reliably stop it, so this is a structural backstop:
+    // pattern-match the reply for the telltale phrasing of a staged/
+    // confirmed action, and if it fired with no actual tool call this
+    // round, don't send that fabricated text to the user at all -- push a
+    // blunt corrective message and give the model one more round to
+    // actually call the tool instead.
+    const soundsLikeFabricatedAction =
+      hasAnyWriteAccessForFabricationCheck(tools) &&
+      /@[- ]?mention me|tag me (again|once more)|here'?s the preview|genuinely staged|is staged now|i'?ve (added|created|staged)|it'?s (now )?staged|confirm and i'?ll add|confirm(ed)? and it('| wi)ll (go in|be added)/i.test(
+        finalText,
+      );
+    if (soundsLikeFabricatedAction && !isLastRound) {
+      messages.push({ role: "assistant", content: finalText });
+      messages.push({
+        role: "user",
+        content:
+          "SYSTEM CHECK (not from the person you're talking to): your last reply described a preview, staged action, or confirmation for a calendar/task change, but you did NOT call any tool that round -- nothing has actually been staged or written, and that reply was blocked from being sent. Do not describe a fictitious preview or repeat that claim in different words. If something needs to be proposed, call the real tool (or propose_actions) right now. If you believe something is already genuinely staged from an earlier tool call in this conversation and the person just approved it, call confirm_pending_action right now with no arguments. Take the real tool action in this round -- do not reply with text alone.",
+      });
+      continue;
+    }
+
     return finalText || "Sorry, I didn't have anything to say to that.";
   }
 
   return "Sorry, I wasn't able to put together an answer for that.";
 }
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- tool list mixes Ernie's own tool shape with Anthropic's hosted-tool shape
+function hasAnyWriteAccessForFabricationCheck(tools: any[]): boolean {
+  return tools.some((t) => typeof t?.name === "string" && WRITE_TOOL_NAMES_FOR_FABRICATION_CHECK.has(t.name));
+}
+
+const WRITE_TOOL_NAMES_FOR_FABRICATION_CHECK = new Set([
+  "create_task",
+  "update_task",
+  "create_task_subcategory",
+  "add_social_media_calendar_event",
+  "update_social_media_calendar_event",
+  "add_events_calendar_event",
+  "update_events_calendar_event",
+  "add_chain_calendar_event",
+  "update_chain_calendar_event",
+  "propose_actions",
+  "confirm_pending_action",
+]);
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();

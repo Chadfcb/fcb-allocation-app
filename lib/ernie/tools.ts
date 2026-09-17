@@ -1570,6 +1570,43 @@ async function createPendingAction(
     summary: string;
   },
 ): Promise<{ error: string } | { pending: true; pending_action_id: string; summary: string; message: string }> {
+  // Guard against the exact failure seen live on 2026-09-17: Ernie kept
+  // re-proposing the SAME action every time the user said "do it"/"yes"/etc,
+  // instead of calling confirm_pending_action -- first caught on a
+  // propose_actions bundle (7 duplicate pending rows, none ever executed),
+  // then seen AGAIN on a plain single-tool proposal (a calendar event) --
+  // proving the underlying model behavior isn't specific to bundles at all.
+  // Rather than patch this per tool, it's centralized here in the one
+  // function every write tool's propose branch already funnels through: if
+  // this user already has an unconfirmed action pending from the last few
+  // minutes with this EXACT same action_type and summary, it's not a new
+  // proposal -- hand back the EXISTING one instead of creating another
+  // duplicate, with a message forceful enough that the model should call
+  // confirm_pending_action in this same turn rather than replying with yet
+  // another "here's the plan."
+  const DUPLICATE_WINDOW_MINUTES = 15;
+  const duplicateCutoff = new Date(Date.now() - DUPLICATE_WINDOW_MINUTES * 60 * 1000).toISOString();
+  const { data: duplicateRow } = await supabase
+    .from("ernie_pending_actions")
+    .select("id, summary")
+    .eq("created_by", params.userId)
+    .eq("action_type", params.actionType)
+    .eq("status", "pending")
+    .eq("summary", params.summary)
+    .gte("created_at", duplicateCutoff)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (duplicateRow) {
+    return {
+      pending: true,
+      pending_action_id: duplicateRow.id,
+      summary: duplicateRow.summary,
+      message:
+        "STOP -- this exact action is ALREADY staged and waiting, from a moment ago in this same conversation. Nothing new was created just now; do not reply with another \"here's the plan\" preview, and do not propose this again. If the user's last message was them approving/agreeing (e.g. \"do it\", \"yes\", \"go ahead\", or similar, however phrased) -- call confirm_pending_action right now, in this same turn, with no arguments, instead of sending a text reply first.",
+    };
+  }
+
   const { data, error } = await supabase
     .from("ernie_pending_actions")
     .insert({
