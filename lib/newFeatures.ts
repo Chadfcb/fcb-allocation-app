@@ -36,6 +36,12 @@ export const NEW_FEATURES: NewFeature[] = [
     label: "Customize button on the Ernie chat (per-person colors, text size, font)",
     added: "2026-09-23",
   },
+  {
+    id: "feature:events-google-sync",
+    page: "/events",
+    label: "Google Calendar button on the Events Calendar (two-way Google sync)",
+    added: "2026-09-23",
+  },
 ];
 
 // Fired whenever someone clicks a new feature, so the sidebar clears its

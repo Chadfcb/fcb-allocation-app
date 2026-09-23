@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { logChange } from "@/lib/audit";
+import GoogleCalendarSyncButton from "@/components/GoogleCalendarSyncButton";
 import type {
   CalendarEvent,
   Distributor,
@@ -567,6 +568,8 @@ export default function EventsPageClient() {
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {/* Two-way Google Calendar sync (added 2026-09-23) */}
+          <GoogleCalendarSyncButton onChanged={load} />
           <button
             type="button"
             onClick={() => setView("calendar")}
