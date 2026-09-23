@@ -60,8 +60,18 @@
 // downloadable chips the same way.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Archivo, IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
+import { Archivo, IBM_Plex_Mono, IBM_Plex_Sans, Nunito } from "next/font/google";
 import { createClient } from "@/lib/supabase/client";
+import ErnieAppearancePanel from "@/components/ErnieAppearancePanel";
+import {
+  DEFAULT_ERNIE_APPEARANCE,
+  fontStackFor,
+  normalizeErnieAppearance,
+  resolveErnieTokens,
+  textScaleCss,
+  textScaleFor,
+  type ErnieAppearance,
+} from "@/lib/ernie/appearance";
 import { fileIcon, formatBytes, storageFileName } from "@/lib/events";
 import { ERNIE_FILES_BUCKET, ERNIE_MAX_FILE_BYTES, ERNIE_MAX_FILES_PER_MESSAGE } from "@/lib/ernie/fileLimits";
 
@@ -69,6 +79,8 @@ import { ERNIE_FILES_BUCKET, ERNIE_MAX_FILE_BYTES, ERNIE_MAX_FILES_PER_MESSAGE }
 const archivo = Archivo({ subsets: ["latin"], weight: ["600", "700", "800"], variable: "--font-archivo" });
 const plexSans = IBM_Plex_Sans({ subsets: ["latin"], weight: ["400", "500", "600"], variable: "--font-plex-sans" });
 const plexMono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-plex-mono" });
+// "Rounded" font option in Customize (lib/ernie/appearance.ts).
+const nunito = Nunito({ subsets: ["latin"], weight: ["400", "600", "700"], variable: "--font-nunito" });
 
 interface ErnieFile {
   id: string;
@@ -200,6 +212,72 @@ export default function ErnieChatClient({
   mode: "general" | "projects";
 }) {
   const supabase = useMemo(() => createClient(), []);
+
+  // --- Per-person appearance (Customize, added 2026-09-23) --------------
+  // `appearance` is what's saved; `appearanceDraft` is what the Customize
+  // panel is previewing live (null when the panel is closed). Everything in
+  // this component reads its colors/fonts/text size from CSS variables set
+  // from whichever of the two is active — see lib/ernie/appearance.ts.
+  const [appearance, setAppearance] = useState<ErnieAppearance>(DEFAULT_ERNIE_APPEARANCE);
+  const [appearanceDraft, setAppearanceDraft] = useState<ErnieAppearance | null>(null);
+  const [appearanceSaving, setAppearanceSaving] = useState(false);
+  const [appearanceError, setAppearanceError] = useState<string | null>(null);
+  const shownAppearance = appearanceDraft ?? appearance;
+  const themeStyle = useMemo(() => {
+    const fonts = fontStackFor(shownAppearance.font);
+    return {
+      ...resolveErnieTokens(shownAppearance),
+      "--e-font-body": fonts.body,
+      "--e-font-head": fonts.head,
+    } as React.CSSProperties;
+  }, [shownAppearance]);
+  const themeScaleCss = textScaleCss(textScaleFor(shownAppearance.textSize));
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await supabase
+        .from("ernie_user_preferences")
+        .select("appearance")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (!cancelled && data?.appearance) setAppearance(normalizeErnieAppearance(data.appearance));
+    })().catch(() => {
+      // No saved settings (or the table isn't there yet) — default look.
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase]);
+
+  async function saveAppearance() {
+    if (!appearanceDraft) return;
+    setAppearanceSaving(true);
+    setAppearanceError(null);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) throw new Error("Not signed in.");
+      const { error } = await supabase
+        .from("ernie_user_preferences")
+        .upsert(
+          { user_id: user.id, appearance: appearanceDraft, updated_at: new Date().toISOString() },
+          { onConflict: "user_id" },
+        );
+      if (error) throw error;
+      setAppearance(appearanceDraft);
+      setAppearanceDraft(null);
+    } catch (err) {
+      setAppearanceError(err instanceof Error ? err.message : "Couldn't save your settings.");
+    } finally {
+      setAppearanceSaving(false);
+    }
+  }
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -1390,7 +1468,7 @@ export default function ErnieChatClient({
 
     if (!previewUrl) {
       return (
-        <div className="flex h-28 w-28 items-center justify-center rounded-md border border-[#262c1f] bg-[#181c13] text-[10px] text-[#5d6456]">
+        <div className="flex h-28 w-28 items-center justify-center rounded-md border border-[color:var(--e-border)] bg-[color:var(--e-surface)] text-[10px] text-[color:var(--e-faint)]">
           Loading…
         </div>
       );
@@ -1412,7 +1490,7 @@ export default function ErnieChatClient({
           src={previewUrl}
           controls
           playsInline
-          className="h-40 w-64 rounded-md border border-[#262c1f] bg-black object-contain"
+          className="h-40 w-64 rounded-md border border-[color:var(--e-border)] bg-black object-contain"
         />
       );
     }
@@ -1422,7 +1500,7 @@ export default function ErnieChatClient({
         src={previewUrl}
         alt={f.file_name}
         title="Click to view full size"
-        className="h-28 w-28 cursor-zoom-in rounded-md border border-[#262c1f] object-cover"
+        className="h-28 w-28 cursor-zoom-in rounded-md border border-[color:var(--e-border)] object-cover"
         onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}
       />
     );
@@ -1442,24 +1520,24 @@ export default function ErnieChatClient({
     return (
       <div className="flex flex-col items-start gap-1">
         {(isImage || isVideo) && <MediaPreviewBox f={f} isVideo={isVideo} />}
-        <div className="flex items-center gap-1.5 rounded-md border border-[#262c1f] bg-[#181c13] px-2 py-1 text-xs text-[#eef1e9]">
+        <div className="flex items-center gap-1.5 rounded-md border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-2 py-1 text-xs text-[color:var(--e-text)]">
           {!isImage && !isVideo && <span>{fileIcon(f.file_name)}</span>}
           <span className="max-w-[160px] truncate" title={f.file_name}>
             {f.file_name}
           </span>
-          {f.size_bytes != null && <span className="text-[#8f9885]">{formatBytes(f.size_bytes)}</span>}
+          {f.size_bytes != null && <span className="text-[color:var(--e-muted)]">{formatBytes(f.size_bytes)}</span>}
           {onDownload && (
             <button
               type="button"
               onClick={onDownload}
               disabled={downloadingId === f.id}
-              className="ml-1 text-[#8f9885] hover:text-[#7fce5c] disabled:opacity-50"
+              className="ml-1 text-[color:var(--e-muted)] hover:text-[color:var(--e-accent-hover)] disabled:opacity-50"
             >
               {downloadingId === f.id ? "…" : "Download"}
             </button>
           )}
           {onRemove && (
-            <button type="button" onClick={onRemove} className="ml-1 text-[#5d6456] hover:text-red-400">
+            <button type="button" onClick={onRemove} className="ml-1 text-[color:var(--e-faint)] hover:text-red-400">
               ✕
             </button>
           )}
@@ -1469,7 +1547,24 @@ export default function ErnieChatClient({
   }
 
   return (
-    <div className={`${archivo.variable} ${plexSans.variable} ${plexMono.variable} mx-auto flex w-full flex-col ${isPopup ? "max-w-full gap-2 p-3" : "max-w-[1600px] gap-3 p-6"}`}>
+    <div
+      className={`ernie-theme ${archivo.variable} ${plexSans.variable} ${plexMono.variable} ${nunito.variable} mx-auto flex w-full flex-col ${isPopup ? "max-w-full gap-2 p-3" : "max-w-[1600px] gap-3 p-6"}`}
+      style={themeStyle}
+    >
+      {themeScaleCss && <style>{themeScaleCss}</style>}
+      {appearanceDraft && (
+        <ErnieAppearancePanel
+          value={appearanceDraft}
+          onChange={setAppearanceDraft}
+          onSave={saveAppearance}
+          onCancel={() => {
+            setAppearanceDraft(null);
+            setAppearanceError(null);
+          }}
+          saving={appearanceSaving}
+          error={appearanceError}
+        />
+      )}
       {/* Corrected 2026-09-10 per Chad: he never asked for the General /
           Completed Projects pills resized — he asked for the Projects
           themselves ("the tasks that are created") to move ABOVE the pill
@@ -1498,10 +1593,10 @@ export default function ErnieChatClient({
                   type="button"
                   onClick={() => switchToProject(p.id)}
                   title={p.description ?? undefined}
-                  className={`flex h-24 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-xl border px-2 text-center font-[family-name:var(--font-plex-sans)] transition-colors ${
+                  className={`flex h-24 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-xl border px-2 text-center font-[family-name:var(--e-font-body)] transition-colors ${
                     activeProjectId === p.id
-                      ? "border-[#6ABC46]/60 bg-[#6ABC46] text-[#0b0e09]"
-                      : "border-[#262c1f] bg-[#181c13] text-[#eef1e9] hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+                      ? "border-[color:var(--e-accent)]/60 bg-[color:var(--e-accent)] text-[color:var(--e-on-accent)]"
+                      : "border-[color:var(--e-border)] bg-[color:var(--e-surface)] text-[color:var(--e-text)] hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)]"
                   }`}
                 >
                   <svg viewBox="0 0 20 20" fill="none" className="h-6 w-6 shrink-0" aria-hidden="true">
@@ -1520,7 +1615,7 @@ export default function ErnieChatClient({
                   type="button"
                   onClick={() => setCreateProjectOpen(true)}
                   title="Create a new Ernie Project"
-                  className="flex h-24 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-[#262c1f] bg-transparent px-2 text-center font-[family-name:var(--font-plex-sans)] text-[#8f9885] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+                  className="flex h-24 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-[color:var(--e-border)] bg-transparent px-2 text-center font-[family-name:var(--e-font-body)] text-[color:var(--e-muted)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)]"
                 >
                   <span className="text-2xl leading-none">+</span>
                   <span className="text-xs font-semibold leading-tight">New Project</span>
@@ -1539,7 +1634,7 @@ export default function ErnieChatClient({
               <button
                 type="button"
                 onClick={openCompletedProjects}
-                className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+                className="rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)]"
               >
                 Completed Projects
               </button>
@@ -1582,8 +1677,8 @@ export default function ErnieChatClient({
           height-measurement logic never has to deal with this ref
           appearing/disappearing. */}
       {mode === "projects" && !activeProject ? (
-        <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-2xl border border-[#262c1f] bg-[#12150f] p-10 text-center shadow-[0_0_0_1px_rgba(0,0,0,0.4)]">
-          <p className="font-[family-name:var(--font-plex-sans)] text-sm text-[#8f9885]">
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-2xl border border-[color:var(--e-border)] bg-[color:var(--e-panel)] p-10 text-center shadow-[0_0_0_1px_rgba(0,0,0,0.4)]">
+          <p className="font-[family-name:var(--e-font-body)] text-sm text-[color:var(--e-muted)]">
             {projects.length > 0
               ? "Select a Project above to open its conversation and files."
               : canManageProjects
@@ -1594,8 +1689,8 @@ export default function ErnieChatClient({
       ) : (
         <>
       {dragActive && (
-        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-[#6ABC46]/60 bg-[#0b0e09]/85">
-          <p className="font-[family-name:var(--font-plex-sans)] text-sm font-medium text-[#eef1e9]">
+        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-[color:var(--e-accent)]/60 bg-[color:var(--e-deep)]/85">
+          <p className="font-[family-name:var(--e-font-body)] text-sm font-medium text-[color:var(--e-text)]">
             Drop files to attach them
           </p>
         </div>
@@ -1607,10 +1702,10 @@ export default function ErnieChatClient({
           to a project to live"), mirroring the right-hand conversation
           panel's styling. Replaces the earlier "Files (n)" popup. */}
       {!isPopup && activeProject && (
-        <div className="flex w-72 shrink-0 flex-col overflow-hidden rounded-2xl border border-[#262c1f] bg-[#12150f] shadow-[0_0_0_1px_rgba(0,0,0,0.4)]">
-          <div className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[#4c8a32] via-[#6ABC46] to-[#7fce5c]" />
-          <div className="flex items-center justify-between gap-2 border-b border-[#1c2117] px-4 py-4">
-            <h2 className="min-w-0 truncate font-[family-name:var(--font-archivo)] text-sm font-bold tracking-tight text-[#eef1e9]">
+        <div className="flex w-72 shrink-0 flex-col overflow-hidden rounded-2xl border border-[color:var(--e-border)] bg-[color:var(--e-panel)] shadow-[0_0_0_1px_rgba(0,0,0,0.4)]">
+          <div className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[color:var(--e-accent-dark)] via-[color:var(--e-accent)] to-[color:var(--e-accent-hover)]" />
+          <div className="flex items-center justify-between gap-2 border-b border-[color:var(--e-divider)] px-4 py-4">
+            <h2 className="min-w-0 truncate font-[family-name:var(--e-font-head)] text-sm font-bold tracking-tight text-[color:var(--e-text)]">
               {activeProject.name} — Files
             </h2>
             {canManageProjects && (
@@ -1619,20 +1714,20 @@ export default function ErnieChatClient({
                 onClick={() => projectFileInputRef.current?.click()}
                 disabled={projectFileUploading}
                 title="Add files to this Project"
-                className="shrink-0 rounded-full border border-[#262c1f] bg-[#181c13] px-2.5 py-1 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c] disabled:opacity-50"
+                className="shrink-0 rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-2.5 py-1 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)] disabled:opacity-50"
               >
                 {projectFileUploading ? "…" : "+ Add"}
               </button>
             )}
           </div>
           {projectFileUploadError && (
-            <p className="border-b border-[#1c2117] px-4 py-2 text-xs text-red-400">{projectFileUploadError}</p>
+            <p className="border-b border-[color:var(--e-divider)] px-4 py-2 text-xs text-red-400">{projectFileUploadError}</p>
           )}
-          <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto p-3 font-[family-name:var(--font-plex-sans)]">
+          <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto p-3 font-[family-name:var(--e-font-body)]">
             {projectFilesLoading ? (
-              <p className="px-1 py-3 text-sm text-[#8f9885]">Loading…</p>
+              <p className="px-1 py-3 text-sm text-[color:var(--e-muted)]">Loading…</p>
             ) : projectFiles.length === 0 ? (
-              <p className="px-1 py-3 text-sm text-[#8f9885]">
+              <p className="px-1 py-3 text-sm text-[color:var(--e-muted)]">
                 No files yet.{canManageProjects && " Use “+ Add” to add some."}
               </p>
             ) : (
@@ -1667,22 +1762,30 @@ export default function ErnieChatClient({
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[#262c1f] bg-[#12150f] shadow-[0_0_0_1px_rgba(0,0,0,0.4)]">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[color:var(--e-border)] bg-[color:var(--e-panel)] shadow-[0_0_0_1px_rgba(0,0,0,0.4)]">
         {/* Thin brand-green gradient accent line along the top of the panel */}
-        <div className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[#4c8a32] via-[#6ABC46] to-[#7fce5c]" />
+        <div className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[color:var(--e-accent-dark)] via-[color:var(--e-accent)] to-[color:var(--e-accent-hover)]" />
 
-        <div className="flex items-center justify-between border-b border-[#1c2117] px-5 py-4">
+        <div className="flex items-center justify-between border-b border-[color:var(--e-divider)] px-5 py-4">
           <div className="min-w-0">
-            <h1 className="truncate font-[family-name:var(--font-archivo)] text-lg font-bold tracking-tight text-[#eef1e9]">
+            <h1 className="truncate font-[family-name:var(--e-font-head)] text-lg font-bold tracking-tight text-[color:var(--e-text)]">
               {activeProject ? activeProject.name : mode === "general" ? "My Ernie AI" : "Ernie AI"}
             </h1>
             {activeProject?.description && (
-              <p className="truncate font-[family-name:var(--font-plex-sans)] text-xs text-[#8f9885]">
+              <p className="truncate font-[family-name:var(--e-font-body)] text-xs text-[color:var(--e-muted)]">
                 {activeProject.description}
               </p>
             )}
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setAppearanceDraft({ ...appearance, colors: { ...appearance.colors } })}
+              className="rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)]"
+              title="Change Ernie's colors, text size, and font (just for you)"
+            >
+              Customize
+            </button>
             {/* This Project's files now live in the persistent left-side
                 panel (added 2026-09-10, per Chad's red-box annotation)
                 instead of a popup — see that panel below, next to the main
@@ -1704,7 +1807,7 @@ export default function ErnieChatClient({
               <button
                 type="button"
                 onClick={openManageAccess}
-                className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+                className="rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)]"
               >
                 Manage Access
               </button>
@@ -1715,7 +1818,7 @@ export default function ErnieChatClient({
                 onClick={() => closeProject(activeProject.id)}
                 disabled={projectActionBusyId === activeProject.id}
                 title="Move this Project to Completed Projects — reversible any time"
-                className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c] disabled:opacity-50"
+                className="rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)] disabled:opacity-50"
               >
                 {projectActionBusyId === activeProject.id ? "Closing…" : "Close Project"}
               </button>
@@ -1726,7 +1829,7 @@ export default function ErnieChatClient({
                 onClick={() => deleteProjectForever(activeProject)}
                 disabled={projectActionBusyId === activeProject.id}
                 title="Permanently delete this Project — cannot be undone"
-                className="rounded-full border border-red-900/50 bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-red-400 transition-colors hover:border-red-500/60 hover:text-red-300 disabled:opacity-50"
+                className="rounded-full border border-red-900/50 bg-[color:var(--e-surface)] px-3 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-medium text-red-400 transition-colors hover:border-red-500/60 hover:text-red-300 disabled:opacity-50"
               >
                 Delete Project
               </button>
@@ -1743,7 +1846,7 @@ export default function ErnieChatClient({
                 type="button"
                 onClick={openPopout}
                 title="Open Ernie in a separate window you can keep alongside the rest of the app"
-                className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+                className="rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)]"
               >
                 Pop Out ↗
               </button>
@@ -1752,7 +1855,7 @@ export default function ErnieChatClient({
               <button
                 type="button"
                 onClick={openNotes}
-                className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+                className="rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)]"
               >
                 What Ernie Knows About You
               </button>
@@ -1764,7 +1867,7 @@ export default function ErnieChatClient({
               <button
                 type="button"
                 onClick={startNewConversation}
-                className="rounded-full border border-[#262c1f] bg-[#181c13] px-3 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] transition-colors hover:border-[#6ABC46]/50 hover:text-[#7fce5c]"
+                className="rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)]"
               >
                 New Conversation
               </button>
@@ -1773,32 +1876,32 @@ export default function ErnieChatClient({
         </div>
 
         {projectActionError && !completedOpen && (
-          <p className="border-b border-[#1c2117] px-5 py-2 text-xs text-red-400">{projectActionError}</p>
+          <p className="border-b border-[color:var(--e-divider)] px-5 py-2 text-xs text-red-400">{projectActionError}</p>
         )}
 
         {notesOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-            <div className="w-full max-w-lg rounded-xl border border-[#262c1f] bg-[#12150e] p-5 shadow-xl">
+            <div className="w-full max-w-lg rounded-xl border border-[color:var(--e-border)] bg-[color:var(--e-modal)] p-5 shadow-xl">
               <div className="mb-3 flex items-center justify-between">
-                <h2 className="font-[family-name:var(--font-archivo)] text-base font-bold text-[#eef1e9]">
+                <h2 className="font-[family-name:var(--e-font-head)] text-base font-bold text-[color:var(--e-text)]">
                   What Ernie Knows About You
                 </h2>
                 <button
                   type="button"
                   onClick={() => setNotesOpen(false)}
-                  className="text-[#8a9282] hover:text-[#eef1e9]"
+                  className="text-[color:var(--e-muted)] hover:text-[color:var(--e-text)]"
                   aria-label="Close"
                 >
                   ✕
                 </button>
               </div>
-              <p className="mb-3 font-[family-name:var(--font-plex-sans)] text-xs text-[#8a9282]">
+              <p className="mb-3 font-[family-name:var(--e-font-body)] text-xs text-[color:var(--e-muted)]">
                 Private to you — only you can see or change this, not even an admin. Ernie updates it on its own
                 as you talk (how you like it to communicate, and relevant context about your role), but you can
                 edit or clear it any time.
               </p>
               {notesLoading ? (
-                <p className="py-6 text-center text-sm text-[#8a9282]">Loading…</p>
+                <p className="py-6 text-center text-sm text-[color:var(--e-muted)]">Loading…</p>
               ) : (
                 <>
                   <textarea
@@ -1806,26 +1909,26 @@ export default function ErnieChatClient({
                     onChange={(e) => setNotesText(e.target.value)}
                     rows={8}
                     placeholder="Nothing here yet — Ernie will start filling this in as you chat."
-                    className="w-full resize-none rounded-lg border border-[#262c1f] bg-[#181c13] p-3 font-[family-name:var(--font-plex-sans)] text-sm text-[#eef1e9] outline-none focus:border-[#6ABC46]/50"
+                    className="w-full resize-none rounded-lg border border-[color:var(--e-border)] bg-[color:var(--e-surface)] p-3 font-[family-name:var(--e-font-body)] text-sm text-[color:var(--e-text)] outline-none focus:border-[color:var(--e-accent)]/50"
                   />
                   {notesError && <p className="mt-2 text-xs text-red-400">{notesError}</p>}
                   <div className="mt-3 flex items-center justify-between">
                     <button
                       type="button"
                       onClick={() => setNotesText("")}
-                      className="font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#8a9282] hover:text-[#eef1e9]"
+                      className="font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-muted)] hover:text-[color:var(--e-text)]"
                     >
                       Clear
                     </button>
                     <div className="flex items-center gap-3">
                       {notesSavedAt && !notesSaving && (
-                        <span className="font-[family-name:var(--font-plex-sans)] text-xs text-[#6ABC46]">Saved</span>
+                        <span className="font-[family-name:var(--e-font-body)] text-xs text-[color:var(--e-accent)]">Saved</span>
                       )}
                       <button
                         type="button"
                         onClick={saveNotes}
                         disabled={notesSaving}
-                        className="rounded-full bg-[#6ABC46] px-4 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-semibold text-[#12150e] transition-opacity hover:opacity-90 disabled:opacity-50"
+                        className="rounded-full bg-[color:var(--e-accent)] px-4 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-semibold text-[color:var(--e-on-accent)] transition-opacity hover:opacity-90 disabled:opacity-50"
                       >
                         {notesSaving ? "Saving…" : "Save"}
                       </button>
@@ -1839,45 +1942,45 @@ export default function ErnieChatClient({
 
         {manageAccessOpen && activeProject && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-            <div className="flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-[#262c1f] bg-[#12150e] p-5 shadow-xl">
+            <div className="flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-[color:var(--e-border)] bg-[color:var(--e-modal)] p-5 shadow-xl">
               <div className="mb-1 flex items-center justify-between">
-                <h2 className="font-[family-name:var(--font-archivo)] text-base font-bold text-[#eef1e9]">
+                <h2 className="font-[family-name:var(--e-font-head)] text-base font-bold text-[color:var(--e-text)]">
                   {activeProject.name} — Manage Access
                 </h2>
                 <button
                   type="button"
                   onClick={() => setManageAccessOpen(false)}
-                  className="text-[#8a9282] hover:text-[#eef1e9]"
+                  className="text-[color:var(--e-muted)] hover:text-[color:var(--e-text)]"
                   aria-label="Close"
                 >
                   ✕
                 </button>
               </div>
-              <p className="mb-3 font-[family-name:var(--font-plex-sans)] text-xs text-[#8a9282]">
+              <p className="mb-3 font-[family-name:var(--e-font-body)] text-xs text-[color:var(--e-muted)]">
                 Checked = this person sees this Project&rsquo;s tab and can chat inside it.
               </p>
               {accessError && <p className="mb-2 text-xs text-red-400">{accessError}</p>}
               <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
                 {accessLoading ? (
-                  <p className="py-6 text-center text-sm text-[#8a9282]">Loading…</p>
+                  <p className="py-6 text-center text-sm text-[color:var(--e-muted)]">Loading…</p>
                 ) : (
                   accessUsers.map((u) => (
                     <label
                       key={u.id}
-                      className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-2 hover:bg-[#181c13]"
+                      className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-2 hover:bg-[color:var(--e-surface)]"
                     >
                       <input
                         type="checkbox"
                         checked={u.has_access}
                         disabled={accessSavingId === u.id}
                         onChange={() => toggleUserAccess(u)}
-                        className="h-4 w-4 accent-[#6ABC46]"
+                        className="h-4 w-4 accent-[color:var(--e-accent)]"
                       />
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm text-[#eef1e9]">
+                        <span className="block truncate text-sm text-[color:var(--e-text)]">
                           {u.full_name || u.email}
                         </span>
-                        <span className="block truncate font-[family-name:var(--font-plex-mono)] text-xs text-[#5d6456]">
+                        <span className="block truncate font-[family-name:var(--font-plex-mono)] text-xs text-[color:var(--e-faint)]">
                           {u.email}
                         </span>
                       </span>
@@ -1889,7 +1992,7 @@ export default function ErnieChatClient({
           </div>
         )}
 
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 font-[family-name:var(--font-plex-sans)]">
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 font-[family-name:var(--e-font-body)]">
           {initializing
             ? null
             : messages.length === 0 && (
@@ -1900,7 +2003,7 @@ export default function ErnieChatClient({
                     alt=""
                     className="h-[96px] w-[96px] object-contain"
                   />
-                  <p className="font-[family-name:var(--font-archivo)] text-xl font-semibold text-[#eef1e9]">
+                  <p className="font-[family-name:var(--e-font-head)] text-xl font-semibold text-[color:var(--e-text)]">
                     Hi {capitalize(firstName)}, what can I help you with?
                   </p>
                 </div>
@@ -1933,7 +2036,7 @@ export default function ErnieChatClient({
                           name treatment a teammate's message gets, not just
                           the right/green styling. */}
                       {activeProject && m.senderName && (
-                        <span className="font-[family-name:var(--font-plex-mono)] text-[11px] font-medium tracking-wide text-[#8f9885]">
+                        <span className="font-[family-name:var(--font-plex-mono)] text-[11px] font-medium tracking-wide text-[color:var(--e-muted)]">
                           {m.senderName}
                         </span>
                       )}
@@ -1945,7 +2048,7 @@ export default function ErnieChatClient({
                         </div>
                       )}
                       {m.text && (
-                        <div className="max-w-[75%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-[#6ABC46] px-3.5 py-2.5 text-sm text-[#0b0e09]">
+                        <div className="max-w-[75%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-[color:var(--e-user-bg)] px-3.5 py-2.5 text-sm text-[color:var(--e-user-text)]">
                           {m.text}
                         </div>
                       )}
@@ -1957,7 +2060,7 @@ export default function ErnieChatClient({
                   // A teammate's message in this Project's shared room.
                   return (
                     <div key={i} className="flex flex-col items-start gap-1.5">
-                      <span className="font-[family-name:var(--font-plex-mono)] text-[11px] font-medium tracking-wide text-[#8f9885]">
+                      <span className="font-[family-name:var(--font-plex-mono)] text-[11px] font-medium tracking-wide text-[color:var(--e-muted)]">
                         {m.senderName}
                       </span>
                       {m.files && m.files.length > 0 && (
@@ -1968,7 +2071,7 @@ export default function ErnieChatClient({
                         </div>
                       )}
                       {m.text && (
-                        <div className="max-w-[75%] whitespace-pre-wrap rounded-2xl rounded-tl-sm border border-[#262c1f] bg-[#181c13] px-3.5 py-2.5 text-sm text-[#eef1e9]">
+                        <div className="max-w-[75%] whitespace-pre-wrap rounded-2xl rounded-tl-sm border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3.5 py-2.5 text-sm text-[color:var(--e-text)]">
                           {m.text}
                         </div>
                       )}
@@ -1989,10 +2092,10 @@ export default function ErnieChatClient({
                       <div className="w-[52px] shrink-0" />
                     )}
                     <div className="flex flex-1 flex-col gap-1 pt-1">
-                      <span className="font-[family-name:var(--font-plex-mono)] text-[11px] font-medium tracking-wide text-[#8f9885]">
+                      <span className="font-[family-name:var(--font-plex-mono)] text-[11px] font-medium tracking-wide text-[color:var(--e-muted)]">
                         Ernie
                       </span>
-                      <div className="whitespace-pre-wrap border-l-2 border-[#6ABC46]/40 pl-3 text-sm text-[#eef1e9]">
+                      <div className="whitespace-pre-wrap rounded-r-xl border-l-2 border-[color:var(--e-accent)]/40 bg-[color:var(--e-ernie-bg)] py-[var(--e-ernie-pad)] pr-[var(--e-ernie-pad)] pl-3 text-sm text-[color:var(--e-ernie-text)]">
                         {m.text}
                       </div>
                       {m.files && m.files.length > 0 && (
@@ -2019,7 +2122,7 @@ export default function ErnieChatClient({
             <div className="flex items-center gap-3">
               {/* eslint-disable-next-line @next/next/no-img-element -- plain img keeps gif animation intact, and lets the src swap between the static frame and the animated gif */}
               <img src="/ernie/thinking.gif" alt="" className="h-[52px] w-[52px] shrink-0 object-contain" />
-              <p className="text-sm text-[#8f9885]">
+              <p className="text-sm text-[color:var(--e-muted)]">
                 {statusLabel ? `${statusLabel}…` : "Ernie is thinking…"}
               </p>
             </div>
@@ -2029,18 +2132,18 @@ export default function ErnieChatClient({
           <div ref={scrollRef} />
         </div>
 
-        <div className="border-t border-[#1c2117] px-5 py-4 font-[family-name:var(--font-plex-sans)]">
+        <div className="border-t border-[color:var(--e-divider)] px-5 py-4 font-[family-name:var(--e-font-body)]">
           {(pendingFiles.length > 0 || uploading) && (
             <div className="mb-2 flex flex-wrap gap-1.5">
               {pendingFiles.map((f) => (
                 <FileChip key={f.id} f={f} onRemove={() => removePendingFile(f)} />
               ))}
-              {uploading && <span className="px-2 py-1 text-xs text-[#5d6456]">Uploading…</span>}
+              {uploading && <span className="px-2 py-1 text-xs text-[color:var(--e-faint)]">Uploading…</span>}
             </div>
           )}
           {uploadError && <p className="mb-2 text-xs text-red-400">{uploadError}</p>}
 
-          <form onSubmit={handleSubmit} className="flex items-center gap-2 rounded-full border border-[#262c1f] bg-white py-1.5 pl-1.5 pr-2">
+          <form onSubmit={handleSubmit} className="flex items-center gap-2 rounded-full border border-[color:var(--e-border)] bg-white py-1.5 pl-1.5 pr-2">
             <input
               ref={fileInputRef}
               type="file"
@@ -2056,7 +2159,7 @@ export default function ErnieChatClient({
               onClick={() => fileInputRef.current?.click()}
               disabled={loading || uploading}
               title="Attach a file"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-[#4c8a32] disabled:opacity-50"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-[color:var(--e-accent-dark)] disabled:opacity-50"
             >
               +
             </button>
@@ -2070,7 +2173,7 @@ export default function ErnieChatClient({
             <button
               type="submit"
               disabled={loading || (!input.trim() && pendingFiles.length === 0)}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#6ABC46] text-[#0b0e09] transition-colors hover:bg-[#7fce5c] disabled:cursor-not-allowed"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[color:var(--e-accent)] text-[color:var(--e-on-accent)] transition-colors hover:bg-[color:var(--e-accent-hover)] disabled:cursor-not-allowed"
               title="Send"
             >
               <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
@@ -2089,18 +2192,18 @@ export default function ErnieChatClient({
           window: that window is sized for a narrow chat panel, and the full
           history is always one click away in the main window. */}
       {!isPopup && !activeProject && (
-      <div className="flex w-72 shrink-0 flex-col overflow-hidden rounded-2xl border border-[#262c1f] bg-[#12150f] shadow-[0_0_0_1px_rgba(0,0,0,0.4)]">
-        <div className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[#4c8a32] via-[#6ABC46] to-[#7fce5c]" />
-        <div className="border-b border-[#1c2117] px-4 py-4">
-          <h2 className="font-[family-name:var(--font-archivo)] text-sm font-bold tracking-tight text-[#eef1e9]">
+      <div className="flex w-72 shrink-0 flex-col overflow-hidden rounded-2xl border border-[color:var(--e-border)] bg-[color:var(--e-panel)] shadow-[0_0_0_1px_rgba(0,0,0,0.4)]">
+        <div className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[color:var(--e-accent-dark)] via-[color:var(--e-accent)] to-[color:var(--e-accent-hover)]" />
+        <div className="border-b border-[color:var(--e-divider)] px-4 py-4">
+          <h2 className="font-[family-name:var(--e-font-head)] text-sm font-bold tracking-tight text-[color:var(--e-text)]">
             Past Conversations
           </h2>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto font-[family-name:var(--font-plex-sans)]">
+        <div className="min-h-0 flex-1 overflow-y-auto font-[family-name:var(--e-font-body)]">
           {historyLoading ? (
-            <p className="px-4 py-3 text-sm text-[#8f9885]">Loading…</p>
+            <p className="px-4 py-3 text-sm text-[color:var(--e-muted)]">Loading…</p>
           ) : history.length === 0 ? (
-            <p className="px-4 py-3 text-sm text-[#8f9885]">No past conversations yet.</p>
+            <p className="px-4 py-3 text-sm text-[color:var(--e-muted)]">No past conversations yet.</p>
           ) : (
             <ul className="py-1">
               {history.map((c) => (
@@ -2108,14 +2211,14 @@ export default function ErnieChatClient({
                   <button
                     type="button"
                     onClick={() => openConversation(c.id)}
-                    className={`flex w-full flex-col items-start gap-0.5 px-4 py-2.5 text-left transition-colors hover:bg-[#181c13] ${
-                      c.id === conversationId ? "bg-[#181c13]" : ""
+                    className={`flex w-full flex-col items-start gap-0.5 px-4 py-2.5 text-left transition-colors hover:bg-[color:var(--e-surface)] ${
+                      c.id === conversationId ? "bg-[color:var(--e-surface)]" : ""
                     }`}
                   >
-                    <span className="w-full truncate text-sm text-[#eef1e9]">
+                    <span className="w-full truncate text-sm text-[color:var(--e-text)]">
                       {c.title || "New conversation"}
                     </span>
-                    <span className="font-[family-name:var(--font-plex-mono)] text-xs text-[#5d6456]">
+                    <span className="font-[family-name:var(--font-plex-mono)] text-xs text-[color:var(--e-faint)]">
                       {formatRelative(c.updated_at)}
                     </span>
                   </button>
@@ -2146,21 +2249,21 @@ export default function ErnieChatClient({
           of whether a Project happens to be selected. */}
       {createProjectOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-          <div className="w-full max-w-md rounded-xl border border-[#262c1f] bg-[#12150e] p-5 shadow-xl">
+          <div className="w-full max-w-md rounded-xl border border-[color:var(--e-border)] bg-[color:var(--e-modal)] p-5 shadow-xl">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="font-[family-name:var(--font-archivo)] text-base font-bold text-[#eef1e9]">
+              <h2 className="font-[family-name:var(--e-font-head)] text-base font-bold text-[color:var(--e-text)]">
                 New Ernie Project
               </h2>
               <button
                 type="button"
                 onClick={() => setCreateProjectOpen(false)}
-                className="text-[#8a9282] hover:text-[#eef1e9]"
+                className="text-[color:var(--e-muted)] hover:text-[color:var(--e-text)]"
                 aria-label="Close"
               >
                 ✕
               </button>
             </div>
-            <label className="mb-1 block font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#8a9282]">
+            <label className="mb-1 block font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-muted)]">
               Name
             </label>
             <input
@@ -2168,9 +2271,9 @@ export default function ErnieChatClient({
               value={newProjectName}
               onChange={(e) => setNewProjectName(e.target.value)}
               placeholder="e.g. 2027 Distributor Contracts"
-              className="mb-3 w-full rounded-lg border border-[#262c1f] bg-[#181c13] p-2.5 font-[family-name:var(--font-plex-sans)] text-sm text-[#eef1e9] outline-none focus:border-[#6ABC46]/50"
+              className="mb-3 w-full rounded-lg border border-[color:var(--e-border)] bg-[color:var(--e-surface)] p-2.5 font-[family-name:var(--e-font-body)] text-sm text-[color:var(--e-text)] outline-none focus:border-[color:var(--e-accent)]/50"
             />
-            <label className="mb-1 block font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#8a9282]">
+            <label className="mb-1 block font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-muted)]">
               Description (optional)
             </label>
             <textarea
@@ -2178,7 +2281,7 @@ export default function ErnieChatClient({
               onChange={(e) => setNewProjectDescription(e.target.value)}
               rows={3}
               placeholder="What this Project is for — helps Ernie use its files well."
-              className="mb-3 w-full resize-none rounded-lg border border-[#262c1f] bg-[#181c13] p-2.5 font-[family-name:var(--font-plex-sans)] text-sm text-[#eef1e9] outline-none focus:border-[#6ABC46]/50"
+              className="mb-3 w-full resize-none rounded-lg border border-[color:var(--e-border)] bg-[color:var(--e-surface)] p-2.5 font-[family-name:var(--e-font-body)] text-sm text-[color:var(--e-text)] outline-none focus:border-[color:var(--e-accent)]/50"
             />
             {createProjectError && <p className="mb-2 text-xs text-red-400">{createProjectError}</p>}
             <div className="flex justify-end">
@@ -2186,7 +2289,7 @@ export default function ErnieChatClient({
                 type="button"
                 onClick={createProject}
                 disabled={creatingProject}
-                className="rounded-full bg-[#6ABC46] px-4 py-1.5 font-[family-name:var(--font-plex-sans)] text-xs font-semibold text-[#12150e] transition-opacity hover:opacity-90 disabled:opacity-50"
+                className="rounded-full bg-[color:var(--e-accent)] px-4 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-semibold text-[color:var(--e-on-accent)] transition-opacity hover:opacity-90 disabled:opacity-50"
               >
                 {creatingProject ? "Creating…" : "Create Project"}
               </button>
@@ -2197,45 +2300,45 @@ export default function ErnieChatClient({
 
       {completedOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
-          <div className="flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-[#262c1f] bg-[#12150e] p-5 shadow-xl">
+          <div className="flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-[color:var(--e-border)] bg-[color:var(--e-modal)] p-5 shadow-xl">
             <div className="mb-1 flex items-center justify-between">
-              <h2 className="font-[family-name:var(--font-archivo)] text-base font-bold text-[#eef1e9]">
+              <h2 className="font-[family-name:var(--e-font-head)] text-base font-bold text-[color:var(--e-text)]">
                 Completed Projects
               </h2>
               <button
                 type="button"
                 onClick={() => setCompletedOpen(false)}
-                className="text-[#8a9282] hover:text-[#eef1e9]"
+                className="text-[color:var(--e-muted)] hover:text-[color:var(--e-text)]"
                 aria-label="Close"
               >
                 ✕
               </button>
             </div>
-            <p className="mb-3 font-[family-name:var(--font-plex-sans)] text-xs text-[#8a9282]">
+            <p className="mb-3 font-[family-name:var(--e-font-body)] text-xs text-[color:var(--e-muted)]">
               Closed Projects — reopen one to bring it back to the active tab row, or delete it for good.
             </p>
             {projectActionError && <p className="mb-2 text-xs text-red-400">{projectActionError}</p>}
             <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
               {completedLoading ? (
-                <p className="py-6 text-center text-sm text-[#8a9282]">Loading…</p>
+                <p className="py-6 text-center text-sm text-[color:var(--e-muted)]">Loading…</p>
               ) : completedProjects.length === 0 ? (
-                <p className="py-6 text-center text-sm text-[#8a9282]">No completed Projects.</p>
+                <p className="py-6 text-center text-sm text-[color:var(--e-muted)]">No completed Projects.</p>
               ) : (
                 completedProjects.map((p) => (
                   <div
                     key={p.id}
-                    className="flex items-center justify-between gap-2 rounded-lg border border-[#262c1f] bg-[#181c13] px-3 py-2.5"
+                    className="flex items-center justify-between gap-2 rounded-lg border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3 py-2.5"
                   >
                     <div className="min-w-0">
-                      <p className="truncate text-sm text-[#eef1e9]">{p.name}</p>
-                      {p.description && <p className="truncate text-xs text-[#8f9885]">{p.description}</p>}
+                      <p className="truncate text-sm text-[color:var(--e-text)]">{p.name}</p>
+                      {p.description && <p className="truncate text-xs text-[color:var(--e-muted)]">{p.description}</p>}
                     </div>
                     <div className="flex shrink-0 items-center gap-1.5">
                       <button
                         type="button"
                         onClick={() => reopenProject(p.id)}
                         disabled={projectActionBusyId === p.id}
-                        className="rounded-full border border-[#262c1f] bg-[#12150e] px-2.5 py-1 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-[#eef1e9] hover:border-[#6ABC46]/50 hover:text-[#7fce5c] disabled:opacity-50"
+                        className="rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-modal)] px-2.5 py-1 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)] disabled:opacity-50"
                       >
                         {projectActionBusyId === p.id ? "…" : "Reopen"}
                       </button>
@@ -2243,7 +2346,7 @@ export default function ErnieChatClient({
                         type="button"
                         onClick={() => deleteProjectForever(p)}
                         disabled={projectActionBusyId === p.id}
-                        className="rounded-full border border-red-900/50 bg-[#12150e] px-2.5 py-1 font-[family-name:var(--font-plex-sans)] text-xs font-medium text-red-400 hover:border-red-500/60 hover:text-red-300 disabled:opacity-50"
+                        className="rounded-full border border-red-900/50 bg-[color:var(--e-modal)] px-2.5 py-1 font-[family-name:var(--e-font-body)] text-xs font-medium text-red-400 hover:border-red-500/60 hover:text-red-300 disabled:opacity-50"
                       >
                         Delete
                       </button>

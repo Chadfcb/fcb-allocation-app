@@ -4,7 +4,13 @@ import { getErnieTools, buildErnieSystemPrompt, runErnieTool } from "@/lib/ernie
 import { hasSection, getUserSections, ERNIE_SECTION } from "@/lib/permissions";
 import { buildFileContentBlocks, captureCodeExecutionFile, logErnieToolExecution, type ErnieFileRow } from "@/lib/ernie/files";
 import { closeBrowseSession, logBrowseStep } from "@/lib/ernie/browser";
-import { withHistoryCacheBreakpoint, addWrapUpNote, isReplyOutOfTime } from "@/lib/ernie/replyBudget";
+import {
+  withHistoryCacheBreakpoint,
+  addWrapUpNote,
+  isReplyOutOfTime,
+  danglingServerToolUseIds,
+  withoutDanglingServerToolUse,
+} from "@/lib/ernie/replyBudget";
 import { firstNameFor } from "@/lib/displayName";
 
 // The live, shared chat room for one Ernie Project (see
@@ -388,6 +394,31 @@ The message that was just posted, from ${senderName}${
                 }
               }
             }
+          }
+
+          // Anthropic paused a long-running server tool (usually the code
+          // sandbox building a file) — hand its content back unchanged so it
+          // resumes. See lib/ernie/replyBudget.ts. Never add a user message
+          // here: that's exactly what caused the "tool use ... without a
+          // corresponding tool_result" crash.
+          if (data.stop_reason === "pause_turn" && !isLastRound) {
+            anthropicMessages.push({ role: "assistant", content });
+            continue;
+          }
+          // Cut off by length in the middle of a server tool call: drop the
+          // half-finished call and ask for the step again, rather than
+          // sending back something Anthropic will reject.
+          if (data.stop_reason === "max_tokens" && danglingServerToolUseIds(content).length > 0 && !isLastRound) {
+            const kept = withoutDanglingServerToolUse(content);
+            anthropicMessages.push({
+              role: "assistant",
+              content: kept.length ? kept : [{ type: "text", text: "(My last step was cut off.)" }],
+            });
+            anthropicMessages.push({
+              role: "user",
+              content: "Your last step was cut off before that tool finished. Please try that step again.",
+            });
+            continue;
           }
 
           if (data.stop_reason === "tool_use") {

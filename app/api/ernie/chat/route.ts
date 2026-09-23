@@ -4,7 +4,13 @@ import { getErnieTools, buildErnieSystemPrompt, runErnieTool, describeErnieToolL
 import { hasSection, getUserSections, ERNIE_SECTION } from "@/lib/permissions";
 import { buildFileContentBlocks, captureCodeExecutionFile, logErnieToolExecution, type ErnieFileRow } from "@/lib/ernie/files";
 import { closeBrowseSession, logBrowseStep } from "@/lib/ernie/browser";
-import { withHistoryCacheBreakpoint, addWrapUpNote, isReplyOutOfTime } from "@/lib/ernie/replyBudget";
+import {
+  withHistoryCacheBreakpoint,
+  addWrapUpNote,
+  isReplyOutOfTime,
+  danglingServerToolUseIds,
+  withoutDanglingServerToolUse,
+} from "@/lib/ernie/replyBudget";
 
 // Ernie's chat backend. Open to every signed-in user, read-only: this route
 // calls Claude's Messages API directly (Ernie's underlying model — never
@@ -572,6 +578,31 @@ export async function POST(req: NextRequest) {
             }
           }
 
+          // Anthropic paused a long-running server tool (usually the code
+          // sandbox building a file) — hand its content back unchanged so it
+          // resumes. See lib/ernie/replyBudget.ts. Never add a user message
+          // here: that's exactly what caused the "tool use ... without a
+          // corresponding tool_result" crash.
+          if (data.stop_reason === "pause_turn" && !isLastRound) {
+            anthropicMessages.push({ role: "assistant", content });
+            continue;
+          }
+          // Cut off by length in the middle of a server tool call: drop the
+          // half-finished call and ask for the step again, rather than
+          // sending back something Anthropic will reject.
+          if (data.stop_reason === "max_tokens" && danglingServerToolUseIds(content).length > 0 && !isLastRound) {
+            const kept = withoutDanglingServerToolUse(content);
+            anthropicMessages.push({
+              role: "assistant",
+              content: kept.length ? kept : [{ type: "text", text: "(My last step was cut off.)" }],
+            });
+            anthropicMessages.push({
+              role: "user",
+              content: "Your last step was cut off before that tool finished. Please try that step again.",
+            });
+            continue;
+          }
+
           if (data.stop_reason === "tool_use") {
             anthropicMessages.push({ role: "assistant", content });
 
@@ -684,7 +715,13 @@ export async function POST(req: NextRequest) {
           // so if it comes back empty even after this, the generic
           // fallback below is still the right last resort.
           if (!textThisRound && !isLastRound) {
-            anthropicMessages.push({ role: "assistant", content });
+            // Strip any half-finished server tool call first, so this nudge
+            // can never produce the "tool use without tool_result" error.
+            const keptContent = withoutDanglingServerToolUse(content);
+            anthropicMessages.push({
+              role: "assistant",
+              content: keptContent.length ? keptContent : [{ type: "text", text: "(No reply that round.)" }],
+            });
             anthropicMessages.push({
               role: "user",
               content:

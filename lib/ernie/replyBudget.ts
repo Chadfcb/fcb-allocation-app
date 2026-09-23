@@ -63,3 +63,41 @@ export function addWrapUpNote(messages: any[]): void {
     if (!last.content.some((b: { text?: string }) => b?.text === note.text)) last.content.push(note);
   }
 }
+
+// ---------------------------------------------------------------------
+// Long-running server tools (added 2026-09-23 — fixes Shanelle's
+// "`code_execution` tool use ... was found without a corresponding
+// `code_execution_tool_result` block" crash when asking for a PDF).
+//
+// Anthropic runs web_search / web_fetch / code_execution on its own side.
+// When one runs long (building a PDF in the sandbox is the usual case), the
+// API can stop mid-job with stop_reason "pause_turn": the reply contains the
+// server tool call but not its result yet, and the caller is expected to
+// send that assistant content back UNCHANGED so Anthropic can resume it. The
+// chat routes never handled pause_turn — they treated it as an empty round
+// and added a "try again" user message after the half-finished tool call,
+// which Anthropic rejects outright with that 400 error.
+// ---------------------------------------------------------------------
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shape
+export function danglingServerToolUseIds(content: any[]): string[] {
+  const used = new Set<string>();
+  const answered = new Set<string>();
+  for (const b of content ?? []) {
+    if (b?.type === "server_tool_use" && typeof b.id === "string") used.add(b.id);
+    if (typeof b?.type === "string" && b.type.endsWith("_tool_result") && typeof b.tool_use_id === "string") {
+      answered.add(b.tool_use_id);
+    }
+  }
+  return [...used].filter((id) => !answered.has(id));
+}
+
+// Removes any server tool call that never got its result (e.g. a reply cut
+// off by max_tokens mid-sandbox-job), so the content can safely go back into
+// the conversation without Anthropic rejecting the whole request.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shape
+export function withoutDanglingServerToolUse(content: any[]): any[] {
+  const dangling = new Set(danglingServerToolUseIds(content));
+  if (!dangling.size) return content;
+  return (content ?? []).filter((b) => !(b?.type === "server_tool_use" && dangling.has(b.id)));
+}
