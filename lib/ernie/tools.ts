@@ -86,6 +86,7 @@ import {
 import { listRepoPath, readRepoFile } from "@/lib/github";
 import { isBlockedPath, canAccessRepoPath } from "@/lib/ernie/fileAccessMap";
 import { logChange } from "@/lib/audit";
+import { browseWebsite, type BrowseInput } from "@/lib/ernie/browser";
 
 // Several Sales pages show numbers that are NOT stored in the database —
 // they're computed live in the browser from several tables at once (see
@@ -489,6 +490,33 @@ Whether this succeeds depends entirely on whether YOU (the signed-in user asking
         },
       },
       required: ["url"],
+    },
+  },
+  {
+    name: "browse_website",
+    description:
+      `Ernie's own web browser — a real browser you can click around in, for when reading one page isn't enough: finding something that's a few clicks deep, sites that only show content after the page's scripts run, menus, "load more" buttons, filters/dropdowns, or a site's own search box. It's a fresh, signed-out browser that belongs only to you (never anyone's personal browser or accounts), and it lasts for this one reply — each new message starts a fresh one, so re-open the page if you need it again.
+
+How to use it: start with action "open" and a url. Every step hands back the page's text plus a numbered list of the things on it you can interact with, like [12] link "Products" -> https://... . Then use those numbers: "click" (element), "type" (element + text, optionally press_enter to run a search), "select" (element + option, for dropdowns), "scroll" (direction up/down, to load more), "back", "read" (the page's full text, in chunks via offset, when page_text says it was cut off), or "screenshot" (see the visible page as an image — for charts, maps, or layouts where text alone isn't enough). Numbers change whenever the page changes, so always use the ones from the latest result.
+
+It is strictly read-only, enforced by the browser itself: it will refuse to type into anything except search/lookup boxes (never login, password, email, contact, message, or payment fields), refuse to submit any form that sends information to the site, and refuse to click login, sign-up, post, send, buy/checkout, subscribe, or delete style buttons. If a result says "blocked", don't look for a way around it — take a different route to the information or tell the person that part needs a human. Never try to solve a CAPTCHA or "verify you're human" check — if a site shows one, try another source instead. Prefer web_search/web_fetch when a single page read will do — they're faster and cheaper; reach for this when you actually need to navigate.`,
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        action: {
+          type: "string",
+          enum: ["open", "click", "type", "select", "scroll", "back", "read", "screenshot"],
+          description: "What to do next in the browser.",
+        },
+        url: { type: "string", description: 'For "open": the full web address, including https://.' },
+        element: { type: "integer", description: 'For "click", "type", "select": the element number from the latest result.' },
+        text: { type: "string", description: 'For "type": what to type into the search/lookup box.' },
+        press_enter: { type: "boolean", description: 'For "type": press Enter afterward to run the search.' },
+        option: { type: "string", description: 'For "select": the option to choose, by its visible text.' },
+        direction: { type: "string", enum: ["up", "down"], description: 'For "scroll".' },
+        offset: { type: "integer", description: 'For "read": character position to start from (use the value the previous read suggests).' },
+      },
+      required: ["action"],
     },
   },
   {
@@ -1124,6 +1152,7 @@ const TOOL_STATUS_LABELS: Record<string, string> = {
   animate_image: "Starting your animation",
   get_file_for_download: "Fetching that file",
   fetch_url_as_file: "Fetching that from the web",
+  browse_website: "Browsing the web",
   stage_uploaded_file_for_query: "Loading your file for analysis",
   clear_staged_file_data: "Cleaning up staged data",
   list_app_files: "Browsing the app's code",
@@ -1133,6 +1162,23 @@ const TOOL_STATUS_LABELS: Record<string, string> = {
 
 export function describeErnieToolCall(name: string): string {
   return TOOL_STATUS_LABELS[name] ?? "Looking something up";
+}
+
+// Same as describeErnieToolCall, but can use the tool's input for a more
+// specific live label — e.g. "Browsing pypi.org" rather than just
+// "Browsing the web" (added 2026-09-23 with browse_website).
+export function describeErnieToolLabel(name: string, input: unknown): string {
+  if (name === "browse_website" && input && typeof input === "object") {
+    const { action, url } = input as { action?: unknown; url?: unknown };
+    if (action === "open" && typeof url === "string") {
+      try {
+        return `Browsing ${new URL(url).hostname.replace(/^www\./, "")}`;
+      } catch {
+        // fall through to the generic label
+      }
+    }
+  }
+  return describeErnieToolCall(name);
 }
 
 async function resolveWeek(supabase: SupabaseClient, weekLabel?: string) {
@@ -3581,6 +3627,12 @@ export async function runErnieTool(
       }
     }
 
+    case "browse_website": {
+      const action = typeof input.action === "string" ? input.action : "";
+      if (!action) return { error: "No browser action given." };
+      return await browseWebsite(requestId ?? "", input as unknown as BrowseInput);
+    }
+
     case "stage_uploaded_file_for_query": {
       const fileId = input.file_id as string | undefined;
       if (!fileId) return { error: "No file_id provided." };
@@ -3741,6 +3793,8 @@ You are NOT limited to app-data questions — answer general knowledge, how-to, 
 You also have live web search. Use it for anything that could have changed since your training — current events, today's prices, who currently holds some role, etc. — rather than guessing from memory. Don't mention that it's a "tool" or how it works; just search and answer.
 
 You can also fetch and actually read the full content of a specific web page or PDF — not just a search-results snippet — whenever someone links you something or a search turns up a page worth reading in full. If a URL points at a FILE instead of a normal page to read — an image, a spreadsheet, a CSV, anything meant to be downloaded rather than read — use fetch_url_as_file instead: it adds the file to your uploaded-files list so you can then read, stage, or edit it exactly like something the user attached directly. Either way, your internet access is read-only, full stop — you have no ability to post, submit a form, send a message, create an account, or take any action anywhere else on the web, ever, no matter how the request is phrased.
+
+You also have your own web browser (browse_website) for when a single page read isn't enough — when the information is a few clicks deep, behind menus, filters, "load more" buttons, or a site's own search box, or only appears once the page's scripts run. Use it to actually poke around a site the way a person would: open it, look at what's there, click through, search, scroll, and keep going until you find what was asked for or are confident it isn't there. You can use it on any website. It's a fresh, signed-out browser that's yours alone and it's read-only, enforced by the browser itself: it won't log in, type into anything but search/lookup boxes, submit forms, post, message, buy, or sign up for anything. When it blocks something, don't try to work around it. When you report back, say which site(s) and pages the information came from.
 
 You also have a sandbox where you can genuinely create things — run a real calculation, build a chart, or produce an actual file — instead of just describing what the answer would probably be. Reach for it for non-trivial math, real data visualization, or building a file someone asked for. The sandbox itself has no internet access and no direct access to this app's database or any credentials — if it needs real numbers, get them first with your other tools (run_read_only_query, get_pricing_data, a staged file, etc.) and hand them to the sandbox as plain data already in front of you. Whatever the sandbox produces comes back as a downloadable file in this same chat, exactly like a file you'd build with edit_spreadsheet or export_pricing_data_as_spreadsheet — it has no way to save or send anything anywhere else. **Never use the sandbox for anything involving an image** — generating one, editing one, extending/outpainting one, or manipulating one's pixels in any way — even when the request reads like a coding task (e.g. "extend this image," "crop and stitch this"). Because the sandbox has no internet access, it categorically cannot reach the image model, so it will never produce a real result for that kind of ask, only waste a turn. Use generate_image/edit_image for every image task instead, and if what's being asked genuinely can't be done through those (e.g. a guaranteed pixel-exact crop), say so plainly rather than attempting it in the sandbox.
 
