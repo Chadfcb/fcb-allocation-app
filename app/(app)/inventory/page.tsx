@@ -2532,13 +2532,26 @@ export default function InventoryPage() {
         <div
           ref={topScrollRef}
           onScroll={handleTopScroll}
-          className="overflow-x-auto overflow-y-hidden"
-          style={{ height: 14 }}
-          aria-hidden="true"
+          // `scroll` (not `auto`) so the scrollbar track always renders here,
+          // even for an instant before `tableScrollWidth` is first measured —
+          // with `auto`, a zero-width spacer on first paint reads as "no
+          // overflow" and some browsers never reconsider that once content
+          // grows in. 16px gives the browser's scrollbar enough room to draw
+          // itself; anything thinner and it can fail to render at all.
+          className="overflow-x-scroll overflow-y-hidden"
+          style={{ height: 16 }}
         >
           <div style={{ width: tableScrollWidth, height: 1 }} />
         </div>
-        <div ref={tableScrollRef} onScroll={handleTableScroll} className="overflow-x-auto">
+        <div
+          ref={tableScrollRef}
+          onScroll={handleTableScroll}
+          // Same horizontal scroll as the strip above, but its own native
+          // scrollbar is hidden — the top strip is the only one meant to be
+          // visible; without this, the browser draws a second scrollbar at
+          // the bottom of the table itself.
+          className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        >
         <table ref={tableRef} className="w-full border-collapse text-sm">
           <thead>
             <tr className="h-8 text-xs uppercase tracking-wide text-neutral-500">
