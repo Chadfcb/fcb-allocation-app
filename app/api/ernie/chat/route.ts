@@ -467,6 +467,14 @@ export async function POST(req: NextRequest) {
               // gets a ~90% discount on those tokens for any call that
               // reuses them within the cache's 5-minute window — which
               // covers this whole tool-use loop on its own, easily.
+              // 2026-09-23, per Chad: system prompt + tools now use the
+              // 1-HOUR cache (ttl "1h", 2x to write vs 1.25x) instead of 5
+              // minutes, so the first question after a quiet spell still
+              // reads Ernie's ~20K tokens of instructions at the cached
+              // rate. Anthropic requires 1h breakpoints to come before 5m
+              // ones — tools and system are processed before messages, so
+              // the 5-minute history breakpoint below stays valid.
+              //
               // Conversation history is now cached too (2026-09-23): a
               // third breakpoint on the newest message (added fresh each
               // round by withHistoryCacheBreakpoint, never piling up) means
@@ -477,14 +485,14 @@ export async function POST(req: NextRequest) {
                 {
                   type: "text",
                   text: buildErnieSystemPrompt(role, sections, isSuperAdmin, personNotes) + projectSystemPrompt,
-                  cache_control: { type: "ephemeral" },
+                  cache_control: { type: "ephemeral", ttl: "1h" },
                 },
               ],
               tools: [
                 ...getErnieTools(role, sections, isSuperAdmin),
                 WEB_SEARCH_TOOL,
                 WEB_FETCH_TOOL,
-                { ...CODE_EXECUTION_TOOL, cache_control: { type: "ephemeral" } },
+                { ...CODE_EXECUTION_TOOL, cache_control: { type: "ephemeral", ttl: "1h" } },
               ],
               ...(isLastRound ? { tool_choice: { type: "none" } } : {}),
               messages: withHistoryCacheBreakpoint(anthropicMessages),

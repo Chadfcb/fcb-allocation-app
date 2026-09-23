@@ -331,19 +331,20 @@ The message that was just posted, from ${senderName}${
               max_tokens: 2048,
               // Prompt caching (2026-09-23), same three breakpoints as
               // app/api/ernie/chat/route.ts: system prompt, tool list, and
-              // the conversation so far.
+              // the conversation so far. System + tools use the 1-hour
+              // cache (see the comment there); history uses 5 minutes.
               system: [
                 {
                   type: "text",
                   text: buildErnieSystemPrompt(role, sections, isSuperAdmin, null) + `\n\n${roomContext}${projectFilesPrompt}`,
-                  cache_control: { type: "ephemeral" },
+                  cache_control: { type: "ephemeral", ttl: "1h" },
                 },
               ],
               tools: [
                 ...getErnieTools(role, sections, isSuperAdmin),
                 WEB_SEARCH_TOOL,
                 WEB_FETCH_TOOL,
-                { ...CODE_EXECUTION_TOOL, cache_control: { type: "ephemeral" } },
+                { ...CODE_EXECUTION_TOOL, cache_control: { type: "ephemeral", ttl: "1h" } },
               ],
               ...(isLastRound ? { tool_choice: { type: "none" } } : {}),
               messages: withHistoryCacheBreakpoint(anthropicMessages),
