@@ -1,37 +1,91 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getProfile } from "@/lib/getProfile";
+import { hasSection } from "@/lib/permissions";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { loadSyncConfig, pushAppEvent, pushDelete, recordSyncError } from "@/lib/google/calendarSync";
-import { secretsMatch } from "@/lib/google/syncSecret";
+import { ERNIE_GOOGLE_ACCOUNT, getGoogleConnection, googleCredentialsConfigured, oauthClientConfigured } from "@/lib/google/auth";
+import {
+  checkCalendarAccess,
+  ensureWatch,
+  loadSyncConfig,
+  previewInitialSync,
+  pullChanges,
+  recordSyncError,
+  runInitialSync,
+} from "@/lib/google/calendarSync";
 
-// App -> Google. Called by the database trigger on `events`
-// (sql/google_calendar_sync.sql) whenever an event is added, edited, or
-// deleted — from the Events page, Ernie, or Slack Ernie alike. Not a
-// signed-in request, so it lives under /api/google-calendar/hook (exempt
-// from the login redirect in proxy.ts) and is trusted only if it carries
-// the secret stored in google_calendar_sync.
-export const maxDuration = 60;
+// Events page <-> Google Calendar sync controls (signed-in, Events Calendar
+// access required). GET = status for the "Google Calendar" button. POST
+// actions:
+//   check    — can the app reach the Google calendar yet?
+//   preview  — first-sync preview: matched / Google-only / app-only lists
+//   initial  — run the approved first sync (Administrators/Managers only)
+//   sync_now — pull Google's latest changes right now
+export const maxDuration = 300;
+
+async function authorize() {
+  const profile = await getProfile();
+  if (!profile || !hasSection(profile.role, profile.sections, "events_calendar")) return null;
+  return profile;
+}
+
+export async function GET() {
+  const profile = await authorize();
+  if (!profile) return NextResponse.json({ error: "Not allowed" }, { status: 403 });
+  const admin = createAdminClient();
+  const cfg = await loadSyncConfig(admin, "events");
+  const conn = await getGoogleConnection().catch(() => null);
+  return NextResponse.json({
+    credentials: await googleCredentialsConfigured().catch(() => false),
+    oauthClientConfigured: oauthClientConfigured(),
+    connectedAccount: conn?.account_email ?? null,
+    expectedAccount: ERNIE_GOOGLE_ACCOUNT,
+    setUp: !!cfg,
+    initialSyncDone: cfg?.initial_sync_done ?? false,
+    lastPullAt: cfg?.last_pull_at ?? null,
+    lastPushAt: cfg?.last_push_at ?? null,
+    lastError: cfg?.last_error ?? null,
+    canRunInitial: profile.role === "admin",
+  });
+}
 
 export async function POST(req: NextRequest) {
-  const body = (await req.json().catch(() => null)) as
-    | { calendar_key?: string; op?: string; event_id?: string; google_event_id?: string }
-    | null;
+  const profile = await authorize();
+  if (!profile) return NextResponse.json({ error: "Not allowed" }, { status: 403 });
+  const { action } = ((await req.json().catch(() => ({}))) as { action?: string }) ?? {};
   const admin = createAdminClient();
-  const cfg = await loadSyncConfig(admin, body?.calendar_key ?? "events");
-  if (!cfg || !secretsMatch(req.headers.get("x-fcb-sync-secret"), cfg.secret)) {
-    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const cfg = await loadSyncConfig(admin, "events");
+  if (!cfg) {
+    return NextResponse.json({ error: "Google sync isn't set up yet — run sql/google_calendar_sync.sql in Supabase first." }, { status: 400 });
   }
-  if (!cfg.enabled || !cfg.initial_sync_done) return NextResponse.json({ ok: true, skipped: "sync not active" });
+  if (!(await googleCredentialsConfigured())) {
+    return NextResponse.json({ error: "Google isn't connected yet — click Connect Google and sign in as ernie@fullcirclebrewing.com." }, { status: 400 });
+  }
 
   try {
-    if (body?.op === "delete" && body.google_event_id) {
-      await pushDelete(admin, cfg, body.google_event_id);
-    } else if (body?.op === "upsert" && body.event_id) {
-      await pushAppEvent(admin, cfg, body.event_id);
+    switch (action) {
+      case "check":
+        return NextResponse.json(await checkCalendarAccess(cfg));
+      case "preview": {
+        const access = await checkCalendarAccess(cfg);
+        if (!access.ok) return NextResponse.json({ error: access.message }, { status: 400 });
+        return NextResponse.json(await previewInitialSync(admin, cfg));
+      }
+      case "initial": {
+        if (profile.role !== "admin") return NextResponse.json({ error: "Only an Administrator or Manager can run the first sync." }, { status: 403 });
+        if (cfg.initial_sync_done) return NextResponse.json({ error: "The first sync has already been done." }, { status: 400 });
+        return NextResponse.json(await runInitialSync(admin, cfg));
+      }
+      case "sync_now": {
+        if (!cfg.initial_sync_done) return NextResponse.json({ error: "Run the first sync first." }, { status: 400 });
+        await ensureWatch(admin, cfg);
+        const fresh = (await loadSyncConfig(admin, "events")) ?? cfg;
+        return NextResponse.json(await pullChanges(admin, fresh));
+      }
+      default:
+        return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     }
-    return NextResponse.json({ ok: true });
   } catch (err) {
     await recordSyncError(admin, cfg.calendar_key, err);
-    console.error("[google-calendar/push]", err);
-    return NextResponse.json({ error: err instanceof Error ? err.message : "push failed" }, { status: 500 });
+    return NextResponse.json({ error: err instanceof Error ? err.message : "Sync failed" }, { status: 500 });
   }
 }

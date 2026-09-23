@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getProfile } from "@/lib/getProfile";
 import { hasSection } from "@/lib/permissions";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { googleCredentialsConfigured, googleServiceAccountEmail } from "@/lib/google/auth";
+import { ERNIE_GOOGLE_ACCOUNT, getGoogleConnection, googleCredentialsConfigured, oauthClientConfigured } from "@/lib/google/auth";
 import {
   checkCalendarAccess,
   ensureWatch,
@@ -33,9 +33,12 @@ export async function GET() {
   if (!profile) return NextResponse.json({ error: "Not allowed" }, { status: 403 });
   const admin = createAdminClient();
   const cfg = await loadSyncConfig(admin, "events");
+  const conn = await getGoogleConnection().catch(() => null);
   return NextResponse.json({
-    credentials: googleCredentialsConfigured(),
-    serviceAccountEmail: googleServiceAccountEmail(),
+    credentials: await googleCredentialsConfigured().catch(() => false),
+    oauthClientConfigured: oauthClientConfigured(),
+    connectedAccount: conn?.account_email ?? null,
+    expectedAccount: ERNIE_GOOGLE_ACCOUNT,
     setUp: !!cfg,
     initialSyncDone: cfg?.initial_sync_done ?? false,
     lastPullAt: cfg?.last_pull_at ?? null,
@@ -54,8 +57,8 @@ export async function POST(req: NextRequest) {
   if (!cfg) {
     return NextResponse.json({ error: "Google sync isn't set up yet — run sql/google_calendar_sync.sql in Supabase first." }, { status: 400 });
   }
-  if (!googleCredentialsConfigured()) {
-    return NextResponse.json({ error: "Google isn't connected yet — the service account key hasn't been added in Vercel." }, { status: 400 });
+  if (!(await googleCredentialsConfigured())) {
+    return NextResponse.json({ error: "Google isn't connected yet — click Connect Google and sign in as ernie@fullcirclebrewing.com." }, { status: 400 });
   }
 
   try {

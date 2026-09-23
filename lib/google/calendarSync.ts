@@ -167,12 +167,12 @@ export async function checkCalendarAccess(cfg: SyncConfig): Promise<{ ok: boolea
       },
     );
     if (cal.accessRole && !["owner", "writer", "unknown"].includes(cal.accessRole)) {
-      return { ok: false, message: `The app can see "${cal.summary}" but can't edit it — share it with "Make changes to events".` };
+      return { ok: false, message: `The connected Google account can see "${cal.summary}" but can't edit it — share it with ernie@fullcirclebrewing.com using "Make changes to events".` };
     }
     return { ok: true, message: `Connected to "${cal.summary ?? "calendar"}".` };
   } catch (err) {
     if (err instanceof GoogleApiError && (err.status === 404 || err.status === 403)) {
-      return { ok: false, message: "The app can't see the Google calendar yet — share it with the app's robot email (Make changes to events)." };
+      return { ok: false, message: "The connected Google account can't see the Outside/Off Site Events Calendar yet — share it with ernie@fullcirclebrewing.com (Make changes to events)." };
     }
     return { ok: false, message: err instanceof Error ? err.message : "Couldn't reach Google Calendar." };
   }

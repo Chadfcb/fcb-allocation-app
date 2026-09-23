@@ -14,7 +14,9 @@ import { useNewFeature } from "@/lib/newFeatures";
 
 interface Status {
   credentials: boolean;
-  serviceAccountEmail: string | null;
+  oauthClientConfigured: boolean;
+  connectedAccount: string | null;
+  expectedAccount: string;
   setUp: boolean;
   initialSyncDone: boolean;
   lastPullAt: string | null;
@@ -86,6 +88,25 @@ export default function GoogleCalendarSyncButton({ onChanged }: { onChanged: () 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time status fetch on mount
     loadStatus();
+    // Coming back from Google's sign-in (?google=...): reopen this window
+    // with the result.
+    const result = new URLSearchParams(window.location.search).get("google");
+    if (result) {
+      const messages: Record<string, string> = {
+        connected: "✓ Google connected.",
+        cancelled: "Google sign-in was cancelled.",
+        bad_state: "That sign-in link expired — click Connect Google again.",
+        wrong_domain: "Please sign in with an @fullcirclebrewing.com account (ernie@).",
+        missing_calendar_permission: "Google Calendar permission wasn't granted — click Connect Google and allow all the permissions.",
+        missing_client: "The Google sign-in keys aren't set in Vercel yet.",
+        not_allowed: "Only an Administrator or Manager can connect Google.",
+        failed: "Connecting Google didn't work — try again.",
+      };
+      setOpen(true);
+      if (result === "connected") setNotice(messages.connected);
+      else setError(messages[result] ?? "Connecting Google didn't work — try again.");
+      window.history.replaceState(null, "", window.location.pathname);
+    }
   }, [loadStatus]);
 
   async function act(action: string) {
@@ -167,18 +188,39 @@ export default function GoogleCalendarSyncButton({ onChanged }: { onChanged: () 
                 </p>
               )}
 
-              {status && status.setUp && !status.credentials && (
+              {status && status.setUp && !status.oauthClientConfigured && !status.credentials && (
                 <p className="rounded-md border border-amber-600/40 bg-amber-500/10 p-3 text-xs text-amber-300">
-                  Google isn&apos;t connected yet — the app&apos;s Google robot account key still needs to be added in Vercel.
+                  Google isn&apos;t set up yet — the Google sign-in keys (GOOGLE_OAUTH_CLIENT_ID / SECRET) still need to be added in
+                  Vercel.
                 </p>
               )}
 
-              {status?.serviceAccountEmail && (
-                <p className="text-xs text-neutral-400">
-                  App&apos;s Google robot account: <span className="select-all text-neutral-200">{status.serviceAccountEmail}</span>
-                  <br />
-                  The Google calendar must be shared with this address (&ldquo;Make changes to events&rdquo;).
-                </p>
+              {status && status.setUp && status.oauthClientConfigured && (
+                <div className="flex items-center justify-between gap-3 rounded-md border border-neutral-800 p-3">
+                  <p className="text-xs text-neutral-400">
+                    {status.connectedAccount ? (
+                      <>
+                        Connected as <span className="text-neutral-200">{status.connectedAccount}</span>
+                        {status.connectedAccount !== status.expectedAccount && (
+                          <span className="text-amber-300"> — expected {status.expectedAccount}</span>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        Not connected yet. Click Connect Google and sign in as{" "}
+                        <span className="text-neutral-200">{status.expectedAccount}</span>, then click Allow.
+                      </>
+                    )}
+                  </p>
+                  {status.canRunInitial && (
+                    <a
+                      href="/api/google-calendar/oauth/start"
+                      className="shrink-0 rounded-md border border-neutral-700 px-3 py-1.5 text-xs font-medium text-neutral-200 hover:bg-neutral-900"
+                    >
+                      {status.connectedAccount ? "Reconnect" : "Connect Google"}
+                    </a>
+                  )}
+                </div>
               )}
 
               {access && (
