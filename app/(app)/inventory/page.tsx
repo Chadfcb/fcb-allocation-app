@@ -279,6 +279,47 @@ export default function InventoryPage() {
   // internal scrollbar.
   const [labelInventoryExpanded, setLabelInventoryExpanded] = useState(false);
 
+  // Main allocation table — horizontal scroll is contained to this block
+  // (Chad, 2026-09-23: dragging the scrollbar used to scroll the whole page,
+  // taking the sidebar with it). `tableScrollRef` is the actual scrolling
+  // container around the table; `topScrollRef` is a thin duplicate scrollbar
+  // pinned above the distributor header row (browsers only ever render a
+  // horizontal scrollbar at the bottom of a scroll container, so a synced
+  // "fake" one up top is the only way to put it where Chad pointed).
+  // `tableScrollWidth` mirrors the real table's natural (unclamped) width so
+  // the top bar's inner spacer scrolls exactly as far as the table does; it's
+  // measured off the table itself, the same ResizeObserver pattern as
+  // `packagingCardHeight` above, so it stays correct as columns/rows change.
+  const tableRef = useRef<HTMLTableElement | null>(null);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const topScrollRef = useRef<HTMLDivElement | null>(null);
+  const [tableScrollWidth, setTableScrollWidth] = useState(0);
+  const isSyncingTableScroll = useRef(false);
+
+  useLayoutEffect(() => {
+    const el = tableRef.current;
+    if (!el) return;
+    const measure = () => setTableScrollWidth(el.scrollWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  function handleTopScroll(e: React.UIEvent<HTMLDivElement>) {
+    if (isSyncingTableScroll.current) return;
+    isSyncingTableScroll.current = true;
+    if (tableScrollRef.current) tableScrollRef.current.scrollLeft = e.currentTarget.scrollLeft;
+    isSyncingTableScroll.current = false;
+  }
+
+  function handleTableScroll(e: React.UIEvent<HTMLDivElement>) {
+    if (isSyncingTableScroll.current) return;
+    isSyncingTableScroll.current = true;
+    if (topScrollRef.current) topScrollRef.current.scrollLeft = e.currentTarget.scrollLeft;
+    isSyncingTableScroll.current = false;
+  }
+
   useLayoutEffect(() => {
     const el = packagingCardRef.current;
     if (!el) return;
@@ -2488,7 +2529,17 @@ export default function InventoryPage() {
       )}
 
       <div className="rounded-lg border border-neutral-800 bg-neutral-950">
-        <table className="w-full border-collapse text-sm">
+        <div
+          ref={topScrollRef}
+          onScroll={handleTopScroll}
+          className="overflow-x-auto overflow-y-hidden"
+          style={{ height: 14 }}
+          aria-hidden="true"
+        >
+          <div style={{ width: tableScrollWidth, height: 1 }} />
+        </div>
+        <div ref={tableScrollRef} onScroll={handleTableScroll} className="overflow-x-auto">
+        <table ref={tableRef} className="w-full border-collapse text-sm">
           <thead>
             <tr className="h-8 text-xs uppercase tracking-wide text-neutral-500">
               <th className="sticky top-0 left-0 z-20 h-8 whitespace-nowrap bg-neutral-900 px-3 text-left">
@@ -3111,6 +3162,7 @@ export default function InventoryPage() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
       <p className="text-xs text-neutral-500">
         Remaining updates live as you type — it&apos;s Total minus everything allocated across
