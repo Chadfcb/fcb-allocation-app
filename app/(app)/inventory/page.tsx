@@ -304,7 +304,14 @@ export default function InventoryPage() {
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
-  }, []);
+    // Re-attach once `loading` flips to false: the very first mount of this
+    // component happens while `loading` is still true (the page briefly
+    // renders nothing but "Loading…"), so `tableRef.current` is null and
+    // this effect used to bail out for good — the ResizeObserver never got
+    // set up once the real table mounted, leaving tableScrollWidth stuck at
+    // 0 forever (the top scroll strip's track with no measured width to
+    // scroll against, showing arrows but no draggable thumb).
+  }, [loading]);
 
   function handleTopScroll(e: React.UIEvent<HTMLDivElement>) {
     if (isSyncingTableScroll.current) return;
