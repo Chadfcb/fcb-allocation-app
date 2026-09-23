@@ -46,6 +46,8 @@ import { usePathname } from "next/navigation";
 import type { Role } from "@/lib/types/db";
 import { hasSection, ERNIE_SECTION, type AnySectionKey, type SectionKey } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/client";
+import NewBadge from "@/components/NewBadge";
+import { NEW_FEATURES, NEW_SEEN_EVENT, featureIdsOnPage } from "@/lib/newFeatures";
 
 const NEW_SIDEBAR_IDS: string[] = [
   // Only actual leaf pages and true sub-tree parents (like a brand under
@@ -111,13 +113,8 @@ const NEW_SIDEBAR_IDS: string[] = [
   "/batch-ingredients",
 ];
 
-function NewBadge() {
-  return (
-    <span className="ml-auto shrink-0 rounded-full bg-[#6ABC46] px-1.5 py-0.5 text-[9px] font-bold leading-none text-black">
-      New!
-    </span>
-  );
-}
+// NewBadge now lives in components/NewBadge.tsx (shared with in-page
+// buttons — see lib/newFeatures.ts).
 
 // Finance — new top-level category, added 2026-09-09, sits above
 // Operations. Distributor Data (added same day) holds each distributor's
@@ -516,7 +513,7 @@ export default function Sidebar({
   useEffect(() => {
     // Pull this person's previously-dismissed "New!" badges from the
     // database on mount — nothing to fetch if nothing's currently flagged.
-    if (NEW_SIDEBAR_IDS.length === 0) return;
+    if (NEW_SIDEBAR_IDS.length === 0 && NEW_FEATURES.length === 0) return;
     let cancelled = false;
     (async () => {
       const {
@@ -534,10 +531,28 @@ export default function Sidebar({
     };
   }, [supabase]);
 
+  // A new button/feature inside a page (lib/newFeatures.ts) being clicked
+  // clears its trail here immediately, without a reload.
+  useEffect(() => {
+    const onSeen = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail;
+      if (typeof id === "string") setSeenNew((prev) => ({ ...prev, [id]: true as const }));
+    };
+    window.addEventListener(NEW_SEEN_EVENT, onSeen);
+    return () => window.removeEventListener(NEW_SEEN_EVENT, onSeen);
+  }, []);
+
   // Whether a "New!" badge should currently show for this id — flagged in
-  // NEW_SIDEBAR_IDS above, and not yet clicked by this person.
+  // NEW_SIDEBAR_IDS above and not yet clicked by this person, OR (added
+  // 2026-09-23, the "chain" per Chad) this is a page link and that page
+  // has a new in-page button/feature (lib/newFeatures.ts) this person
+  // hasn't clicked yet. Clicking the page link itself doesn't clear the
+  // feature part — only clicking the new button does — so the trail
+  // (section → page → button) stays lit until they actually find it.
+  // Parent sections pick this up automatically via sectionShowsNew().
   function showsNew(id: string) {
-    return NEW_SIDEBAR_IDS.includes(id) && !seenNew[id];
+    if (NEW_SIDEBAR_IDS.includes(id) && !seenNew[id]) return true;
+    return featureIdsOnPage(id).some((featureId) => !seenNew[featureId]);
   }
 
   // First click on a flagged item retires its badge for good — recorded

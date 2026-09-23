@@ -63,6 +63,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Archivo, IBM_Plex_Mono, IBM_Plex_Sans, Nunito } from "next/font/google";
 import { createClient } from "@/lib/supabase/client";
 import ErnieAppearancePanel from "@/components/ErnieAppearancePanel";
+import NewBadge from "@/components/NewBadge";
+import { useNewFeature } from "@/lib/newFeatures";
 import {
   DEFAULT_ERNIE_APPEARANCE,
   fontStackFor,
@@ -223,6 +225,9 @@ export default function ErnieChatClient({
   const [appearanceSaving, setAppearanceSaving] = useState(false);
   const [appearanceError, setAppearanceError] = useState<string | null>(null);
   const shownAppearance = appearanceDraft ?? appearance;
+  // "New!" on the Customize button until this person clicks it once (the
+  // end of the sidebar → page → button chain, lib/newFeatures.ts).
+  const customizeNew = useNewFeature("feature:ernie-customize");
   const themeStyle = useMemo(() => {
     const fonts = fontStackFor(shownAppearance.font);
     return {
@@ -1780,11 +1785,15 @@ export default function ErnieChatClient({
           <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
-              onClick={() => setAppearanceDraft({ ...appearance, colors: { ...appearance.colors } })}
-              className="rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)]"
+              onClick={() => {
+                customizeNew.dismiss();
+                setAppearanceDraft({ ...appearance, colors: { ...appearance.colors } });
+              }}
+              className="inline-flex items-center rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)]"
               title="Change Ernie's colors, text size, and font (just for you)"
             >
               Customize
+              {customizeNew.isNew && <NewBadge inline />}
             </button>
             {/* This Project's files now live in the persistent left-side
                 panel (added 2026-09-10, per Chad's red-box annotation)
