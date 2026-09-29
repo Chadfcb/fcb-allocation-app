@@ -726,7 +726,7 @@ export default function Sidebar({
   const linkClass = (href: string) =>
     `flex items-center gap-2 rounded border-l-2 px-2 py-1.5 ${
       isActive(href)
-        ? "border-[#6ABC46] bg-neutral-900 font-semibold text-[#6ABC46]"
+        ? "border-brand bg-neutral-900 font-semibold text-brand"
         : "border-transparent text-neutral-400 hover:bg-neutral-900 hover:text-white"
     }`;
 

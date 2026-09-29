@@ -44,6 +44,7 @@ import {
   buildSocialMediaMonthGrid,
   type SocialMediaCalendarDay,
 } from "@/lib/socialMediaEvents";
+import { chipText } from "@/lib/appearance";
 
 // Default accent color for an event that hasn't had a color picked yet
 // (older rows saved before the color picker existed, or a new event where
@@ -661,7 +662,7 @@ export default function SocialMediaCalendarPageClient() {
                         className="mb-0.5 block w-full truncate rounded px-1 py-0.5 text-left text-[11px] font-medium"
                         style={{
                           background: `${ev.color || SOCIAL_MEDIA_EVENT_COLOR}28`,
-                          color: ev.color || SOCIAL_MEDIA_EVENT_COLOR,
+                          color: chipText(ev.color || SOCIAL_MEDIA_EVENT_COLOR),
                         }}
                       >
                         {ev.title}

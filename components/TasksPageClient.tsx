@@ -34,8 +34,14 @@ import type {
   TaskMessage,
   TaskSubcategory,
 } from "@/lib/types/db";
+import { tone } from "@/lib/appearance";
 
-const BRAND_GREEN = "#6ABC46";
+// Follows the person's "Buttons & highlights" color from Customize
+// (lib/appearance.ts); FCB green by default.
+const BRAND_GREEN = "var(--site-accent, #6ABC46)";
+// Fixed green for status chips / the Directive tag, which should stay green
+// whatever highlight color someone picks.
+const STATUS_GREEN = "#6ABC46";
 const ORANGE = "#d99a3d";
 const RED = "#e05c5c";
 const AVATAR_PALETTE = ["#d9a23d", "#4a9fd9", "#c96ad4", "#e05c5c", "#6ABC46", "#5ad9c9"];
@@ -967,12 +973,12 @@ export default function TasksPageClient() {
                           className="flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs"
                           style={
                             selected
-                              ? { borderColor: BRAND_GREEN, color: BRAND_GREEN, backgroundColor: "rgba(106,188,70,0.08)" }
-                              : { borderColor: "#2a2a2a", color: "#9a9a97" }
+                              ? { borderColor: BRAND_GREEN, color: BRAND_GREEN, backgroundColor: "color-mix(in srgb, var(--site-accent, #6ABC46) 8%, transparent)" }
+                              : { borderColor: tone("#2a2a2a"), color: tone("#9a9a97") }
                           }
                         >
                           <span
-                            className="flex h-4 w-4 items-center justify-center rounded-full text-[8px] font-bold text-black"
+                            className="flex h-4 w-4 items-center justify-center rounded-full text-[8px] font-bold text-ink"
                             style={{ backgroundColor: hashColor(id) }}
                           >
                             {initials(name)}
@@ -995,7 +1001,7 @@ export default function TasksPageClient() {
                     type="button"
                     onClick={createTask}
                     disabled={creatingTask || !newTaskTitle.trim()}
-                    className="rounded-md px-3 py-1.5 text-xs font-semibold text-black disabled:opacity-50"
+                    className="rounded-md px-3 py-1.5 text-xs font-semibold text-on-brand disabled:opacity-50"
                     style={{ backgroundColor: BRAND_GREEN }}
                   >
                     {creatingTask ? "Creating…" : "Create Task"}
@@ -1075,7 +1081,7 @@ export default function TasksPageClient() {
                           style={
                             item.status === "open"
                               ? { backgroundColor: "#4a3a1f", color: ORANGE }
-                              : { backgroundColor: "#1f3a2a", color: BRAND_GREEN }
+                              : { backgroundColor: "#1f3a2a", color: STATUS_GREEN }
                           }
                         >
                           {item.status.toUpperCase()}
@@ -1090,7 +1096,7 @@ export default function TasksPageClient() {
                       {status && (
                         <p
                           className="mb-2 text-[11.5px] font-semibold"
-                          style={{ color: status === "overdue" ? RED : status === "today" ? ORANGE : "#6b6b68" }}
+                          style={{ color: status === "overdue" ? RED : status === "today" ? ORANGE : tone("#6b6b68") }}
                         >
                           📅 Due {item.due_date && formatDueDate(item.due_date)}
                           {status === "overdue" ? " — Past due" : status === "today" ? " — Due today" : ""}
@@ -1107,7 +1113,7 @@ export default function TasksPageClient() {
                           {people.map((pid, idx) => (
                             <div
                               key={pid}
-                              className="flex h-5 w-5 items-center justify-center rounded-full border-[1.5px] border-neutral-900 text-[9px] font-bold text-black"
+                              className="flex h-5 w-5 items-center justify-center rounded-full border-[1.5px] border-neutral-900 text-[9px] font-bold text-ink"
                               style={{ backgroundColor: hashColor(pid), marginLeft: idx === 0 ? 0 : -6 }}
                             >
                               {initials(displayName(profiles, pid))}
@@ -1167,7 +1173,7 @@ export default function TasksPageClient() {
                 {categories.map((cat) => (
                   <span
                     key={cat.id}
-                    className="rounded px-1.5 py-0.5 text-[10px] font-semibold text-black"
+                    className="rounded px-1.5 py-0.5 text-[10px] font-semibold text-ink"
                     style={{ backgroundColor: cat.color ?? "#8a8a86" }}
                   >
                     {cat.name}
@@ -1219,12 +1225,12 @@ export default function TasksPageClient() {
                     className={`flex min-h-[96px] flex-col gap-1 px-1.5 pb-2 pt-1.5 ${
                       cell.inMonth ? "bg-neutral-950" : "bg-neutral-950/40"
                     }`}
-                    style={isToday ? { backgroundColor: "rgba(106,188,70,0.06)" } : undefined}
+                    style={isToday ? { backgroundColor: "color-mix(in srgb, var(--site-accent, #6ABC46) 6%, transparent)" } : undefined}
                   >
                     <span
                       className={
                         isToday
-                          ? "flex h-[18px] w-[18px] items-center justify-center rounded-full text-[11px] font-extrabold text-black"
+                          ? "flex h-[18px] w-[18px] items-center justify-center rounded-full text-[11px] font-extrabold text-on-brand"
                           : `px-0.5 text-[11px] font-semibold ${cell.inMonth ? "text-neutral-400" : "text-neutral-700"}`
                       }
                       style={isToday ? { backgroundColor: BRAND_GREEN } : undefined}
@@ -1240,7 +1246,7 @@ export default function TasksPageClient() {
                           type="button"
                           title={item.title}
                           onClick={() => goToDetail(item.id, "calendar")}
-                          className="truncate rounded px-1.5 py-0.5 text-left text-[10px] font-semibold text-black"
+                          className="truncate rounded px-1.5 py-0.5 text-left text-[10px] font-semibold text-ink"
                           style={{
                             backgroundColor: cat?.color ?? "#8a8a86",
                             outline: overdueChip ? `1.5px solid ${RED}` : undefined,
@@ -1279,7 +1285,7 @@ export default function TasksPageClient() {
                       style={
                         selectedItem.status === "open"
                           ? { backgroundColor: "#4a3a1f", color: ORANGE }
-                          : { backgroundColor: "#1f3a2a", color: BRAND_GREEN }
+                          : { backgroundColor: "#1f3a2a", color: STATUS_GREEN }
                       }
                     >
                       {selectedItem.status.toUpperCase()}
@@ -1316,7 +1322,7 @@ export default function TasksPageClient() {
                         type="button"
                         title={`Remove ${displayName(profiles, pid)}`}
                         onClick={() => removeAssignee(selectedItem.id, pid)}
-                        className="flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold text-black hover:opacity-70"
+                        className="flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold text-ink hover:opacity-70"
                         style={{ backgroundColor: hashColor(pid) }}
                       >
                         {initials(displayName(profiles, pid))}
@@ -1389,7 +1395,7 @@ export default function TasksPageClient() {
                     .map((m) => (
                       <div key={m.id} className="flex gap-2.5">
                         <div
-                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10.5px] font-bold text-black"
+                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10.5px] font-bold text-ink"
                           style={{ backgroundColor: hashColor(m.author_id ?? "") }}
                         >
                           {initials(displayName(profiles, m.author_id))}
@@ -1402,7 +1408,7 @@ export default function TasksPageClient() {
                             {m.is_directive && (
                               <span
                                 className="rounded border px-1.5 py-0.5 text-[9px] font-bold tracking-wide"
-                                style={{ color: BRAND_GREEN, borderColor: "#3f7a2a" }}
+                                style={{ color: STATUS_GREEN, borderColor: "#3f7a2a" }}
                               >
                                 DIRECTIVE
                               </span>
@@ -1416,7 +1422,7 @@ export default function TasksPageClient() {
                             style={
                               m.is_directive
                                 ? { backgroundColor: "#2a3a1f", border: "1px solid #4a6a2f" }
-                                : { backgroundColor: "#191919", border: "1px solid #2a2a2a" }
+                                : { backgroundColor: tone("#191919"), border: `1px solid ${tone("#2a2a2a")}` }
                             }
                           >
                             {m.body}
@@ -1451,7 +1457,7 @@ export default function TasksPageClient() {
                     type="button"
                     onClick={sendMessage}
                     disabled={sending || !composerText.trim()}
-                    className="shrink-0 rounded-md px-3.5 py-2 text-xs font-semibold text-black disabled:opacity-50"
+                    className="shrink-0 rounded-md px-3.5 py-2 text-xs font-semibold text-on-brand disabled:opacity-50"
                     style={{ backgroundColor: BRAND_GREEN }}
                   >
                     {sending ? "Sending…" : "Send"}

@@ -60,29 +60,16 @@
 // downloadable chips the same way.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Archivo, IBM_Plex_Mono, IBM_Plex_Sans, Nunito } from "next/font/google";
 import { createClient } from "@/lib/supabase/client";
-import ErnieAppearancePanel from "@/components/ErnieAppearancePanel";
-import NewBadge from "@/components/NewBadge";
-import { useNewFeature } from "@/lib/newFeatures";
-import {
-  DEFAULT_ERNIE_APPEARANCE,
-  fontStackFor,
-  normalizeErnieAppearance,
-  resolveErnieTokens,
-  textScaleCss,
-  textScaleFor,
-  type ErnieAppearance,
-} from "@/lib/ernie/appearance";
+import { useSiteAppearance } from "@/components/SiteAppearanceProvider";
+import { fontStackFor, resolveErnieTokens } from "@/lib/ernie/appearance";
+import { fontVariables } from "@/lib/fonts";
 import { fileIcon, formatBytes, storageFileName } from "@/lib/events";
 import { ERNIE_FILES_BUCKET, ERNIE_MAX_FILE_BYTES, ERNIE_MAX_FILES_PER_MESSAGE } from "@/lib/ernie/fileLimits";
 
-// Scoped to this component only — see the file-level comment above.
-const archivo = Archivo({ subsets: ["latin"], weight: ["600", "700", "800"], variable: "--font-archivo" });
-const plexSans = IBM_Plex_Sans({ subsets: ["latin"], weight: ["400", "500", "600"], variable: "--font-plex-sans" });
-const plexMono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-plex-mono" });
-// "Rounded" font option in Customize (lib/ernie/appearance.ts).
-const nunito = Nunito({ subsets: ["latin"], weight: ["400", "600", "700"], variable: "--font-nunito" });
+// Ernie's fonts (Archivo / IBM Plex, plus the Customize font options) now
+// live in lib/fonts.ts — moved there 2026-09-29 so Customize's font choices
+// work on every page, not just this one.
 
 interface ErnieFile {
   id: string;
@@ -215,19 +202,13 @@ export default function ErnieChatClient({
 }) {
   const supabase = useMemo(() => createClient(), []);
 
-  // --- Per-person appearance (Customize, added 2026-09-23) --------------
-  // `appearance` is what's saved; `appearanceDraft` is what the Customize
-  // panel is previewing live (null when the panel is closed). Everything in
-  // this component reads its colors/fonts/text size from CSS variables set
-  // from whichever of the two is active — see lib/ernie/appearance.ts.
-  const [appearance, setAppearance] = useState<ErnieAppearance>(DEFAULT_ERNIE_APPEARANCE);
-  const [appearanceDraft, setAppearanceDraft] = useState<ErnieAppearance | null>(null);
-  const [appearanceSaving, setAppearanceSaving] = useState(false);
-  const [appearanceError, setAppearanceError] = useState<string | null>(null);
-  const shownAppearance = appearanceDraft ?? appearance;
-  // "New!" on the Customize button until this person clicks it once (the
-  // end of the sidebar → page → button chain, lib/newFeatures.ts).
-  const customizeNew = useNewFeature("feature:ernie-customize");
+  // --- Per-person appearance ---------------------------------------------
+  // Since 2026-09-29 this is the person's ONE site-wide Customize setting
+  // (header button → components/SiteAppearanceProvider.tsx), not an
+  // Ernie-only one — this just turns it into Ernie's own --e-* chat colors
+  // and fonts (lib/ernie/appearance.ts). Text size is applied site-wide by
+  // lib/appearance.ts, so Ernie no longer scales its own text.
+  const { appearance: shownAppearance } = useSiteAppearance();
   const themeStyle = useMemo(() => {
     const fonts = fontStackFor(shownAppearance.font);
     return {
@@ -236,53 +217,6 @@ export default function ErnieChatClient({
       "--e-font-head": fonts.head,
     } as React.CSSProperties;
   }, [shownAppearance]);
-  const themeScaleCss = textScaleCss(textScaleFor(shownAppearance.textSize));
-
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data } = await supabase
-        .from("ernie_user_preferences")
-        .select("appearance")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      if (!cancelled && data?.appearance) setAppearance(normalizeErnieAppearance(data.appearance));
-    })().catch(() => {
-      // No saved settings (or the table isn't there yet) — default look.
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [supabase]);
-
-  async function saveAppearance() {
-    if (!appearanceDraft) return;
-    setAppearanceSaving(true);
-    setAppearanceError(null);
-    try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) throw new Error("Not signed in.");
-      const { error } = await supabase
-        .from("ernie_user_preferences")
-        .upsert(
-          { user_id: user.id, appearance: appearanceDraft, updated_at: new Date().toISOString() },
-          { onConflict: "user_id" },
-        );
-      if (error) throw error;
-      setAppearance(appearanceDraft);
-      setAppearanceDraft(null);
-    } catch (err) {
-      setAppearanceError(err instanceof Error ? err.message : "Couldn't save your settings.");
-    } finally {
-      setAppearanceSaving(false);
-    }
-  }
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -1553,23 +1487,9 @@ export default function ErnieChatClient({
 
   return (
     <div
-      className={`ernie-theme ${archivo.variable} ${plexSans.variable} ${plexMono.variable} ${nunito.variable} mx-auto flex w-full flex-col ${isPopup ? "max-w-full gap-2 p-3" : "max-w-[1600px] gap-3 p-6"}`}
+      className={`ernie-theme ${fontVariables} mx-auto flex w-full flex-col ${isPopup ? "max-w-full gap-2 p-3" : "max-w-[1600px] gap-3 p-6"}`}
       style={themeStyle}
     >
-      {themeScaleCss && <style>{themeScaleCss}</style>}
-      {appearanceDraft && (
-        <ErnieAppearancePanel
-          value={appearanceDraft}
-          onChange={setAppearanceDraft}
-          onSave={saveAppearance}
-          onCancel={() => {
-            setAppearanceDraft(null);
-            setAppearanceError(null);
-          }}
-          saving={appearanceSaving}
-          error={appearanceError}
-        />
-      )}
       {/* Corrected 2026-09-10 per Chad: he never asked for the General /
           Completed Projects pills resized — he asked for the Projects
           themselves ("the tasks that are created") to move ABOVE the pill
@@ -1783,18 +1703,6 @@ export default function ErnieChatClient({
             )}
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                customizeNew.dismiss();
-                setAppearanceDraft({ ...appearance, colors: { ...appearance.colors } });
-              }}
-              className="inline-flex items-center rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)]"
-              title="Change Ernie's colors, text size, and font (just for you)"
-            >
-              Customize
-              {customizeNew.isNew && <NewBadge inline />}
-            </button>
             {/* This Project's files now live in the persistent left-side
                 panel (added 2026-09-10, per Chad's red-box annotation)
                 instead of a popup — see that panel below, next to the main

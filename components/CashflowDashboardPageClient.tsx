@@ -454,7 +454,7 @@ export default function CashflowDashboardPageClient() {
     return (
       <th
         key={col.key}
-        className={`${weekHeaderCellClass} ${col.isCurrent ? "bg-[#6ABC46]/10 text-[#6ABC46]" : ""} ${col.isPlaceholder ? "text-neutral-600" : ""}`}
+        className={`${weekHeaderCellClass} ${col.isCurrent ? "bg-brand/10 text-brand" : ""} ${col.isPlaceholder ? "text-neutral-600" : ""}`}
       >
         {col.isPlaceholder ? (
           shortDate(col.dateIso)
@@ -531,7 +531,7 @@ export default function CashflowDashboardPageClient() {
                       <td key={col.key} className={`${valueCellClass} bg-neutral-900`}>
                         <Money
                           value={columnTotalsByKey.get(col.key)?.revenue ?? 0}
-                          className="text-[#6ABC46]"
+                          className="text-brand"
                         />
                       </td>
                     ))}
@@ -619,7 +619,7 @@ export default function CashflowDashboardPageClient() {
                     <td className={rowLabelCellClass}>Net Cash Flow</td>
                     {displayColumns.map((col) => (
                       <td key={col.key} className={valueCellClass}>
-                        <Money value={columnTotalsByKey.get(col.key)?.net ?? 0} className="text-[#6ABC46]" />
+                        <Money value={columnTotalsByKey.get(col.key)?.net ?? 0} className="text-brand" />
                       </td>
                     ))}
                   </tr>
@@ -629,7 +629,7 @@ export default function CashflowDashboardPageClient() {
                       <td key={col.key} className={valueCellClass}>
                         <Money
                           value={columnTotalsByKey.get(col.key)?.runningTotal ?? 0}
-                          className="text-[#6ABC46]"
+                          className="text-brand"
                         />
                       </td>
                     ))}

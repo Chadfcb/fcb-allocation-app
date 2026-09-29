@@ -30,11 +30,17 @@ export interface NewFeature {
 }
 
 export const NEW_FEATURES: NewFeature[] = [
+  // "feature:ernie-customize" (the old Ernie-only Customize button) was
+  // removed 2026-09-29 — that button is gone, replaced by the site-wide one
+  // below. Leaving it here would light up the My Ernie AI link forever with
+  // nothing on the page to click to clear it.
   {
-    id: "feature:ernie-customize",
-    page: "/ernie",
-    label: "Customize button on the Ernie chat (per-person colors, text size, font)",
-    added: "2026-09-23",
+    id: "feature:site-customize",
+    // Lives in the top header on every page, not on one page — no sidebar
+    // link matches this, so only the button itself shows New!.
+    page: "header",
+    label: "Customize button in the top header (per-person colors, text size, font for the whole site)",
+    added: "2026-09-29",
   },
   {
     id: "feature:events-google-sync",

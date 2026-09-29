@@ -1,17 +1,22 @@
-// Per-person Ernie chat appearance (added 2026-09-23).
+// Per-person appearance — the color/font/text-size MODEL (added 2026-09-23
+// for Ernie; made SITE-WIDE 2026-09-29).
 //
 // Per Chad, after Shanelle asked Ernie to "change the background to white
 // and the text to black": "If shanelle isnt happy with the color of ernie she
-// wont use him." Each person can pick a theme, flip light/dark, set their own
-// colors, text size, and font for the Ernie page + Project chats ONLY — the
-// rest of FCB-Data is untouched. Saved per person in
-// ernie_user_preferences (sql/ernie_user_preferences.sql), so it follows them
-// to any device.
+// wont use him." Originally this only changed the Ernie page. On 2026-09-29
+// Chad asked for the same Customize feature "for everyone for the entire
+// website": there is now ONE setting per person, picked from the Customize
+// button in the top header, and it applies to every page, Ernie included.
+// Saved per person in ernie_user_preferences (sql/ernie_user_preferences.sql
+// — the table name is a leftover from when this was Ernie-only; the same
+// rows are used site-wide, so anyone who had already customized Ernie keeps
+// those choices as their site-wide setting).
 //
-// How it's applied: ErnieChatClient.tsx's colors are CSS variables (--e-*),
-// set from these settings on the chat's outer <div>. The default ("FCB
-// Dark") reproduces the original hand-picked colors exactly, so anyone who
-// never opens Customize sees no change at all.
+// This file: the settings themselves + how they turn into Ernie's own --e-*
+// chat colors. lib/appearance.ts turns the same settings into the site-wide
+// colors/fonts/text size. The default ("FCB Dark") reproduces the original
+// hand-picked colors exactly, so anyone who never opens Customize sees no
+// change at all.
 
 export type ErnieFontKey = "standard" | "simple" | "serif" | "rounded" | "typewriter";
 export type ErnieTextSize = "small" | "medium" | "large" | "xlarge";
@@ -157,7 +162,7 @@ function toHex([r, g, b]: [number, number, number]): string {
 }
 
 // weight = how much of `b` to mix into `a` (0..1)
-function mix(a: string, b: string, weight: number): string {
+export function mix(a: string, b: string, weight: number): string {
   const x = toRgb(a);
   const y = toRgb(b);
   return toHex([x[0] + (y[0] - x[0]) * weight, x[1] + (y[1] - x[1]) * weight, x[2] + (y[2] - x[2]) * weight]);
@@ -178,7 +183,7 @@ export function contrastRatio(a: string, b: string): number {
 }
 
 // Black or white — whichever reads better on this color.
-function readableOn(bg: string): string {
+export function readableOn(bg: string): string {
   return contrastRatio(bg, "#0b0e09") >= contrastRatio(bg, "#ffffff") ? "#0b0e09" : "#ffffff";
 }
 

@@ -631,7 +631,7 @@ export default function PurchaseOrdersPageClient() {
                         <button
                           type="button"
                           onClick={() => handleCompletePo(po.id)}
-                          className="rounded border border-[#6ABC46]/50 px-2 py-1 text-[11px] font-medium text-[#6ABC46] hover:bg-[#6ABC46]/10"
+                          className="rounded border border-brand/50 px-2 py-1 text-[11px] font-medium text-brand hover:bg-brand/10"
                         >
                           Complete
                         </button>

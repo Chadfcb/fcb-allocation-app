@@ -39,6 +39,7 @@ import {
   storageFileName,
   type CalendarDay,
 } from "@/lib/events";
+import { chipText } from "@/lib/appearance";
 
 function distributorColor(
   distributors: Distributor[],
@@ -693,7 +694,7 @@ export default function EventsPageClient() {
                           }}
                           title={ev.title}
                           className="mb-0.5 block w-full truncate rounded px-1 py-0.5 text-left text-[11px] font-medium"
-                          style={{ background: `${color}28`, color }}
+                          style={{ background: `${color}28`, color: chipText(color) }}
                         >
                           {ev.title}
                         </button>
@@ -1232,7 +1233,7 @@ function EventDetails({
             className="inline-block rounded px-2 py-0.5 text-xs font-bold uppercase tracking-wide"
             style={{
               background: `${distributor.color}22`,
-              color: distributor.color ?? undefined,
+              color: distributor.color ? chipText(distributor.color) : undefined,
               border: `1px solid ${distributor.color}44`,
             }}
           >

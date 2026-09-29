@@ -293,7 +293,7 @@ export default function GoogleCalendarSyncButton({ onChanged }: { onChanged: () 
                   type="button"
                   disabled={!!busy}
                   onClick={() => act("initial")}
-                  className="rounded-md bg-[#6ABC46] px-3 py-1.5 text-sm font-semibold text-black hover:opacity-90 disabled:opacity-50"
+                  className="rounded-md bg-brand px-3 py-1.5 text-sm font-semibold text-on-brand hover:opacity-90 disabled:opacity-50"
                 >
                   {busy === "initial" ? "Syncing… (can take a minute)" : "Approve & run first sync"}
                 </button>

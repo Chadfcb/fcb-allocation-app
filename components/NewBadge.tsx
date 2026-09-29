@@ -5,7 +5,7 @@
 export default function NewBadge({ inline = false }: { inline?: boolean }) {
   return (
     <span
-      className={`${inline ? "ml-1.5" : "ml-auto"} shrink-0 rounded-full bg-[#6ABC46] px-1.5 py-0.5 text-[9px] font-bold leading-none text-black`}
+      className={`${inline ? "ml-1.5" : "ml-auto"} shrink-0 rounded-full bg-[#6ABC46] px-1.5 py-0.5 text-[9px] font-bold leading-none text-ink`}
     >
       New!
     </span>

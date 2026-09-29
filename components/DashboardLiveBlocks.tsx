@@ -24,6 +24,7 @@ import type {
 } from "@/lib/types/db";
 import { PO_STATUS_LABELS, PO_STATUS_COLORS } from "@/lib/types/db";
 import { PACKAGING_ITEMS, derivePackaging, computeConsumption } from "@/lib/packaging";
+import { chipText } from "@/lib/appearance";
 
 const currencyFormatter = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -211,7 +212,7 @@ export default function DashboardLiveBlocks({ weekId }: { weekId: string | null 
                 const status = poStatus[d.id] ?? null;
                 return (
                   <div key={d.id} className="flex items-center justify-between gap-2 px-1.5 py-1.5 text-sm">
-                    <span className="truncate text-neutral-300" style={{ color: d.color ?? undefined }}>
+                    <span className="truncate text-neutral-300" style={{ color: d.color ? chipText(d.color) : undefined }}>
                       {d.name}
                     </span>
                     <div className="flex shrink-0 items-center gap-2">
