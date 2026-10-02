@@ -427,6 +427,9 @@ export async function POST(req: NextRequest) {
         const outputFileIds: string[] = [];
         // See claimsFileDelivered in lib/ernie/replyBudget.ts (2026-10-02).
         let fileClaimCorrected = false;
+        // See project-chat/route.ts: the round after a caught fake file
+        // claim must call a tool (2026-10-02).
+        let forceToolNextRound = false;
         let fileCaptureFailures = 0;
         // animate_image only ever starts a render (see lib/ernie/tools.ts,
         // lib/ernie/files.ts) — this is how the client learns which job(s)
@@ -507,7 +510,11 @@ export async function POST(req: NextRequest) {
                 WEB_FETCH_TOOL,
                 { ...CODE_EXECUTION_TOOL, cache_control: { type: "ephemeral", ttl: "1h" } },
               ],
-              ...(isLastRound ? { tool_choice: { type: "none" } } : {}),
+              ...(isLastRound
+                ? { tool_choice: { type: "none" } }
+                : forceToolNextRound
+                  ? { tool_choice: { type: "any" } }
+                  : {}),
               messages: withHistoryCacheBreakpoint(anthropicMessages),
             }),
           });
@@ -518,6 +525,7 @@ export async function POST(req: NextRequest) {
           }
 
           const data = await res.json();
+          forceToolNextRound = false;
           const content = data.content ?? [];
 
           // Anthropic's own hosted web_search tool shows up as a
@@ -756,6 +764,7 @@ export async function POST(req: NextRequest) {
               }).catch(() => {});
               anthropicMessages.push({ role: "assistant", content: textThisRound });
               anthropicMessages.push({ role: "user", content: FILE_CLAIM_CORRECTION });
+              forceToolNextRound = true;
               continue;
             }
             finalText = textThisRound + FILE_CLAIM_FALLBACK_NOTE;

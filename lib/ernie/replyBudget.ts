@@ -142,8 +142,8 @@ export const FILE_CLAIM_CORRECTION =
   "SYSTEM CHECK (not from the person you're talking to): your last reply said a file was made, attached, or ready to download — but NO file was actually created or attached in this reply, and that reply was not shown to the person. Do not repeat that claim. If they asked for a file, build it now for real: use the code sandbox to write it (python-docx for Word, reportlab for PDF, openpyxl for spreadsheets — Google Sheets compatible, python-pptx for slides, matplotlib for charts) and save it to the output folder so it attaches, or use the right file tool. If you truly can't make it, say so plainly and give the content as text instead.";
 
 export const FILE_CLAIM_FALLBACK_NOTE =
-  "\n\n_Heads up: no file actually got attached to this reply. Please ask me again (for example: \"make that a Word doc\") and I'll build it._";
+  "\n\nHeads up: no file actually got attached to this reply. Please ask me again (for example: \"make that a Word doc\") and I'll build it.";
 
 export function fileCaptureFailedNote(count: number): string {
-  return `\n\n_Heads up: I made ${count === 1 ? "a file" : `${count} files`} but ${count === 1 ? "it" : "they"} couldn't be attached to this reply. Please ask me again and I'll rebuild ${count === 1 ? "it" : "them"}._`;
+  return `\n\nHeads up: I made ${count === 1 ? "a file" : `${count} files`} but ${count === 1 ? "it" : "they"} couldn't be attached to this reply. Please ask me again and I'll rebuild ${count === 1 ? "it" : "them"}.`;
 }

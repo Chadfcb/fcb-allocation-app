@@ -218,7 +218,7 @@ export async function POST(req: NextRequest) {
         // who said what, the way a person reading the room would.
         const { data: historyRows, error: historyErr } = await supabase
           .from("ernie_project_messages")
-          .select("sender_name, role, content, created_at")
+          .select("sender_name, role, content, file_ids, created_at")
           .eq("project_id", projectId)
           .order("created_at", { ascending: false })
           .limit(MAX_HISTORY_MESSAGES);
@@ -226,7 +226,24 @@ export async function POST(req: NextRequest) {
 
         const orderedHistory = [...(historyRows ?? [])].reverse();
         const transcript = orderedHistory
-          .map((m) => `${m.role === "ernie" ? "Ernie" : m.sender_name}: ${m.content || "(no text — attached a file)"}`)
+          .map((m) => {
+            const fileCount = Array.isArray(m.file_ids) ? m.file_ids.length : 0;
+            // Tag Ernie's own past replies with whether a file really came
+            // with them (2026-10-02). Without this, a past fake "here's the
+            // Word doc" sat in the transcript looking like a success, and
+            // Ernie copied it on the next request instead of building one.
+            const fileTag =
+              m.role === "ernie"
+                ? fileCount > 0
+                  ? ` [${fileCount} file${fileCount === 1 ? "" : "s"} attached]`
+                  : claimsFileDelivered(m.content ?? "")
+                    ? " [NOTE: no file was actually attached to this message]"
+                    : ""
+                : fileCount > 0
+                  ? ` [attached ${fileCount} file${fileCount === 1 ? "" : "s"}]`
+                  : "";
+            return `${m.role === "ernie" ? "Ernie" : m.sender_name}: ${m.content || "(no text — attached a file)"}${fileTag}`;
+          })
           .join("\n");
 
         const roomContext = `You're reading a live, shared team chat room inside the Ernie Project "${project.name}"${
@@ -314,6 +331,10 @@ The message that was just posted, from ${senderName}${
         const outputFileIds: string[] = [];
         // See claimsFileDelivered in lib/ernie/replyBudget.ts (2026-10-02).
         let fileClaimCorrected = false;
+        // Set for exactly the one round after a fake file claim is caught:
+        // that round MUST call a tool (tool_choice "any") — telling him
+        // wasn't enough on 2026-10-02, he answered in text again.
+        let forceToolNextRound = false;
         let fileCaptureFailures = 0;
         // See the matching comment in app/api/ernie/chat/route.ts —
         // animate_image only starts a render; this is how the client learns
@@ -359,7 +380,11 @@ The message that was just posted, from ${senderName}${
                 WEB_FETCH_TOOL,
                 { ...CODE_EXECUTION_TOOL, cache_control: { type: "ephemeral", ttl: "1h" } },
               ],
-              ...(isLastRound ? { tool_choice: { type: "none" } } : {}),
+              ...(isLastRound
+                ? { tool_choice: { type: "none" } }
+                : forceToolNextRound
+                  ? { tool_choice: { type: "any" } }
+                  : {}),
               messages: withHistoryCacheBreakpoint(anthropicMessages),
             }),
           });
@@ -370,6 +395,7 @@ The message that was just posted, from ${senderName}${
           }
 
           const data = await res.json();
+          forceToolNextRound = false;
           const content = data.content ?? [];
 
           for (const block of content) {
@@ -394,6 +420,11 @@ The message that was just posted, from ${senderName}${
                 try {
                   const captured = await captureCodeExecutionFile(supabase, user.id, f.file_id);
                   outputFileIds.push(captured.id);
+                  await logErnieToolExecution(supabase, user.id, undefined, "code_execution_file_created", {
+                    anthropic_file_id: f.file_id,
+                    file_name: captured.file_name,
+                    project_id: projectId,
+                  }).catch(() => {});
                 } catch (captureErr) {
                   // Used to be silent — now counted so the reply says the
                   // file didn't attach (2026-10-02), and logged.
@@ -519,6 +550,7 @@ The message that was just posted, from ${senderName}${
               }).catch(() => {});
               anthropicMessages.push({ role: "assistant", content: finalText });
               anthropicMessages.push({ role: "user", content: FILE_CLAIM_CORRECTION });
+              forceToolNextRound = true;
               finalText = "";
               continue;
             }
