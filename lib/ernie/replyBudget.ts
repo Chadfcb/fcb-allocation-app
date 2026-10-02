@@ -101,3 +101,49 @@ export function withoutDanglingServerToolUse(content: any[]): any[] {
   if (!dangling.size) return content;
   return (content ?? []).filter((b) => !(b?.type === "server_tool_use" && dangling.has(b.id)));
 }
+
+// ---------------------------------------------------------------------------
+// "Said he made a file, but no file was attached" guard (added 2026-10-02).
+//
+// Seen live 2026-10-02 in a Project chat ("Prohibition Recipe 10/2/26"):
+// Ernie replied "Done — here's the Word doc … It's ready to download" but
+// never ran the code sandbox or any file tool that reply, so nothing was
+// attached. Same family as the Slack "fabricated staged action" bug
+// (2026-09-17/18, see app/api/slack/events/route.ts) — the model describes
+// an action it never took. This is the structural backstop for files: if
+// the reply claims a delivered file and the reply produced none, Ernie gets
+// one more round to actually build it (or say plainly he couldn't), and if
+// it still has no file the person is told so instead of being misled.
+// ---------------------------------------------------------------------------
+
+// Specific file types only for "here's the …" (so "here's the document
+// summary" about a file someone uploaded doesn't trip it); the broader list
+// for "I've made/created … file".
+const FILE_TYPE_WORDS =
+  "(?:word doc(?:ument)?|\\.?docx|pdf|spreadsheet|\\.?xlsx|\\.?csv|slide ?deck|\\.?pptx|powerpoint|download|attachment)";
+const FILE_WORDS = `(?:${FILE_TYPE_WORDS.slice(3, -1)}|google doc|google sheet|presentation|file|document|chart|image)`;
+
+const FILE_CLAIM_PATTERNS: RegExp[] = [
+  new RegExp(`here['’]?s (?:the|your|a|an) (?:[\\w./-]+ ){0,4}${FILE_TYPE_WORDS}`, "i"),
+  new RegExp(`(?:i['’]?ve|i have) (?:made|created|built|generated|put together|attached|exported|saved) (?:[\\w-]+ ){0,5}${FILE_WORDS}`, "i"),
+  /ready (?:for you )?to download/i,
+  /(?:is|are) (?:now )?(?:attached|ready to download|available to download)/i,
+  /\battached (?:above|below|here)\b/i,
+  /download (?:it|the file|link|chip) (?:above|below)/i,
+  /click (?:the|on the) (?:file|download)/i,
+];
+
+export function claimsFileDelivered(text: string): boolean {
+  if (!text) return false;
+  return FILE_CLAIM_PATTERNS.some((re) => re.test(text));
+}
+
+export const FILE_CLAIM_CORRECTION =
+  "SYSTEM CHECK (not from the person you're talking to): your last reply said a file was made, attached, or ready to download — but NO file was actually created or attached in this reply, and that reply was not shown to the person. Do not repeat that claim. If they asked for a file, build it now for real: use the code sandbox to write it (python-docx for Word, reportlab for PDF, openpyxl for spreadsheets — Google Sheets compatible, python-pptx for slides, matplotlib for charts) and save it to the output folder so it attaches, or use the right file tool. If you truly can't make it, say so plainly and give the content as text instead.";
+
+export const FILE_CLAIM_FALLBACK_NOTE =
+  "\n\n_Heads up: no file actually got attached to this reply. Please ask me again (for example: \"make that a Word doc\") and I'll build it._";
+
+export function fileCaptureFailedNote(count: number): string {
+  return `\n\n_Heads up: I made ${count === 1 ? "a file" : `${count} files`} but ${count === 1 ? "it" : "they"} couldn't be attached to this reply. Please ask me again and I'll rebuild ${count === 1 ? "it" : "them"}._`;
+}
