@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Claude delivery copies (auto-saved by the Claude desktop app) — never part
+# of the app; excluded from the build in tsconfig.json too (2026-10-02)
+/Claude outputs/
