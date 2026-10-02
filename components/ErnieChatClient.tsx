@@ -1658,7 +1658,16 @@ export default function ErnieChatClient({
       ) : (
         <>
       {dragActive && (
-        <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-[color:var(--e-accent)]/60 bg-[color:var(--e-deep)]/85">
+        // When the Project Files panel is showing on the left (w-72 + the
+        // gap-4 between panels = 19rem), start this overlay to its right so
+        // only the chat side lights up — the Files panel has its own drop
+        // overlay (2026-10-02, per Chad: dragging into the chat was
+        // highlighting both sections).
+        <div
+          className={`pointer-events-none absolute inset-y-0 right-0 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-[color:var(--e-accent)]/60 bg-[color:var(--e-deep)]/85 ${
+            !isPopup && activeProject ? "left-[19rem]" : "left-0"
+          }`}
+        >
           <p className="font-[family-name:var(--e-font-body)] text-sm font-medium text-[color:var(--e-text)]">
             Drop files to attach them
           </p>
