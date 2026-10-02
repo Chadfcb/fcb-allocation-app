@@ -1,0 +1,2347 @@
+"use client";
+
+// Ernie AI — the in-app assistant every signed-in user can ask about
+// inventory, allocations, distributors, events, purchase orders, pricing,
+// and (since 2026-08-31) files they attach directly in this chat. Ernie
+// itself is still read-only against the app's own data — the one thing it
+// CAN produce is a new/edited copy of a file the user attached (e.g. an
+// edited spreadsheet), never a change to the app's own database.
+//
+// Visual redesign (2026-09-05, per Chad — "it looks super basic and
+// unappealing"): a green-tinted dark panel using FCB's own brand colors
+// (black/white/#6ABC46, the same green used for the active item in the left
+// sidebar) plus Archivo/IBM Plex type, in place of the previous plain
+// black-and-white look. This is scoped ENTIRELY to this component via
+// next/font/google + literal Tailwind arbitrary-value classes — it
+// deliberately does not touch app/globals.css or app/layout.tsx, since
+// those apply to every other page. Approved via an iterative HTML preview
+// before being built here; nothing about the underlying behavior below
+// changed, only markup/classes.
+//
+// A plain <img> (not next/image) is used for the thinking gif so its
+// animation isn't touched by Next's image optimizer. The skeleton mascot
+// appears next to only the most recent one of Ernie's replies — the static
+// first-frame PNG once that reply is showing, swapped for the real animated
+// GIF only for the transient "Ernie is thinking…" row while a reply is
+// being generated (GIFs can't be paused via CSS, hence swapping src
+// instead). Both image files were reprocessed to strip a baked-in solid
+// black background so they sit directly on the new panel color.
+//
+// The app's shared (app) layout doesn't give its <main> an explicit height
+// (other pages just grow with their content and let the whole page scroll),
+// so a plain h-full here wouldn't reliably fill the remaining viewport —
+// the input bar would sit right under the last message instead of staying
+// pinned to the bottom of the screen the way Claude's own chat UI does.
+// Measuring the panel's own top offset and sizing it to fill exactly the
+// rest of the viewport (updated on resize) sidesteps that without having to
+// change the shared layout for every other page.
+//
+// Conversation history now lives in the database (ernie_conversations /
+// ernie_messages, via /api/ernie/chat + /api/ernie/conversations), not just
+// in this component's state — that's what lets a conversation survive
+// clicking over to another page and back, a full refresh, or opening Ernie
+// from a different device. sessionStorage only ever holds a lightweight
+// pointer to "which conversation is this tab currently looking at" so a
+// remount (e.g. after navigating away and back) knows what to reload; the
+// message content itself always comes from the database. A literal "new"
+// sentinel value marks "the user explicitly started a fresh conversation"
+// so coming back to /ernie mid-blank-conversation doesn't get overridden by
+// whatever conversation happened to be most recently updated.
+//
+// File attachments (added 2026-08-31, "spreadsheets is important, we use so
+// many, having ernie to be able to edit them and analyze them would be
+// huge" — Chad): a file is uploaded straight from here to Supabase Storage
+// (same direct-to-storage pattern as PosLabelFilesClient) — this component
+// never sends raw file bytes through /api/ernie/chat, just the resulting
+// file_id(s). Drag-and-drop onto the whole panel and a click-to-browse
+// attach button both go through the same handleFiles(). Ernie's own
+// produced files (e.g. an edited spreadsheet from edit_spreadsheet) arrive
+// via the chat route's "done" event as outputFileIds, resolved into
+// downloadable chips the same way.
+
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
+import { useSiteAppearance } from "@/components/SiteAppearanceProvider";
+import { fontStackFor, resolveErnieTokens } from "@/lib/ernie/appearance";
+import { fontVariables } from "@/lib/fonts";
+import { fileIcon, formatBytes, storageFileName } from "@/lib/events";
+import { ERNIE_FILES_BUCKET, ERNIE_MAX_FILE_BYTES, ERNIE_MAX_FILES_PER_MESSAGE } from "@/lib/ernie/fileLimits";
+
+// Ernie's fonts (Archivo / IBM Plex, plus the Customize font options) now
+// live in lib/fonts.ts — moved there 2026-09-29 so Customize's font choices
+// work on every page, not just this one.
+
+interface ErnieFile {
+  id: string;
+  file_name: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  storage_path: string;
+  // Which Storage bucket storage_path actually lives in. Null/undefined
+  // means the default "ernie-files" bucket (every file the user uploads,
+  // and every spreadsheet Ernie edits) — only set when Ernie fetched this
+  // via get_file_for_download from some OTHER part of the app (e.g. a POS
+  // label file), where the bytes were never copied, just referenced.
+  source_bucket?: string | null;
+}
+
+interface ChatMessage {
+  role: "user" | "assistant";
+  text: string;
+  files?: ErnieFile[];
+  // Only ever set inside a Project's live shared room (see
+  // switchToProject/the room-loading effect below) — general/personal chat
+  // is always just "you" and "Ernie", so these stay undefined there.
+  // senderId null means Ernie; a real id is whichever teammate sent it,
+  // compared against the signed-in userId to decide left/right alignment.
+  senderId?: string | null;
+  senderName?: string;
+}
+
+// One row of a Project's live shared chat room (see
+// sql/ernie_project_chat.sql / app/api/ernie/project-chat/route.ts) — every
+// user with access to the Project reads and writes the same rows, unlike
+// the personal, 1:1 ernie_conversations/ernie_messages used everywhere else.
+interface RoomMessageRow {
+  id: string;
+  sender_id: string | null;
+  sender_name: string;
+  role: "user" | "ernie";
+  content: string;
+  file_ids: string[];
+  created_at: string;
+}
+
+interface ConversationSummary {
+  id: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// Ernie Projects (added 2026-09-10) — named containers with their own file
+// library and their own conversation history, visible only to whoever's
+// been granted access (see sql/ernie_projects.sql). A project tab isn't
+// persisted across a page refresh — landing back on /ernie always starts
+// on General, same as before this feature existed; switching tabs is a
+// same-session action.
+interface ErnieProject {
+  id: string;
+  name: string;
+  description: string | null;
+  created_by: string | null;
+  created_at: string;
+}
+
+interface ProjectFile {
+  id: string;
+  file_name: string;
+  storage_path: string;
+  description: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  added_by: string | null;
+  created_at: string;
+}
+
+interface ProjectAccessUser {
+  id: string;
+  full_name: string | null;
+  email: string;
+  role: string;
+  has_access: boolean;
+}
+
+const ACTIVE_CONVERSATION_KEY = "ernie_active_conversation_id";
+const NEW_SENTINEL = "new";
+
+// firstName can come from a full name or from the part of an email before
+// the "@" (see app/(app)/ernie/page.tsx) — the latter is often all lowercase
+// (e.g. "chad" from chad@fullcirclebrewing.com), so the greeting capitalizes
+// it rather than trusting the source casing.
+function capitalize(name: string) {
+  return name ? name.charAt(0).toUpperCase() + name.slice(1) : name;
+}
+
+function formatRelative(iso: string) {
+  const date = new Date(iso);
+  const diffMs = Date.now() - date.getTime();
+  const diffMin = Math.round(diffMs / 60000);
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHr = Math.round(diffMin / 60);
+  if (diffHr < 24) return `${diffHr}h ago`;
+  const diffDay = Math.round(diffHr / 24);
+  if (diffDay < 7) return `${diffDay}d ago`;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+export default function ErnieChatClient({
+  firstName,
+  canManageProjects,
+  mode,
+}: {
+  firstName: string;
+  // Whether this signed-in user can create Ernie Projects, manage a
+  // project's access, and add/remove its files — Administrators and
+  // Managers only (role === "admin", either tier). Everyone with Ernie
+  // access at all can still see and use a project they've been granted.
+  canManageProjects: boolean;
+  // Split 2026-09-10, per Chad ("we need to separate them, instead of
+  // having them together, its too convoluted the way it is currently") —
+  // this one component still backs both pages (it shares almost all of its
+  // state/logic — sending messages, file handling, conversation history),
+  // but "general" (rendered at /ernie, "My Ernie AI" in the sidebar) never
+  // shows the Project tiles/Completed Projects UI and always operates on
+  // the personal, non-Project conversation; "projects" (rendered at
+  // /ernie/projects, "Projects" in the sidebar) shows the Project tiles +
+  // Completed Projects, and — since there's no "General" tab on this page
+  // anymore — shows a "pick or create a Project" placeholder instead of a
+  // chat until one is selected.
+  mode: "general" | "projects";
+}) {
+  const supabase = useMemo(() => createClient(), []);
+
+  // --- Per-person appearance ---------------------------------------------
+  // Since 2026-09-29 this is the person's ONE site-wide Customize setting
+  // (header button → components/SiteAppearanceProvider.tsx), not an
+  // Ernie-only one — this just turns it into Ernie's own --e-* chat colors
+  // and fonts (lib/ernie/appearance.ts). Text size is applied site-wide by
+  // lib/appearance.ts, so Ernie no longer scales its own text.
+  const { appearance: shownAppearance } = useSiteAppearance();
+  const themeStyle = useMemo(() => {
+    const fonts = fontStackFor(shownAppearance.font);
+    return {
+      ...resolveErnieTokens(shownAppearance),
+      "--e-font-body": fonts.body,
+      "--e-font-head": fonts.head,
+    } as React.CSSProperties;
+  }, [shownAppearance]);
+
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+
+  // --- Ernie Projects state ---------------------------------------------
+  const [projects, setProjects] = useState<ErnieProject[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
+  const activeProject = activeProjectId ? projects.find((p) => p.id === activeProjectId) ?? null : null;
+
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectDescription, setNewProjectDescription] = useState("");
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [createProjectError, setCreateProjectError] = useState<string | null>(null);
+
+  const [projectFiles, setProjectFiles] = useState<ProjectFile[]>([]);
+  const [projectFilesLoading, setProjectFilesLoading] = useState(false);
+  const [projectFileUploading, setProjectFileUploading] = useState(false);
+  const [projectFileUploadError, setProjectFileUploadError] = useState<string | null>(null);
+  const projectFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [manageAccessOpen, setManageAccessOpen] = useState(false);
+  const [accessUsers, setAccessUsers] = useState<ProjectAccessUser[]>([]);
+  const [accessLoading, setAccessLoading] = useState(false);
+  const [accessSavingId, setAccessSavingId] = useState<string | null>(null);
+  const [accessError, setAccessError] = useState<string | null>(null);
+
+  // Completed Projects (added 2026-09-10, Chad: "the ability to close a
+  // project which goes into a completed Projects section... or brought
+  // back to an active project if needed") — closing/reopening/permanently
+  // deleting a Project all live in app/api/ernie/projects/[id]/route.ts.
+  const [completedProjects, setCompletedProjects] = useState<ErnieProject[]>([]);
+  const [completedOpen, setCompletedOpen] = useState(false);
+  const [completedLoading, setCompletedLoading] = useState(false);
+  const [projectActionError, setProjectActionError] = useState<string | null>(null);
+  const [projectActionBusyId, setProjectActionBusyId] = useState<string | null>(null);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  // Live "what Ernie is doing right now" label (e.g. "Checking inventory &
+  // allocations"), driven by status events streamed from /api/ernie/chat —
+  // purely a live UI thing, never persisted with the conversation.
+  const [statusLabel, setStatusLabel] = useState<string | null>(null);
+  // Project-room-only equivalent of the "Ernie is thinking…" indicator
+  // below — General chat still just uses `loading` (every message there
+  // gets a reply). In a Project's shared room, most messages don't need
+  // Ernie at all, so this only flips true once the server's cheap "should I
+  // reply?" check comes back yes (see send()'s "will_reply" SSE event) —
+  // never just because a message was posted.
+  const [ernieThinking, setErnieThinking] = useState(false);
+  const [initializing, setInitializing] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [history, setHistory] = useState<ConversationSummary[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  // "What Ernie knows about you" — private per-user notes Ernie builds up
+  // on its own (see lib/ernie/tools.ts's update_person_notes tool and
+  // sql/ernie_user_notes.sql). RLS scopes every query here to the
+  // signed-in user's own row automatically — nobody else, not even an
+  // admin, can read or write it, so this panel never needs a user id
+  // filter or a server route of its own.
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [notesText, setNotesText] = useState("");
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [notesSaving, setNotesSaving] = useState(false);
+  const [notesError, setNotesError] = useState<string | null>(null);
+  const [notesSavedAt, setNotesSavedAt] = useState<number | null>(null);
+
+  async function openNotes() {
+    setNotesOpen(true);
+    setNotesError(null);
+    setNotesLoading(true);
+    const { data, error: notesErr } = await supabase
+      .from("ernie_user_notes")
+      .select("notes")
+      .maybeSingle();
+    setNotesLoading(false);
+    if (notesErr) {
+      setNotesError("Couldn't load your notes — try again in a moment.");
+      return;
+    }
+    setNotesText(data?.notes ?? "");
+  }
+
+  async function saveNotes() {
+    setNotesSaving(true);
+    setNotesError(null);
+    const trimmed = notesText.trim();
+    const { error: saveErr } = trimmed
+      ? await supabase
+          .from("ernie_user_notes")
+          .upsert({ user_id: userId, notes: trimmed, updated_at: new Date().toISOString() }, { onConflict: "user_id" })
+      : await supabase.from("ernie_user_notes").delete().eq("user_id", userId ?? "");
+    setNotesSaving(false);
+    if (saveErr) {
+      setNotesError("Couldn't save — try again.");
+      return;
+    }
+    setNotesText(trimmed);
+    setNotesSavedAt(Date.now());
+  }
+
+  // Pop-out window support (added 2026-09-10, Chad: "if i ask him something
+  // then want to go look in the app, i cant do both at once, i have to swap
+  // back and forth"). window.opener is only set on a window that was itself
+  // opened via window.open from another window/tab of this same app, so it
+  // doubles as a reliable "am I the popup right now" flag — no separate
+  // route or query param needed. Conversation history already lives in the
+  // database (see the load-on-mount effect above), and sessionStorage is
+  // shared between an opener and the popup it spawns, so the popup picks up
+  // the exact same conversation you were already in rather than starting a
+  // blank one.
+  const [isPopup, setIsPopup] = useState(false);
+  useEffect(() => {
+    setIsPopup(typeof window !== "undefined" && !!window.opener);
+  }, []);
+
+  function openPopout() {
+    window.open(
+      "/ernie",
+      "ernie-popup",
+      "width=440,height=760,resizable=yes,menubar=no,toolbar=no,location=no,status=no",
+    );
+  }
+
+  const [userId, setUserId] = useState<string | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<ErnieFile[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const dragCounter = useRef(0);
+  // Drag-and-drop straight into a Project's file library (added 2026-10-02,
+  // per Chad: "i want to be able to drag and drop files here as well, not
+  // just the add button"). Separate from the chat's own drop zone above:
+  // files dropped on the left Files panel go into the Project's library
+  // (same upload as "+ Add"); dropped anywhere else they attach to the
+  // next chat message, as before.
+  const [projectDropActive, setProjectDropActive] = useState(false);
+  const projectDragCounter = useRef(0);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [panelHeight, setPanelHeight] = useState<number | null>(null);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setUserId(data.user?.id ?? null));
+  }, [supabase]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, loading, ernieThinking]);
+
+  useLayoutEffect(() => {
+    function updateHeight() {
+      if (!panelRef.current) return;
+      // Fixed 2026-09-10 (3rd pass, confirmed live via a real browser
+      // session against a long conversation) — both earlier versions
+      // measured "top" from getBoundingClientRect(), which reflects the
+      // CURRENT SCROLL POSITION at the exact instant it's called. Opening a
+      // long past conversation triggers the scrollIntoView effect below,
+      // which smooth-scrolls the page; if this height calculation happens
+      // to run mid-animation (very plausible — a ResizeObserver fires as
+      // dozens of messages render in), it can capture a scroll position
+      // that doesn't match the page's true, at-rest layout, locking in a
+      // wildly wrong height (observed live: 3870px in an 855px-tall
+      // window) that then never gets corrected, since nothing about the
+      // page's actual layout changes again to trigger a fresh, good
+      // measurement.
+      //
+      // The fix: measure this panel's position by walking up the
+      // offsetParent chain and summing offsetTop at each step. This is a
+      // pure DOCUMENT-layout measurement — completely independent of
+      // however far the page currently happens to be scrolled — so it
+      // can't be corrupted by a mid-scroll-animation snapshot the way
+      // getBoundingClientRect() can.
+      let node: HTMLElement | null = panelRef.current;
+      let top = 0;
+      while (node) {
+        top += node.offsetTop;
+        node = node.offsetParent as HTMLElement | null;
+      }
+      // The shared (app) layout's <main> wraps every page in "py-6", so
+      // there's padding below this panel too — without subtracting it, the
+      // panel's bottom (and the input bar in it) always sat just far enough
+      // past the viewport's bottom edge to force a page-level scrollbar.
+      const parentPaddingBottom = panelRef.current.parentElement
+        ? parseFloat(getComputedStyle(panelRef.current.parentElement).paddingBottom || "0")
+        : 0;
+      const nextHeight = window.innerHeight - top - parentPaddingBottom;
+      // Sanity guard: only apply a measurement that actually looks like a
+      // real, fittable panel height. If something above ever produces a
+      // clearly bogus number, skip the update and keep whatever height was
+      // last known good, rather than locking in a bad value the way the
+      // old clamp-to-innerHeight fallback did.
+      if (nextHeight > 100 && nextHeight <= window.innerHeight) {
+        setPanelHeight(nextHeight);
+      }
+    }
+    // Guarded update: entering/exiting native <video> fullscreen (Chad,
+    // 2026-09-15: "clicking fullscreen doesnt work... opens to fullscreen
+    // very fast then closes it very fast") ALSO fires a window "resize"
+    // event, because window.innerHeight briefly reports the full-screen
+    // height even though nothing about this page's own layout actually
+    // changed. Confirmed live (fullscreenchange/resize/mutation timestamps
+    // instrumented in the browser): that resize was reaching this same
+    // updateHeight(), which recomputed panelHeight against the now-huge
+    // window.innerHeight, set a wrong/oversized height on this panel, and
+    // the resulting re-render's DOM churn was what made the browser
+    // immediately exit fullscreen again ~15ms later — a self-inflicted
+    // fullscreen bounce, not a video/Veo bug. Skipping the recalculation
+    // while a fullscreen element is active avoids that churn; the
+    // fullscreenchange listener re-syncs once fullscreen actually ends, in
+    // case the real window was also resized in the meantime.
+    function updateHeightUnlessFullscreen() {
+      if (document.fullscreenElement) return;
+      updateHeight();
+    }
+    updateHeight();
+    window.addEventListener("resize", updateHeightUnlessFullscreen);
+    document.addEventListener("fullscreenchange", updateHeight);
+
+    // Fixed 2026-09-10, per Chad ("the ernie chat area, continues to go on
+    // down past the screen... we want it to stop once it gets to the
+    // bottom of the window size, and a scroll bar used to scroll back up
+    // to the conversation history"). This panel's top offset isn't fixed —
+    // it moves whenever whatever sits ABOVE it changes height (the
+    // Project square-tile row wrapping to more rows, the Projects list
+    // loading in asynchronously after mount, switching General <-> a
+    // Project). The old code only ever measured "top" once on mount plus
+    // on a window resize, so once anything above grew taller, panelHeight
+    // went stale and the panel (and the message list / Past Conversations
+    // list inside it) just grew past the bottom of the screen instead of
+    // scrolling internally. A ResizeObserver on this panel's own parent
+    // (whose total height is "everything above" + this panel) re-measures
+    // any time that changes, whatever the cause.
+    const parent = panelRef.current?.parentElement ?? null;
+    let observer: ResizeObserver | null = null;
+    if (parent && typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(() => updateHeightUnlessFullscreen());
+      observer.observe(parent);
+    }
+
+    return () => {
+      window.removeEventListener("resize", updateHeightUnlessFullscreen);
+      document.removeEventListener("fullscreenchange", updateHeight);
+      observer?.disconnect();
+    };
+  }, []);
+
+  // Restore whichever conversation this tab was last looking at (or the
+  // most recently updated one, for a brand-new tab/session) so navigating
+  // back to /ernie — or opening it fresh on another device — doesn't drop
+  // you into a blank conversation you didn't ask to start. This pointer is
+  // only ever about the personal/General conversation (see
+  // ACTIVE_CONVERSATION_KEY's other uses below) — the Projects page
+  // (mode === "projects") always starts blank until a Project is picked,
+  // so this whole restore is skipped there.
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadConversation(id: string): Promise<boolean> {
+      try {
+        const res = await fetch(`/api/ernie/conversations/${id}`);
+        if (!res.ok) return false;
+        const data = await res.json();
+        if (cancelled) return true;
+        setMessages(data.messages ?? []);
+        setConversationId(data.conversation.id);
+        resumePendingVideoJobs({ conversationId: data.conversation.id });
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    async function init() {
+      // Moved inside init() (rather than checked before the effect even
+      // starts) so this early-out setState happens inside the same async
+      // function as every other setInitializing(false) call here, matching
+      // this effect's existing pattern rather than calling setState
+      // synchronously in the effect body itself.
+      if (mode !== "general") {
+        setInitializing(false);
+        return;
+      }
+
+      const stored =
+        typeof window !== "undefined" ? sessionStorage.getItem(ACTIVE_CONVERSATION_KEY) : null;
+
+      if (stored === NEW_SENTINEL) {
+        setInitializing(false);
+        return;
+      }
+
+      if (stored) {
+        const ok = await loadConversation(stored);
+        if (ok) {
+          setInitializing(false);
+          return;
+        }
+        // Stale pointer (conversation deleted, or from a browser that's no
+        // longer signed in as this admin) — fall through to "most recent".
+      }
+
+      try {
+        const listRes = await fetch("/api/ernie/conversations");
+        if (listRes.ok) {
+          const listData = await listRes.json();
+          const mostRecent: ConversationSummary | undefined = listData.conversations?.[0];
+          if (mostRecent && !cancelled) {
+            const ok = await loadConversation(mostRecent.id);
+            if (ok) sessionStorage.setItem(ACTIVE_CONVERSATION_KEY, mostRecent.id);
+          }
+        }
+      } catch {
+        // Ernie still works with a blank conversation — it just won't have
+        // restored history this time.
+      } finally {
+        if (!cancelled) setInitializing(false);
+      }
+    }
+
+    init();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode]);
+
+  // Load the sidebar's conversation list once on mount — it's always
+  // visible now (no more click-to-open History dropdown), so it needs its
+  // own data as soon as the page loads rather than waiting to be opened.
+  // This unscoped fetch is only meaningful on the General/"My Ernie AI"
+  // page (mode === "general") — the Projects page always starts with no
+  // conversation until a Project is picked, at which point switchToProject
+  // calls refreshHistory(projectId) itself, properly scoped.
+  useEffect(() => {
+    if (mode !== "general") return;
+    let cancelled = false;
+    (async () => {
+      setHistoryLoading(true);
+      try {
+        const res = await fetch("/api/ernie/conversations");
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          setHistory(data.conversations ?? []);
+        }
+      } finally {
+        if (!cancelled) setHistoryLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode]);
+
+  // Every Project this signed-in user has access to (RLS on ernie_projects
+  // already limits this — see sql/ernie_projects.sql), for the tile row on
+  // the Projects page. Only relevant there — "My Ernie AI" never shows
+  // Project tiles. Loaded once on mount; refreshed after creating one.
+  useEffect(() => {
+    if (mode !== "projects") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/ernie/projects");
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          setProjects(data.projects ?? []);
+        }
+      } catch {
+        // Tiles just won't show up this load.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mode]);
+
+  // Conversation list for the right-hand sidebar — loaded on mount, after
+  // every reply, and whenever the active Project tab changes, rather than
+  // only when a dropdown is opened, since the sidebar is on-screen at all
+  // times now. Omitting projectId scopes to the general (non-Project)
+  // history; passing one scopes to that Project's own history — the two
+  // never mix (see app/api/ernie/conversations/route.ts).
+  async function refreshHistory(projectId?: string | null) {
+    const scopedTo = projectId !== undefined ? projectId : activeProjectId;
+    try {
+      const res = await fetch(
+        scopedTo ? `/api/ernie/conversations?projectId=${scopedTo}` : "/api/ernie/conversations",
+      );
+      if (res.ok) {
+        const data = await res.json();
+        setHistory(data.conversations ?? []);
+      }
+    } catch {
+      // leave the stale list showing rather than erroring the whole panel
+    }
+  }
+
+  async function loadProjectFiles(projectId: string) {
+    setProjectFilesLoading(true);
+    try {
+      const res = await fetch(`/api/ernie/projects/${projectId}/files`);
+      if (res.ok) {
+        const data = await res.json();
+        setProjectFiles(data.files ?? []);
+      }
+    } finally {
+      setProjectFilesLoading(false);
+    }
+  }
+
+  // Switching tabs (General <-> a Project, or between two Projects) starts
+  // a blank conversation in that context and loads its own file list and
+  // its own conversation history — deliberately does not try to auto-open
+  // whatever conversation was last open there; "New Conversation"/the
+  // history list handle picking one up again.
+  async function switchToProject(projectId: string | null) {
+    if (projectId === activeProjectId) return;
+    setActiveProjectId(projectId);
+    setMessages([]);
+    setConversationId(null);
+    setError(null);
+    setProjectFiles([]);
+    // A Project's chat is a live shared room now, not a list of past
+    // conversations to browse — the room-loading effect below (keyed on
+    // activeProjectId) loads its messages and subscribes to new ones the
+    // moment activeProjectId changes, so there's nothing conversation-list
+    // shaped to fetch here anymore.
+    if (projectId) await loadProjectFiles(projectId);
+  }
+
+  // Resolves a room message's attached file ids into the same ErnieFile
+  // shape the rest of this component already renders as download chips
+  // (FileChip) — mirrors how the general chat's "done" SSE event resolves
+  // outputFileIds, just for however many ids one or more room rows carry.
+  async function resolveRoomFiles(ids: string[]): Promise<ErnieFile[]> {
+    if (ids.length === 0) return [];
+    const { data } = await supabase
+      .from("ernie_files")
+      .select("id, file_name, mime_type, size_bytes, storage_path, source_bucket")
+      .in("id", ids);
+    return (data as ErnieFile[] | null) ?? [];
+  }
+
+  function roomRowToChatMessage(row: RoomMessageRow, filesById: Map<string, ErnieFile>): ChatMessage {
+    const files = row.file_ids.map((id) => filesById.get(id)).filter((f): f is ErnieFile => !!f);
+    return {
+      role: row.role === "ernie" ? "assistant" : "user",
+      text: row.content,
+      files: files.length > 0 ? files : undefined,
+      senderId: row.sender_id,
+      senderName: row.sender_name,
+    };
+  }
+
+  // Loads a Project's live shared room and keeps it live: an initial fetch
+  // of its history, then a Supabase Realtime subscription so every message
+  // anyone posts — including Ernie's, if he decides to reply — shows up for
+  // this tab the instant it's inserted, no refresh or polling needed. Runs
+  // whenever the active Project changes; tears its own subscription down on
+  // cleanup so switching Projects (or leaving) doesn't leave stale channels
+  // listening in the background.
+  useEffect(() => {
+    if (mode !== "projects" || !activeProjectId) return;
+    let cancelled = false;
+
+    async function loadRoom() {
+      setInitializing(true);
+      try {
+        const res = await fetch(`/api/ernie/project-chat?projectId=${activeProjectId}`);
+        if (!res.ok) {
+          if (!cancelled) setError("Couldn't load this Project's chat — try again.");
+          return;
+        }
+        const data = (await res.json()) as { messages?: RoomMessageRow[] };
+        const rows = data.messages ?? [];
+        const allFileIds = Array.from(new Set(rows.flatMap((r) => r.file_ids ?? [])));
+        const files = await resolveRoomFiles(allFileIds);
+        const filesById = new Map(files.map((f) => [f.id, f]));
+        if (!cancelled) setMessages(rows.map((r) => roomRowToChatMessage(r, filesById)));
+        resumePendingVideoJobs({ projectId: activeProjectId ?? undefined });
+      } catch {
+        if (!cancelled) setError("Couldn't load this Project's chat — check your connection and try again.");
+      } finally {
+        if (!cancelled) setInitializing(false);
+      }
+    }
+
+    loadRoom();
+
+    const channel = supabase
+      .channel(`ernie-project-chat-${activeProjectId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "ernie_project_messages",
+          filter: `project_id=eq.${activeProjectId}`,
+        },
+        async (payload) => {
+          const row = payload.new as RoomMessageRow;
+          const files = await resolveRoomFiles(row.file_ids ?? []);
+          const filesById = new Map(files.map((f) => [f.id, f]));
+          setMessages((prev) => [...prev, roomRowToChatMessage(row, filesById)]);
+        },
+      )
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- resolveRoomFiles/roomRowToChatMessage are stable per render and re-including them would just re-run this identically on every render
+  }, [mode, activeProjectId, supabase]);
+
+  async function createProject() {
+    const name = newProjectName.trim();
+    if (!name) {
+      setCreateProjectError("Give it a name.");
+      return;
+    }
+    setCreatingProject(true);
+    setCreateProjectError(null);
+    try {
+      const res = await fetch("/api/ernie/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, description: newProjectDescription.trim() || undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setCreateProjectError(data.error ?? "Couldn't create that Project.");
+        return;
+      }
+      setProjects((prev) => [...prev, data.project].sort((a, b) => a.name.localeCompare(b.name)));
+      setCreateProjectOpen(false);
+      setNewProjectName("");
+      setNewProjectDescription("");
+      switchToProject(data.project.id);
+    } catch {
+      setCreateProjectError("Couldn't reach the server — try again.");
+    } finally {
+      setCreatingProject(false);
+    }
+  }
+
+  async function loadCompletedProjects() {
+    setCompletedLoading(true);
+    try {
+      const res = await fetch("/api/ernie/projects?status=completed");
+      if (res.ok) {
+        const data = await res.json();
+        setCompletedProjects(data.projects ?? []);
+      }
+    } finally {
+      setCompletedLoading(false);
+    }
+  }
+
+  function openCompletedProjects() {
+    setCompletedOpen(true);
+    setProjectActionError(null);
+    loadCompletedProjects();
+  }
+
+  // Close: non-destructive — moves a Project out of the active tab row and
+  // into Completed Projects. Reopen is the exact inverse. Both admin-only,
+  // enforced here and by ernie_projects' own RLS write policy.
+  async function closeProject(projectId: string) {
+    setProjectActionBusyId(projectId);
+    setProjectActionError(null);
+    try {
+      const res = await fetch(`/api/ernie/projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ active: false }),
+      });
+      const data = await res.json().catch(() => ({}) as { error?: string });
+      if (!res.ok) {
+        setProjectActionError(data.error ?? "Couldn't close that Project.");
+        return;
+      }
+      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      if (activeProjectId === projectId) switchToProject(null);
+      if (completedOpen) loadCompletedProjects();
+    } catch {
+      setProjectActionError("Couldn't reach the server — try again.");
+    } finally {
+      setProjectActionBusyId(null);
+    }
+  }
+
+  async function reopenProject(projectId: string) {
+    setProjectActionBusyId(projectId);
+    setProjectActionError(null);
+    try {
+      const res = await fetch(`/api/ernie/projects/${projectId}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ active: true }),
+      });
+      const data = await res.json().catch(() => ({}) as { error?: string; project?: ErnieProject });
+      if (!res.ok) {
+        setProjectActionError(data.error ?? "Couldn't reopen that Project.");
+        return;
+      }
+      setCompletedProjects((prev) => prev.filter((p) => p.id !== projectId));
+      if (data.project) {
+        setProjects((prev) => [...prev, data.project as ErnieProject].sort((a, b) => a.name.localeCompare(b.name)));
+      }
+    } catch {
+      setProjectActionError("Couldn't reach the server — try again.");
+    } finally {
+      setProjectActionBusyId(null);
+    }
+  }
+
+  // Permanent delete — the one hard-delete exception in this app (mirrors
+  // Purchase Orders Holding's own permanent-delete precedent), so it's
+  // confirm-gated and irreversible.
+  async function deleteProjectForever(project: ErnieProject) {
+    if (
+      !window.confirm(
+        `Permanently delete "${project.name}"? This cannot be undone. Its files and access grants will be deleted; past conversations are kept but unlinked from it.`,
+      )
+    ) {
+      return;
+    }
+    setProjectActionBusyId(project.id);
+    setProjectActionError(null);
+    try {
+      const res = await fetch(`/api/ernie/projects/${project.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}) as { error?: string });
+        setProjectActionError(data.error ?? "Couldn't delete that Project.");
+        return;
+      }
+      setProjects((prev) => prev.filter((p) => p.id !== project.id));
+      setCompletedProjects((prev) => prev.filter((p) => p.id !== project.id));
+      if (activeProjectId === project.id) switchToProject(null);
+    } catch {
+      setProjectActionError("Couldn't reach the server — try again.");
+    } finally {
+      setProjectActionBusyId(null);
+    }
+  }
+
+  async function openManageAccess() {
+    if (!activeProjectId) return;
+    setManageAccessOpen(true);
+    setAccessError(null);
+    setAccessLoading(true);
+    try {
+      const res = await fetch(`/api/ernie/projects/${activeProjectId}/access`);
+      const data = await res.json();
+      if (!res.ok) {
+        setAccessError(data.error ?? "Couldn't load access for this Project.");
+        return;
+      }
+      setAccessUsers(data.users ?? []);
+    } catch {
+      setAccessError("Couldn't reach the server — try again.");
+    } finally {
+      setAccessLoading(false);
+    }
+  }
+
+  async function toggleUserAccess(user: ProjectAccessUser) {
+    if (!activeProjectId) return;
+    setAccessSavingId(user.id);
+    setAccessError(null);
+    try {
+      const res = user.has_access
+        ? await fetch(`/api/ernie/projects/${activeProjectId}/access?userId=${user.id}`, { method: "DELETE" })
+        : await fetch(`/api/ernie/projects/${activeProjectId}/access`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ userId: user.id }),
+          });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}) as { error?: string });
+        setAccessError(data.error ?? "Couldn't update access.");
+        return;
+      }
+      setAccessUsers((prev) =>
+        prev.map((u) => (u.id === user.id ? { ...u, has_access: !u.has_access } : u)),
+      );
+    } catch {
+      setAccessError("Couldn't reach the server — try again.");
+    } finally {
+      setAccessSavingId(null);
+    }
+  }
+
+  async function handleProjectFiles(fileList: FileList) {
+    if (!activeProjectId) return;
+    setProjectFileUploading(true);
+    setProjectFileUploadError(null);
+    try {
+      for (const file of Array.from(fileList)) {
+        const path = `${activeProjectId}/${storageFileName(file.name)}`;
+        const { error: uploadErr } = await supabase.storage.from("ernie-project-files").upload(path, file);
+        if (uploadErr) {
+          setProjectFileUploadError(`Couldn't upload ${file.name}: ${uploadErr.message}`);
+          continue;
+        }
+        const res = await fetch(`/api/ernie/projects/${activeProjectId}/files`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            file_name: file.name,
+            storage_path: path,
+            mime_type: file.type || null,
+            size_bytes: file.size,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setProjectFileUploadError(`Uploaded ${file.name} but couldn't record it: ${data.error ?? "unknown error"}`);
+          continue;
+        }
+        setProjectFiles((prev) => [data.file, ...prev]);
+      }
+    } finally {
+      setProjectFileUploading(false);
+    }
+  }
+
+  async function removeProjectFile(f: ProjectFile) {
+    if (!activeProjectId) return;
+    setProjectFiles((prev) => prev.filter((p) => p.id !== f.id));
+    await fetch(`/api/ernie/projects/${activeProjectId}/files?fileId=${f.id}`, { method: "DELETE" });
+  }
+
+  async function handleDownloadProjectFile(f: ProjectFile) {
+    setDownloadingId(f.id);
+    try {
+      const { data } = await supabase.storage.from("ernie-project-files").createSignedUrl(f.storage_path, 300);
+      if (!data?.signedUrl) return;
+      const res = await fetch(data.signedUrl);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = f.file_name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
+  // Uploads each file straight to Storage, then records it in ernie_files —
+  // same direct-to-storage pattern PosLabelFilesClient uses. A file that's
+  // too large, or would push this message over the attachment cap, is
+  // skipped with a message rather than silently dropped.
+  async function handleFiles(fileList: FileList) {
+    if (!userId) {
+      setUploadError("Still signing you in — try attaching again in a moment.");
+      return;
+    }
+    const incoming = Array.from(fileList);
+    const room = ERNIE_MAX_FILES_PER_MESSAGE - pendingFiles.length;
+    if (room <= 0) {
+      setUploadError(`You can attach up to ${ERNIE_MAX_FILES_PER_MESSAGE} files to one message.`);
+      return;
+    }
+    const toUpload = incoming.slice(0, room);
+    const tooMany = incoming.length > toUpload.length;
+
+    const oversized = toUpload.filter((f) => f.size > ERNIE_MAX_FILE_BYTES);
+    const fitsCap = toUpload.filter((f) => f.size <= ERNIE_MAX_FILE_BYTES);
+
+    setUploadError(
+      oversized.length > 0
+        ? `${oversized.map((f) => f.name).join(", ")} — over the 20MB limit, not uploaded.`
+        : tooMany
+          ? `Only attached the first ${toUpload.length} — up to ${ERNIE_MAX_FILES_PER_MESSAGE} files per message.`
+          : null,
+    );
+
+    if (fitsCap.length === 0) return;
+
+    setUploading(true);
+    try {
+      for (const file of fitsCap) {
+        const path = `${userId}/${storageFileName(file.name)}`;
+        const { error: uploadErr } = await supabase.storage.from(ERNIE_FILES_BUCKET).upload(path, file);
+        if (uploadErr) {
+          setUploadError(`Couldn't upload ${file.name}: ${uploadErr.message}`);
+          continue;
+        }
+        const { data: inserted, error: insertErr } = await supabase
+          .from("ernie_files")
+          .insert({
+            user_id: userId,
+            direction: "upload",
+            file_name: file.name,
+            mime_type: file.type || null,
+            size_bytes: file.size,
+            storage_path: path,
+          })
+          .select("id, file_name, mime_type, size_bytes, storage_path")
+          .single();
+        if (insertErr) {
+          setUploadError(`Uploaded ${file.name} but couldn't record it: ${insertErr.message}`);
+          continue;
+        }
+        setPendingFiles((prev) => [...prev, inserted as ErnieFile]);
+      }
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function removePendingFile(f: ErnieFile) {
+    setPendingFiles((prev) => prev.filter((p) => p.id !== f.id));
+    // Best-effort cleanup — leaving the row/object behind if this fails is
+    // harmless (just an orphaned file only this user could ever see).
+    await supabase.storage.from(ERNIE_FILES_BUCKET).remove([f.storage_path]);
+    await supabase.from("ernie_files").delete().eq("id", f.id);
+  }
+
+  // Polls a still-rendering animate_image job (added 2026-09-15) every few
+  // seconds until it's done or errored — see app/api/ernie/video-jobs/[id]/
+  // route.ts. General/personal chat has no live subscription, so a
+  // finished video is appended to THIS tab's own message list directly
+  // here; inside a Project's shared room, the server already posts a real
+  // ernie_project_messages row the moment the job completes, and the
+  // existing Realtime subscription (see the room-loading effect above)
+  // delivers that to every open tab on its own — adding it again here would
+  // just double it up, so isProjectJob skips the local append in that case.
+  const pollingJobIds = useRef<Set<string>>(new Set());
+  const unmountedRef = useRef(false);
+  useEffect(
+    () => () => {
+      unmountedRef.current = true;
+    },
+    [],
+  );
+
+  function pollVideoJob(jobId: string, isProjectJob: boolean) {
+    if (pollingJobIds.current.has(jobId)) return;
+    pollingJobIds.current.add(jobId);
+
+    const tick = async () => {
+      if (unmountedRef.current) return;
+      try {
+        const res = await fetch(`/api/ernie/video-jobs/${jobId}`);
+        const data = await res.json();
+        if (data.status === "pending") {
+          setTimeout(tick, 8000);
+          return;
+        }
+        pollingJobIds.current.delete(jobId);
+        if (isProjectJob) return;
+        if (data.status === "done" && data.file) {
+          setMessages((prev) => [...prev, { role: "assistant", text: "Here's your animation:", files: [data.file] }]);
+        } else if (data.status === "error") {
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", text: `That animation didn't finish: ${data.error ?? "unknown error"}` },
+          ]);
+        }
+      } catch {
+        setTimeout(tick, 8000);
+      }
+    };
+    setTimeout(tick, 8000);
+  }
+
+  // Resumes polling for any of this user's own still-pending animation jobs
+  // tied to a conversation/room that just loaded — covers reopening a
+  // conversation or reloading the page while a render was mid-flight, since
+  // otherwise nothing would ever check on it again.
+  async function resumePendingVideoJobs(opts: { conversationId?: string; projectId?: string }) {
+    let query = supabase.from("ernie_video_jobs").select("id, project_id").eq("status", "pending");
+    query = opts.projectId ? query.eq("project_id", opts.projectId) : query.eq("conversation_id", opts.conversationId ?? "");
+    const { data } = await query;
+    for (const job of data ?? []) {
+      pollVideoJob(job.id, Boolean(job.project_id));
+    }
+  }
+
+  async function handleDownloadFile(f: ErnieFile) {
+    setDownloadingId(f.id);
+    try {
+      // A file Ernie fetched from elsewhere in the app (source_bucket set)
+      // lives in that original bucket, never copied into ernie-files —
+      // download from wherever it actually is.
+      const bucket = f.source_bucket || ERNIE_FILES_BUCKET;
+      const { data } = await supabase.storage.from(bucket).createSignedUrl(f.storage_path, 300);
+      if (!data?.signedUrl) return;
+      const res = await fetch(data.signedUrl);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      a.download = f.file_name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+    } finally {
+      setDownloadingId(null);
+    }
+  }
+
+  function handleDragEnter(e: React.DragEvent) {
+    e.preventDefault();
+    if (!e.dataTransfer.types.includes("Files")) return;
+    dragCounter.current += 1;
+    setDragActive(true);
+  }
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault();
+  }
+  function handleDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    dragCounter.current = Math.max(0, dragCounter.current - 1);
+    if (dragCounter.current === 0) setDragActive(false);
+  }
+  function handleDrop(e: React.DragEvent) {
+    e.preventDefault();
+    dragCounter.current = 0;
+    setDragActive(false);
+    if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files);
+  }
+
+  // Only people who can manage Projects (the same people who see "+ Add")
+  // can drop into the library — for everyone else the event isn't stopped,
+  // so it falls through to the chat's normal "attach to message" drop.
+  function handleProjectDragEnter(e: React.DragEvent) {
+    if (!canManageProjects || !e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    projectDragCounter.current += 1;
+    setProjectDropActive(true);
+  }
+  function handleProjectDragOver(e: React.DragEvent) {
+    if (!canManageProjects || !e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "copy";
+  }
+  function handleProjectDragLeave(e: React.DragEvent) {
+    if (!canManageProjects || !e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    projectDragCounter.current = Math.max(0, projectDragCounter.current - 1);
+    if (projectDragCounter.current === 0) setProjectDropActive(false);
+  }
+  function handleProjectDrop(e: React.DragEvent) {
+    if (!canManageProjects || !e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    projectDragCounter.current = 0;
+    setProjectDropActive(false);
+    // In case the chat's own overlay was showing when the drag crossed over.
+    dragCounter.current = 0;
+    setDragActive(false);
+    if (projectFileUploading) return;
+    if (e.dataTransfer.files?.length) handleProjectFiles(e.dataTransfer.files);
+  }
+
+  async function send(text: string) {
+    const trimmed = text.trim();
+    if ((!trimmed && pendingFiles.length === 0) || loading) return;
+
+    const filesForThisMessage = pendingFiles;
+
+    setInput("");
+    setPendingFiles([]);
+    setUploadError(null);
+    setError(null);
+    setStatusLabel(null);
+    setLoading(true);
+
+    // A Project's chat is a live shared room, not a private turn-by-turn
+    // conversation — this doesn't optimistically append the message locally
+    // the way General chat does below. Every message, including this
+    // person's own, arrives back through the room's Realtime subscription
+    // (see the room-loading effect above) the moment it's actually inserted,
+    // the same way it does for every other teammate watching the room —
+    // that's what keeps everyone's view of the room honestly in sync rather
+    // than this tab showing a locally-echoed copy that could drift from
+    // what actually got saved.
+    if (activeProjectId) {
+      try {
+        const res = await fetch("/api/ernie/project-chat", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            projectId: activeProjectId,
+            message: trimmed,
+            fileIds: filesForThisMessage.map((f) => f.id),
+          }),
+        });
+
+        const isStream = (res.headers.get("content-type") ?? "").includes("text/event-stream");
+        if (!res.ok || !isStream || !res.body) {
+          const data = await res.json().catch(() => ({}) as { error?: string });
+          setError(data.error ?? "Something went wrong posting that.");
+          return;
+        }
+
+        // Per Chad (2026-09-11): don't show "Ernie is thinking…" in a
+        // Project's room unless he's actually about to respond. The server
+        // runs a cheap "should I reply?" check before anything else and
+        // only ever sends "will_reply" once that comes back yes — an
+        // ordinary message nobody's asking Ernie about just gets "done"
+        // (ernieReplied: false) with no thinking indicator ever shown.
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          let separatorIndex: number;
+          while ((separatorIndex = buffer.indexOf("\n\n")) !== -1) {
+            const rawEvent = buffer.slice(0, separatorIndex);
+            buffer = buffer.slice(separatorIndex + 2);
+            const dataLine = rawEvent.split("\n").find((line) => line.startsWith("data: "));
+            if (!dataLine) continue;
+
+            let event: { type?: string; error?: string; videoJobIds?: string[] };
+            try {
+              event = JSON.parse(dataLine.slice("data: ".length));
+            } catch {
+              continue;
+            }
+
+            if (event.type === "will_reply") {
+              setErnieThinking(true);
+            } else if (event.type === "done") {
+              setErnieThinking(false);
+              for (const jobId of event.videoJobIds ?? []) pollVideoJob(jobId, true);
+            } else if (event.type === "error") {
+              setErnieThinking(false);
+              setError(event.error ?? "Something went wrong posting that.");
+            }
+          }
+        }
+      } catch {
+        setError("Couldn't reach Ernie — check your connection and try again.");
+      } finally {
+        setErnieThinking(false);
+        setLoading(false);
+      }
+      return;
+    }
+
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", text: trimmed, files: filesForThisMessage.length ? filesForThisMessage : undefined },
+    ]);
+
+    try {
+      const res = await fetch("/api/ernie/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          conversationId: conversationId ?? undefined,
+          message: trimmed,
+          fileIds: filesForThisMessage.map((f) => f.id),
+          projectId: activeProjectId ?? undefined,
+        }),
+      });
+
+      // A handful of early failures (not signed in, no message, missing
+      // server API key) come back as a plain JSON error rather than a
+      // stream — everything else is Server-Sent Events, one event per line
+      // prefixed "data: ", ending in a "done" or "error" event.
+      const isStream = (res.headers.get("content-type") ?? "").includes("text/event-stream");
+      if (!res.ok || !isStream || !res.body) {
+        const data = await res.json().catch(() => ({}) as { error?: string });
+        setError(data.error ?? "Something went wrong asking Ernie that.");
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let settled = false;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let separatorIndex: number;
+        while ((separatorIndex = buffer.indexOf("\n\n")) !== -1) {
+          const rawEvent = buffer.slice(0, separatorIndex);
+          buffer = buffer.slice(separatorIndex + 2);
+          const dataLine = rawEvent.split("\n").find((line) => line.startsWith("data: "));
+          if (!dataLine) continue;
+
+          let event: {
+            type?: string;
+            label?: string;
+            text?: string;
+            conversationId?: string;
+            error?: string;
+            outputFileIds?: string[];
+            videoJobIds?: string[];
+          };
+          try {
+            event = JSON.parse(dataLine.slice("data: ".length));
+          } catch {
+            continue;
+          }
+
+          if (event.type === "status" && event.label) {
+            setStatusLabel(event.label);
+          } else if (event.type === "done") {
+            settled = true;
+            let outputFiles: ErnieFile[] | undefined;
+            if (event.outputFileIds && event.outputFileIds.length > 0) {
+              const { data } = await supabase
+                .from("ernie_files")
+                .select("id, file_name, mime_type, size_bytes, storage_path, source_bucket")
+                .in("id", event.outputFileIds);
+              outputFiles = (data as ErnieFile[] | null) ?? undefined;
+            }
+            setMessages((prev) => [...prev, { role: "assistant", text: event.text ?? "", files: outputFiles }]);
+            for (const jobId of event.videoJobIds ?? []) pollVideoJob(jobId, false);
+            if (event.conversationId && event.conversationId !== conversationId) {
+              setConversationId(event.conversationId);
+              // Only the general (non-Project) conversation pointer is
+              // restored on a fresh page load (see the restore effect
+              // above) — a Project tab always starts blank on reload, so
+              // there's nothing useful to persist for it here.
+              if (!activeProjectId) sessionStorage.setItem(ACTIVE_CONVERSATION_KEY, event.conversationId);
+            }
+            refreshHistory();
+          } else if (event.type === "error") {
+            settled = true;
+            setError(event.error ?? "Something went wrong asking Ernie that.");
+          }
+        }
+      }
+
+      if (!settled) {
+        setError("Ernie stopped responding before finishing — try asking again.");
+      }
+    } catch {
+      setError("Couldn't reach Ernie — check your connection and try again.");
+    } finally {
+      setStatusLabel(null);
+      setLoading(false);
+    }
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    send(input);
+  }
+
+  function startNewConversation() {
+    setMessages([]);
+    setConversationId(null);
+    setError(null);
+    // Only touch the general-history restore pointer when actually in
+    // General — see the matching comment in the "done" handler above.
+    if (!activeProjectId) sessionStorage.setItem(ACTIVE_CONVERSATION_KEY, NEW_SENTINEL);
+  }
+
+  async function openConversation(id: string) {
+    if (id === conversationId) return;
+    setError(null);
+    setInitializing(true);
+    try {
+      const res = await fetch(`/api/ernie/conversations/${id}`);
+      if (!res.ok) {
+        setError("Couldn't load that conversation — it may have been removed.");
+        return;
+      }
+      const data = await res.json();
+      setMessages(data.messages ?? []);
+      setConversationId(data.conversation.id);
+      if (!activeProjectId) sessionStorage.setItem(ACTIVE_CONVERSATION_KEY, data.conversation.id);
+    } catch {
+      setError("Couldn't load that conversation — check your connection and try again.");
+    } finally {
+      setInitializing(false);
+    }
+  }
+
+  // Small inline preview box for image AND video attachments — either
+  // direction: something the user attaches to a message, or something
+  // Ernie generates/edits/animates back (images added 2026-09-15 per Chad:
+  // "when we give an image to ernie, or he gives it back to us, i want a
+  // small preview box to display it in that same chat"; video added the
+  // same day alongside animate_image). Below the metadata row (name/size/
+  // download/remove) exactly as before; only image/video mime types get
+  // the extra preview box, everything else (spreadsheets, PDFs, etc.)
+  // renders exactly like it always has.
+  const previewUrlCache = useRef<Map<string, string>>(new Map());
+
+  function MediaPreviewBox({ f, isVideo }: { f: ErnieFile; isVideo: boolean }) {
+    const [previewUrl, setPreviewUrl] = useState<string | null>(previewUrlCache.current.get(f.id) ?? null);
+
+    useEffect(() => {
+      if (previewUrlCache.current.has(f.id)) return;
+      let cancelled = false;
+      (async () => {
+        const bucket = f.source_bucket || ERNIE_FILES_BUCKET;
+        // 1 hour is plenty for a chat someone's actively looking at; this is
+        // a view-only signed URL, same mechanism handleDownloadFile already
+        // uses, just longer-lived since it's just for display, not a
+        // one-shot download click.
+        const { data } = await supabase.storage.from(bucket).createSignedUrl(f.storage_path, 3600);
+        if (!cancelled && data?.signedUrl) {
+          previewUrlCache.current.set(f.id, data.signedUrl);
+          setPreviewUrl(data.signedUrl);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- f.id is the stable identity; re-running on the whole f object would refetch every render
+    }, [f.id]);
+
+    if (!previewUrl) {
+      return (
+        <div className="flex h-28 w-28 items-center justify-center rounded-md border border-[color:var(--e-border)] bg-[color:var(--e-surface)] text-[10px] text-[color:var(--e-faint)]">
+          Loading…
+        </div>
+      );
+    }
+    if (isVideo) {
+      return (
+        // Deliberately wider than the old h-28 w-44 thumbnail (Chad,
+        // 2026-09-15: "clicking fullscreen doesnt work... it opens to
+        // fullscreen very fast then closes it very fast"). At that narrower
+        // width Chrome's native <video> controls collapse Fullscreen/PiP/
+        // playback-speed into a "⋮" overflow popup — and there's a known
+        // Chromium quirk where invoking Fullscreen from inside that popup
+        // (as opposed to a direct control-bar icon) loses the click's user-
+        // activation by the time the popup finishes closing, so the browser
+        // grants fullscreen and then immediately revokes it. Wide enough,
+        // Chrome puts the Fullscreen button directly in the main control
+        // bar instead, which doesn't have this problem.
+        <video
+          src={previewUrl}
+          controls
+          playsInline
+          className="h-40 w-64 rounded-md border border-[color:var(--e-border)] bg-black object-contain"
+        />
+      );
+    }
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- a signed Supabase Storage URL, not a static asset next/image can optimize
+      <img
+        src={previewUrl}
+        alt={f.file_name}
+        title="Click to view full size"
+        className="h-28 w-28 cursor-zoom-in rounded-md border border-[color:var(--e-border)] object-cover"
+        onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}
+      />
+    );
+  }
+
+  function FileChip({
+    f,
+    onRemove,
+    onDownload,
+  }: {
+    f: ErnieFile;
+    onRemove?: () => void;
+    onDownload?: () => void;
+  }) {
+    const isImage = (f.mime_type || "").startsWith("image/");
+    const isVideo = (f.mime_type || "").startsWith("video/");
+    return (
+      <div className="flex flex-col items-start gap-1">
+        {(isImage || isVideo) && <MediaPreviewBox f={f} isVideo={isVideo} />}
+        <div className="flex items-center gap-1.5 rounded-md border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-2 py-1 text-xs text-[color:var(--e-text)]">
+          {!isImage && !isVideo && <span>{fileIcon(f.file_name)}</span>}
+          <span className="max-w-[160px] truncate" title={f.file_name}>
+            {f.file_name}
+          </span>
+          {f.size_bytes != null && <span className="text-[color:var(--e-muted)]">{formatBytes(f.size_bytes)}</span>}
+          {onDownload && (
+            <button
+              type="button"
+              onClick={onDownload}
+              disabled={downloadingId === f.id}
+              className="ml-1 text-[color:var(--e-muted)] hover:text-[color:var(--e-accent-hover)] disabled:opacity-50"
+            >
+              {downloadingId === f.id ? "…" : "Download"}
+            </button>
+          )}
+          {onRemove && (
+            <button type="button" onClick={onRemove} className="ml-1 text-[color:var(--e-faint)] hover:text-red-400">
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`ernie-theme ${fontVariables} mx-auto flex w-full flex-col ${isPopup ? "max-w-full gap-2 p-3" : "max-w-[1600px] gap-3 p-6"}`}
+      style={themeStyle}
+    >
+      {/* Corrected 2026-09-10 per Chad: he never asked for the General /
+          Completed Projects pills resized — he asked for the Projects
+          themselves ("the tasks that are created") to move ABOVE the pill
+          row as larger squares, per his mockup screenshot (a row of blank
+          squares sitting above a General/Test/+New Project pill row). So:
+          the pill row below is back to its original small size, and a new
+          square-tile row above it is where an actual Project (plus
+          "+ New Project" for Administrators/Managers) now lives — Completed
+          Projects is not a Project itself, so it stays a pill, not a
+          square. Hidden in the pop-out window, same reasoning as the
+          history sidebar below: that window is sized for a narrow chat
+          panel.
+
+          Split 2026-09-10, per Chad ("we need to separate them... too
+          convoluted the way it is currently") — this whole tile+pill row
+          now only renders on the Projects page (mode === "projects"). The
+          "General" pill that used to sit here is gone entirely — General
+          is its own page now ("My Ernie AI"), not a tab inside this one. */}
+      {!isPopup && mode === "projects" && (
+        <div className="flex flex-col gap-2">
+          {(projects.length > 0 || canManageProjects) && (
+            <div className="flex flex-wrap gap-3">
+              {projects.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => switchToProject(p.id)}
+                  title={p.description ?? undefined}
+                  className={`flex h-24 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-xl border px-2 text-center font-[family-name:var(--e-font-body)] transition-colors ${
+                    activeProjectId === p.id
+                      ? "border-[color:var(--e-accent)]/60 bg-[color:var(--e-accent)] text-[color:var(--e-on-accent)]"
+                      : "border-[color:var(--e-border)] bg-[color:var(--e-surface)] text-[color:var(--e-text)] hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)]"
+                  }`}
+                >
+                  <svg viewBox="0 0 20 20" fill="none" className="h-6 w-6 shrink-0" aria-hidden="true">
+                    <path
+                      d="M3 5.5C3 4.67157 3.67157 4 4.5 4H8L9.5 6H15.5C16.3284 6 17 6.67157 17 7.5V14.5C17 15.3284 16.3284 16 15.5 16H4.5C3.67157 16 3 15.3284 3 14.5V5.5Z"
+                      fill="currentColor"
+                    />
+                  </svg>
+                  <span className="line-clamp-2 max-w-full break-words text-xs font-semibold leading-tight">
+                    {p.name}
+                  </span>
+                </button>
+              ))}
+              {canManageProjects && (
+                <button
+                  type="button"
+                  onClick={() => setCreateProjectOpen(true)}
+                  title="Create a new Ernie Project"
+                  className="flex h-24 w-24 shrink-0 flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-[color:var(--e-border)] bg-transparent px-2 text-center font-[family-name:var(--e-font-body)] text-[color:var(--e-muted)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)]"
+                >
+                  <span className="text-2xl leading-none">+</span>
+                  <span className="text-xs font-semibold leading-tight">New Project</span>
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            {/* Completed Projects — its own pill, same font/button styling
+                Chad asked for originally when it sat next to General.
+                Admin/Manager only: closing, reopening, and viewing a
+                closed Project are all admin actions (see
+                app/api/ernie/projects/[id]/route.ts). */}
+            {canManageProjects && (
+              <button
+                type="button"
+                onClick={openCompletedProjects}
+                className="rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)]"
+              >
+                Completed Projects
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+    <div
+      ref={panelRef}
+      style={panelHeight != null ? { height: panelHeight } : undefined}
+      // Fixed 2026-09-10 (4th pass, root cause confirmed live via a real
+      // browser session) — this element's height was ALWAYS being computed
+      // correctly by the JS in the layout effect above (confirmed live:
+      // style.height read "586px", the right number for the window at the
+      // time) — but "flex-1" (flex: 1 1 0%) tells the flexbox algorithm to
+      // GROW this item to fill whatever leftover space exists in its
+      // parent's column, which silently overrides an element's own
+      // explicit height. That's why the on-screen box kept ballooning past
+      // its own stated height (observed live: rendered at 1110px while its
+      // own style.height correctly said 586px) — confirmed by forcing
+      // "flex: none" on the live element, which snapped it back to the
+      // correct height instantly. Since this panel's height is always
+      // explicitly computed by the JS above (never left to the flexbox
+      // algorithm to guess), "flex-none" tells it to stop stretching and
+      // just use the height it's told to use.
+      className="relative flex min-h-0 w-full flex-none gap-4 overflow-hidden"
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {/* Split 2026-09-10, per Chad — the Projects page (mode === "projects")
+          has no "General" tab anymore, so there's nothing to fall back to
+          when no Project is selected yet. Rather than show a blank chat
+          (which would look like a stray General conversation), show a
+          simple placeholder until one is picked or created. The panelRef
+          div itself stays permanently mounted either way (see the height
+          layout effect above) — only what's INSIDE it swaps, so the
+          height-measurement logic never has to deal with this ref
+          appearing/disappearing. */}
+      {mode === "projects" && !activeProject ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-2xl border border-[color:var(--e-border)] bg-[color:var(--e-panel)] p-10 text-center shadow-[0_0_0_1px_rgba(0,0,0,0.4)]">
+          <p className="font-[family-name:var(--e-font-body)] text-sm text-[color:var(--e-muted)]">
+            {projects.length > 0
+              ? "Select a Project above to open its conversation and files."
+              : canManageProjects
+                ? "No Projects yet — use “+ New Project” above to create one."
+                : "You don't have access to any Projects yet. An Administrator or Manager can grant you access."}
+          </p>
+        </div>
+      ) : (
+        <>
+      {dragActive && (
+        // When the Project Files panel is showing on the left (w-72 + the
+        // gap-4 between panels = 19rem), start this overlay to its right so
+        // only the chat side lights up — the Files panel has its own drop
+        // overlay (2026-10-02, per Chad: dragging into the chat was
+        // highlighting both sections).
+        <div
+          className={`pointer-events-none absolute inset-y-0 right-0 z-20 flex items-center justify-center rounded-2xl border-2 border-dashed border-[color:var(--e-accent)]/60 bg-[color:var(--e-deep)]/85 ${
+            !isPopup && activeProject ? "left-[19rem]" : "left-0"
+          }`}
+        >
+          <p className="font-[family-name:var(--e-font-body)] text-sm font-medium text-[color:var(--e-text)]">
+            Drop files to attach them
+          </p>
+        </div>
+      )}
+
+      {/* This Project's file library — persistent left-side panel (added
+          2026-09-10, per Chad's red-box annotation: "over here in the red
+          square area... thats where i want the files that have been added
+          to a project to live"), mirroring the right-hand conversation
+          panel's styling. Replaces the earlier "Files (n)" popup. */}
+      {!isPopup && activeProject && (
+        <div
+          className="relative flex w-72 shrink-0 flex-col overflow-hidden rounded-2xl border border-[color:var(--e-border)] bg-[color:var(--e-panel)] shadow-[0_0_0_1px_rgba(0,0,0,0.4)]"
+          onDragEnter={handleProjectDragEnter}
+          onDragOver={handleProjectDragOver}
+          onDragLeave={handleProjectDragLeave}
+          onDrop={handleProjectDrop}
+        >
+          {projectDropActive && (
+            <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center rounded-2xl border-2 border-dashed border-[color:var(--e-accent)] bg-[color:var(--e-deep)]/90 p-6 text-center">
+              <p className="font-[family-name:var(--e-font-body)] text-sm font-medium text-[color:var(--e-accent-hover)]">
+                Drop files to add them to this Project
+              </p>
+            </div>
+          )}
+          <div className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[color:var(--e-accent-dark)] via-[color:var(--e-accent)] to-[color:var(--e-accent-hover)]" />
+          <div className="flex items-center justify-between gap-2 border-b border-[color:var(--e-divider)] px-4 py-4">
+            <h2 className="min-w-0 truncate font-[family-name:var(--e-font-head)] text-sm font-bold tracking-tight text-[color:var(--e-text)]">
+              {activeProject.name} — Files
+            </h2>
+            {canManageProjects && (
+              <button
+                type="button"
+                onClick={() => projectFileInputRef.current?.click()}
+                disabled={projectFileUploading}
+                title="Add files to this Project"
+                className="shrink-0 rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-2.5 py-1 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)] disabled:opacity-50"
+              >
+                {projectFileUploading ? "…" : "+ Add"}
+              </button>
+            )}
+          </div>
+          {projectFileUploadError && (
+            <p className="border-b border-[color:var(--e-divider)] px-4 py-2 text-xs text-red-400">{projectFileUploadError}</p>
+          )}
+          <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto p-3 font-[family-name:var(--e-font-body)]">
+            {projectFilesLoading ? (
+              <p className="px-1 py-3 text-sm text-[color:var(--e-muted)]">Loading…</p>
+            ) : projectFiles.length === 0 ? (
+              <p className="px-1 py-3 text-sm text-[color:var(--e-muted)]">
+                No files yet.{canManageProjects && " Use “+ Add” or drag files here."}
+              </p>
+            ) : (
+              projectFiles.map((f) => (
+                <FileChip
+                  key={f.id}
+                  f={{
+                    id: f.id,
+                    file_name: f.file_name,
+                    mime_type: f.mime_type,
+                    size_bytes: f.size_bytes,
+                    storage_path: f.storage_path,
+                    // A Project's file library lives in its own "ernie-project-files"
+                    // Storage bucket (see handleProjectFiles' upload and
+                    // handleDownloadProjectFile below) — a different bucket than
+                    // ERNIE_FILES_BUCKET ("ernie-files"), which is where chat-attached
+                    // files live. Without this, MediaPreviewBox's `f.source_bucket ||
+                    // ERNIE_FILES_BUCKET` fallback always picked the wrong bucket for a
+                    // Project file, so createSignedUrl silently failed (error, no
+                    // signedUrl) and the preview sat on "Loading…" forever (Chad,
+                    // 2026-09-15: "previews are trying to show in the files section,
+                    // but not working") — Download still worked because
+                    // handleDownloadProjectFile already hardcodes the right bucket.
+                    source_bucket: "ernie-project-files",
+                  }}
+                  onDownload={() => handleDownloadProjectFile(f)}
+                  onRemove={canManageProjects ? () => removeProjectFile(f) : undefined}
+                />
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[color:var(--e-border)] bg-[color:var(--e-panel)] shadow-[0_0_0_1px_rgba(0,0,0,0.4)]">
+        {/* Thin brand-green gradient accent line along the top of the panel */}
+        <div className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[color:var(--e-accent-dark)] via-[color:var(--e-accent)] to-[color:var(--e-accent-hover)]" />
+
+        <div className="flex items-center justify-between border-b border-[color:var(--e-divider)] px-5 py-4">
+          <div className="min-w-0">
+            <h1 className="truncate font-[family-name:var(--e-font-head)] text-lg font-bold tracking-tight text-[color:var(--e-text)]">
+              {activeProject ? activeProject.name : mode === "general" ? "My Ernie AI" : "Ernie AI"}
+            </h1>
+            {activeProject?.description && (
+              <p className="truncate font-[family-name:var(--e-font-body)] text-xs text-[color:var(--e-muted)]">
+                {activeProject.description}
+              </p>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {/* This Project's files now live in the persistent left-side
+                panel (added 2026-09-10, per Chad's red-box annotation)
+                instead of a popup — see that panel below, next to the main
+                chat column. The hidden file input it uses stays mounted
+                here regardless of which panel is showing. */}
+            {activeProject && canManageProjects && (
+              <input
+                ref={projectFileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files?.length) handleProjectFiles(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+            )}
+            {activeProject && canManageProjects && (
+              <button
+                type="button"
+                onClick={openManageAccess}
+                className="rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)]"
+              >
+                Manage Access
+              </button>
+            )}
+            {activeProject && canManageProjects && (
+              <button
+                type="button"
+                onClick={() => closeProject(activeProject.id)}
+                disabled={projectActionBusyId === activeProject.id}
+                title="Move this Project to Completed Projects — reversible any time"
+                className="rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)] disabled:opacity-50"
+              >
+                {projectActionBusyId === activeProject.id ? "Closing…" : "Close Project"}
+              </button>
+            )}
+            {activeProject && canManageProjects && (
+              <button
+                type="button"
+                onClick={() => deleteProjectForever(activeProject)}
+                disabled={projectActionBusyId === activeProject.id}
+                title="Permanently delete this Project — cannot be undone"
+                className="rounded-full border border-red-900/50 bg-[color:var(--e-surface)] px-3 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-medium text-red-400 transition-colors hover:border-red-500/60 hover:text-red-300 disabled:opacity-50"
+              >
+                Delete Project
+              </button>
+            )}
+            {/* Pop Out and "What Ernie Knows About You" only belong to a
+                personal, General conversation — per Chad (2026-09-10, "we
+                only need those to exist in personal conversations with
+                ernie"). Gated on mode === "general" (rather than
+                !activeProject) now that General and Projects are separate
+                pages — the Projects page never shows these, even before a
+                Project is picked. */}
+            {!isPopup && mode === "general" && (
+              <button
+                type="button"
+                onClick={openPopout}
+                title="Open Ernie in a separate window you can keep alongside the rest of the app"
+                className="rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)]"
+              >
+                Pop Out ↗
+              </button>
+            )}
+            {!isPopup && mode === "general" && (
+              <button
+                type="button"
+                onClick={openNotes}
+                className="rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)]"
+              >
+                What Ernie Knows About You
+              </button>
+            )}
+            {/* A Project's chat is one persistent shared room, not a series
+                of conversations to start fresh — this only means anything
+                for General's personal, turn-by-turn chat. */}
+            {!activeProject && (
+              <button
+                type="button"
+                onClick={startNewConversation}
+                className="rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] transition-colors hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)]"
+              >
+                New Conversation
+              </button>
+            )}
+          </div>
+        </div>
+
+        {projectActionError && !completedOpen && (
+          <p className="border-b border-[color:var(--e-divider)] px-5 py-2 text-xs text-red-400">{projectActionError}</p>
+        )}
+
+        {notesOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+            <div className="w-full max-w-lg rounded-xl border border-[color:var(--e-border)] bg-[color:var(--e-modal)] p-5 shadow-xl">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="font-[family-name:var(--e-font-head)] text-base font-bold text-[color:var(--e-text)]">
+                  What Ernie Knows About You
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setNotesOpen(false)}
+                  className="text-[color:var(--e-muted)] hover:text-[color:var(--e-text)]"
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
+              </div>
+              <p className="mb-3 font-[family-name:var(--e-font-body)] text-xs text-[color:var(--e-muted)]">
+                Private to you — only you can see or change this, not even an admin. Ernie updates it on its own
+                as you talk (how you like it to communicate, and relevant context about your role), but you can
+                edit or clear it any time.
+              </p>
+              {notesLoading ? (
+                <p className="py-6 text-center text-sm text-[color:var(--e-muted)]">Loading…</p>
+              ) : (
+                <>
+                  <textarea
+                    value={notesText}
+                    onChange={(e) => setNotesText(e.target.value)}
+                    rows={8}
+                    placeholder="Nothing here yet — Ernie will start filling this in as you chat."
+                    className="w-full resize-none rounded-lg border border-[color:var(--e-border)] bg-[color:var(--e-surface)] p-3 font-[family-name:var(--e-font-body)] text-sm text-[color:var(--e-text)] outline-none focus:border-[color:var(--e-accent)]/50"
+                  />
+                  {notesError && <p className="mt-2 text-xs text-red-400">{notesError}</p>}
+                  <div className="mt-3 flex items-center justify-between">
+                    <button
+                      type="button"
+                      onClick={() => setNotesText("")}
+                      className="font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-muted)] hover:text-[color:var(--e-text)]"
+                    >
+                      Clear
+                    </button>
+                    <div className="flex items-center gap-3">
+                      {notesSavedAt && !notesSaving && (
+                        <span className="font-[family-name:var(--e-font-body)] text-xs text-[color:var(--e-accent)]">Saved</span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={saveNotes}
+                        disabled={notesSaving}
+                        className="rounded-full bg-[color:var(--e-accent)] px-4 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-semibold text-[color:var(--e-on-accent)] transition-opacity hover:opacity-90 disabled:opacity-50"
+                      >
+                        {notesSaving ? "Saving…" : "Save"}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
+
+        {manageAccessOpen && activeProject && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+            <div className="flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-[color:var(--e-border)] bg-[color:var(--e-modal)] p-5 shadow-xl">
+              <div className="mb-1 flex items-center justify-between">
+                <h2 className="font-[family-name:var(--e-font-head)] text-base font-bold text-[color:var(--e-text)]">
+                  {activeProject.name} — Manage Access
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setManageAccessOpen(false)}
+                  className="text-[color:var(--e-muted)] hover:text-[color:var(--e-text)]"
+                  aria-label="Close"
+                >
+                  ✕
+                </button>
+              </div>
+              <p className="mb-3 font-[family-name:var(--e-font-body)] text-xs text-[color:var(--e-muted)]">
+                Checked = this person sees this Project&rsquo;s tab and can chat inside it.
+              </p>
+              {accessError && <p className="mb-2 text-xs text-red-400">{accessError}</p>}
+              <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
+                {accessLoading ? (
+                  <p className="py-6 text-center text-sm text-[color:var(--e-muted)]">Loading…</p>
+                ) : (
+                  accessUsers.map((u) => (
+                    <label
+                      key={u.id}
+                      className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-2 hover:bg-[color:var(--e-surface)]"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={u.has_access}
+                        disabled={accessSavingId === u.id}
+                        onChange={() => toggleUserAccess(u)}
+                        className="h-4 w-4 accent-[color:var(--e-accent)]"
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm text-[color:var(--e-text)]">
+                          {u.full_name || u.email}
+                        </span>
+                        <span className="block truncate font-[family-name:var(--font-plex-mono)] text-xs text-[color:var(--e-faint)]">
+                          {u.email}
+                        </span>
+                      </span>
+                    </label>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-5 font-[family-name:var(--e-font-body)]">
+          {initializing
+            ? null
+            : messages.length === 0 && (
+                <div className="flex flex-col items-center gap-6 py-6 text-center">
+                  {/* eslint-disable-next-line @next/next/no-img-element -- plain img keeps gif animation intact */}
+                  <img
+                    src="/ernie/thinking.gif"
+                    alt=""
+                    className="h-[96px] w-[96px] object-contain"
+                  />
+                  <p className="font-[family-name:var(--e-font-head)] text-xl font-semibold text-[color:var(--e-text)]">
+                    Hi {capitalize(firstName)}, what can I help you with?
+                  </p>
+                </div>
+              )}
+
+          {!initializing &&
+            (() => {
+              let lastAssistantIndex = -1;
+              messages.forEach((m, i) => {
+                if (m.role === "assistant") lastAssistantIndex = i;
+              });
+
+              return messages.map((m, i) => {
+                // Outside a Project, chat is always just "you" and "Ernie" —
+                // every user-role message is your own. Inside a Project's
+                // live room, m.senderId tells own messages (right-aligned,
+                // green, exactly like General) apart from a teammate's
+                // (left-aligned, labeled with their real name) — see
+                // roomRowToChatMessage above.
+                const isOwnMessage = m.role === "user" && (!activeProject || m.senderId === userId);
+
+                if (isOwnMessage) {
+                  return (
+                    <div key={i} className="flex flex-col items-end gap-1.5">
+                      {/* Only shown inside a Project's shared room — General
+                          chat is always just you and Ernie, so a "you" label
+                          on your own bubble would be pure noise there. In a
+                          Project, per Chad ("i dont see my name next to my
+                          chat"), your own messages need the same visible
+                          name treatment a teammate's message gets, not just
+                          the right/green styling. */}
+                      {activeProject && m.senderName && (
+                        <span className="font-[family-name:var(--font-plex-mono)] text-[11px] font-medium tracking-wide text-[color:var(--e-muted)]">
+                          {m.senderName}
+                        </span>
+                      )}
+                      {m.files && m.files.length > 0 && (
+                        <div className="flex max-w-[75%] flex-wrap justify-end gap-1.5">
+                          {m.files.map((f) => (
+                            <FileChip key={f.id} f={f} onDownload={() => handleDownloadFile(f)} />
+                          ))}
+                        </div>
+                      )}
+                      {m.text && (
+                        <div className="max-w-[75%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-[color:var(--e-user-bg)] px-3.5 py-2.5 text-sm text-[color:var(--e-user-text)]">
+                          {m.text}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
+                if (m.role === "user") {
+                  // A teammate's message in this Project's shared room.
+                  return (
+                    <div key={i} className="flex flex-col items-start gap-1.5">
+                      <span className="font-[family-name:var(--font-plex-mono)] text-[11px] font-medium tracking-wide text-[color:var(--e-muted)]">
+                        {m.senderName}
+                      </span>
+                      {m.files && m.files.length > 0 && (
+                        <div className="flex max-w-[75%] flex-wrap gap-1.5">
+                          {m.files.map((f) => (
+                            <FileChip key={f.id} f={f} onDownload={() => handleDownloadFile(f)} />
+                          ))}
+                        </div>
+                      )}
+                      {m.text && (
+                        <div className="max-w-[75%] whitespace-pre-wrap rounded-2xl rounded-tl-sm border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3.5 py-2.5 text-sm text-[color:var(--e-text)]">
+                          {m.text}
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
+                return (
+                  <div key={i} className="flex items-start gap-3">
+                    {i === lastAssistantIndex ? (
+                      // eslint-disable-next-line @next/next/no-img-element -- plain img keeps gif animation intact
+                      <img
+                        src="/ernie/thinking-static.png"
+                        alt=""
+                        className="h-[52px] w-[52px] shrink-0 object-contain"
+                      />
+                    ) : (
+                      <div className="w-[52px] shrink-0" />
+                    )}
+                    <div className="flex flex-1 flex-col gap-1 pt-1">
+                      <span className="font-[family-name:var(--font-plex-mono)] text-[11px] font-medium tracking-wide text-[color:var(--e-muted)]">
+                        Ernie
+                      </span>
+                      <div className="whitespace-pre-wrap rounded-r-xl border-l-2 border-[color:var(--e-accent)]/40 bg-[color:var(--e-ernie-bg)] py-[var(--e-ernie-pad)] pr-[var(--e-ernie-pad)] pl-3 text-sm text-[color:var(--e-ernie-text)]">
+                        {m.text}
+                      </div>
+                      {m.files && m.files.length > 0 && (
+                        <div className="ml-3 flex flex-wrap gap-1.5">
+                          {m.files.map((f) => (
+                            <FileChip key={f.id} f={f} onDownload={() => handleDownloadFile(f)} />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              });
+            })()}
+
+          {/* Outside a Project, every message gets a reply, so `loading`
+              alone is the right signal. Inside a Project's shared room, per
+              Chad, this should only show once Ernie has actually decided to
+              reply — `ernieThinking` (set from the "will_reply" SSE event in
+              send()) is what tracks that; `loading` there just covers the
+              brief "posting your message" window and shouldn't put up a
+              thinking indicator for every message that goes by. */}
+          {(activeProject ? ernieThinking : loading) && (
+            <div className="flex items-center gap-3">
+              {/* eslint-disable-next-line @next/next/no-img-element -- plain img keeps gif animation intact, and lets the src swap between the static frame and the animated gif */}
+              <img src="/ernie/thinking.gif" alt="" className="h-[52px] w-[52px] shrink-0 object-contain" />
+              <p className="text-sm text-[color:var(--e-muted)]">
+                {statusLabel ? `${statusLabel}…` : "Ernie is thinking…"}
+              </p>
+            </div>
+          )}
+
+          {error && <p className="text-sm text-red-400">{error}</p>}
+          <div ref={scrollRef} />
+        </div>
+
+        <div className="border-t border-[color:var(--e-divider)] px-5 py-4 font-[family-name:var(--e-font-body)]">
+          {(pendingFiles.length > 0 || uploading) && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {pendingFiles.map((f) => (
+                <FileChip key={f.id} f={f} onRemove={() => removePendingFile(f)} />
+              ))}
+              {uploading && <span className="px-2 py-1 text-xs text-[color:var(--e-faint)]">Uploading…</span>}
+            </div>
+          )}
+          {uploadError && <p className="mb-2 text-xs text-red-400">{uploadError}</p>}
+
+          <form onSubmit={handleSubmit} className="flex items-center gap-2 rounded-full border border-[color:var(--e-border)] bg-white py-1.5 pl-1.5 pr-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files?.length) handleFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={loading || uploading}
+              title="Attach a file"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-[color:var(--e-accent-dark)] disabled:opacity-50"
+            >
+              +
+            </button>
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              placeholder="Ask Ernie something, or attach a file…"
+              className="flex-1 bg-transparent text-sm text-black placeholder:text-neutral-500 focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={loading || (!input.trim() && pendingFiles.length === 0)}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[color:var(--e-accent)] text-[color:var(--e-on-accent)] transition-colors hover:bg-[color:var(--e-accent-hover)] disabled:cursor-not-allowed"
+              title="Send"
+            >
+              <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
+                <path d="M10 15.5V4.5M10 4.5L4.5 10M10 4.5L15.5 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          </form>
+        </div>
+      </div>
+
+      {/* Conversation list — a personal, General-chat-only feature. A
+          Project's chat is one live shared room now (see the room-loading
+          effect above), not a list of separate conversations to browse, so
+          this whole panel is General-only — same reasoning as Pop Out and
+          "What Ernie Knows About You" above. Also hidden in the pop-out
+          window: that window is sized for a narrow chat panel, and the full
+          history is always one click away in the main window. */}
+      {!isPopup && !activeProject && (
+      <div className="flex w-72 shrink-0 flex-col overflow-hidden rounded-2xl border border-[color:var(--e-border)] bg-[color:var(--e-panel)] shadow-[0_0_0_1px_rgba(0,0,0,0.4)]">
+        <div className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[color:var(--e-accent-dark)] via-[color:var(--e-accent)] to-[color:var(--e-accent-hover)]" />
+        <div className="border-b border-[color:var(--e-divider)] px-4 py-4">
+          <h2 className="font-[family-name:var(--e-font-head)] text-sm font-bold tracking-tight text-[color:var(--e-text)]">
+            Past Conversations
+          </h2>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto font-[family-name:var(--e-font-body)]">
+          {historyLoading ? (
+            <p className="px-4 py-3 text-sm text-[color:var(--e-muted)]">Loading…</p>
+          ) : history.length === 0 ? (
+            <p className="px-4 py-3 text-sm text-[color:var(--e-muted)]">No past conversations yet.</p>
+          ) : (
+            <ul className="py-1">
+              {history.map((c) => (
+                <li key={c.id}>
+                  <button
+                    type="button"
+                    onClick={() => openConversation(c.id)}
+                    className={`flex w-full flex-col items-start gap-0.5 px-4 py-2.5 text-left transition-colors hover:bg-[color:var(--e-surface)] ${
+                      c.id === conversationId ? "bg-[color:var(--e-surface)]" : ""
+                    }`}
+                  >
+                    <span className="w-full truncate text-sm text-[color:var(--e-text)]">
+                      {c.title || "New conversation"}
+                    </span>
+                    <span className="font-[family-name:var(--font-plex-mono)] text-xs text-[color:var(--e-faint)]">
+                      {formatRelative(c.updated_at)}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+      )}
+        </>
+      )}
+
+      {/* Fixed 2026-09-11, per Chad ("clicking the new project button in
+          Ernie Ai doesnt do anything at all") — both of these modals used
+          to live inside the {mode === "projects" && !activeProject ? ... :
+          (<>...</>)} branch above, alongside the rest of the chat UI. That
+          branch only renders its "else" (the <>...</> fragment) when a
+          Project is already active — so with no Project selected yet
+          (exactly when someone would click "+ New Project" for the first
+          time, or open "Completed Projects" before picking one), the
+          fragment containing these modals was never mounted at all. The
+          buttons that open them (both mode === "projects" only, see above)
+          still worked and set the state, but there was nothing in the DOM
+          for that state to render into, so nothing visibly happened.
+          Moving them here — as permanent siblings of that branch, always
+          mounted whenever this component is — means they open regardless
+          of whether a Project happens to be selected. */}
+      {createProjectOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-md rounded-xl border border-[color:var(--e-border)] bg-[color:var(--e-modal)] p-5 shadow-xl">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="font-[family-name:var(--e-font-head)] text-base font-bold text-[color:var(--e-text)]">
+                New Ernie Project
+              </h2>
+              <button
+                type="button"
+                onClick={() => setCreateProjectOpen(false)}
+                className="text-[color:var(--e-muted)] hover:text-[color:var(--e-text)]"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <label className="mb-1 block font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-muted)]">
+              Name
+            </label>
+            <input
+              type="text"
+              value={newProjectName}
+              onChange={(e) => setNewProjectName(e.target.value)}
+              placeholder="e.g. 2027 Distributor Contracts"
+              className="mb-3 w-full rounded-lg border border-[color:var(--e-border)] bg-[color:var(--e-surface)] p-2.5 font-[family-name:var(--e-font-body)] text-sm text-[color:var(--e-text)] outline-none focus:border-[color:var(--e-accent)]/50"
+            />
+            <label className="mb-1 block font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-muted)]">
+              Description (optional)
+            </label>
+            <textarea
+              value={newProjectDescription}
+              onChange={(e) => setNewProjectDescription(e.target.value)}
+              rows={3}
+              placeholder="What this Project is for — helps Ernie use its files well."
+              className="mb-3 w-full resize-none rounded-lg border border-[color:var(--e-border)] bg-[color:var(--e-surface)] p-2.5 font-[family-name:var(--e-font-body)] text-sm text-[color:var(--e-text)] outline-none focus:border-[color:var(--e-accent)]/50"
+            />
+            {createProjectError && <p className="mb-2 text-xs text-red-400">{createProjectError}</p>}
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={createProject}
+                disabled={creatingProject}
+                className="rounded-full bg-[color:var(--e-accent)] px-4 py-1.5 font-[family-name:var(--e-font-body)] text-xs font-semibold text-[color:var(--e-on-accent)] transition-opacity hover:opacity-90 disabled:opacity-50"
+              >
+                {creatingProject ? "Creating…" : "Create Project"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {completedOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="flex max-h-[80vh] w-full max-w-md flex-col rounded-xl border border-[color:var(--e-border)] bg-[color:var(--e-modal)] p-5 shadow-xl">
+            <div className="mb-1 flex items-center justify-between">
+              <h2 className="font-[family-name:var(--e-font-head)] text-base font-bold text-[color:var(--e-text)]">
+                Completed Projects
+              </h2>
+              <button
+                type="button"
+                onClick={() => setCompletedOpen(false)}
+                className="text-[color:var(--e-muted)] hover:text-[color:var(--e-text)]"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="mb-3 font-[family-name:var(--e-font-body)] text-xs text-[color:var(--e-muted)]">
+              Closed Projects — reopen one to bring it back to the active tab row, or delete it for good.
+            </p>
+            {projectActionError && <p className="mb-2 text-xs text-red-400">{projectActionError}</p>}
+            <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
+              {completedLoading ? (
+                <p className="py-6 text-center text-sm text-[color:var(--e-muted)]">Loading…</p>
+              ) : completedProjects.length === 0 ? (
+                <p className="py-6 text-center text-sm text-[color:var(--e-muted)]">No completed Projects.</p>
+              ) : (
+                completedProjects.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center justify-between gap-2 rounded-lg border border-[color:var(--e-border)] bg-[color:var(--e-surface)] px-3 py-2.5"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-sm text-[color:var(--e-text)]">{p.name}</p>
+                      {p.description && <p className="truncate text-xs text-[color:var(--e-muted)]">{p.description}</p>}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => reopenProject(p.id)}
+                        disabled={projectActionBusyId === p.id}
+                        className="rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-modal)] px-2.5 py-1 font-[family-name:var(--e-font-body)] text-xs font-medium text-[color:var(--e-text)] hover:border-[color:var(--e-accent)]/50 hover:text-[color:var(--e-accent-hover)] disabled:opacity-50"
+                      >
+                        {projectActionBusyId === p.id ? "…" : "Reopen"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteProjectForever(p)}
+                        disabled={projectActionBusyId === p.id}
+                        className="rounded-full border border-red-900/50 bg-[color:var(--e-modal)] px-2.5 py-1 font-[family-name:var(--e-font-body)] text-xs font-medium text-red-400 hover:border-red-500/60 hover:text-red-300 disabled:opacity-50"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+    </div>
+  );
+}
