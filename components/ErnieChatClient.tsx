@@ -349,6 +349,14 @@ export default function ErnieChatClient({
   const [dragActive, setDragActive] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const dragCounter = useRef(0);
+  // Drag-and-drop straight into a Project's file library (added 2026-10-02,
+  // per Chad: "i want to be able to drag and drop files here as well, not
+  // just the add button"). Separate from the chat's own drop zone above:
+  // files dropped on the left Files panel go into the Project's library
+  // (same upload as "+ Add"); dropped anywhere else they attach to the
+  // next chat message, as before.
+  const [projectDropActive, setProjectDropActive] = useState(false);
+  const projectDragCounter = useRef(0);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -1144,6 +1152,42 @@ export default function ErnieChatClient({
     if (e.dataTransfer.files?.length) handleFiles(e.dataTransfer.files);
   }
 
+  // Only people who can manage Projects (the same people who see "+ Add")
+  // can drop into the library — for everyone else the event isn't stopped,
+  // so it falls through to the chat's normal "attach to message" drop.
+  function handleProjectDragEnter(e: React.DragEvent) {
+    if (!canManageProjects || !e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    projectDragCounter.current += 1;
+    setProjectDropActive(true);
+  }
+  function handleProjectDragOver(e: React.DragEvent) {
+    if (!canManageProjects || !e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "copy";
+  }
+  function handleProjectDragLeave(e: React.DragEvent) {
+    if (!canManageProjects || !e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    projectDragCounter.current = Math.max(0, projectDragCounter.current - 1);
+    if (projectDragCounter.current === 0) setProjectDropActive(false);
+  }
+  function handleProjectDrop(e: React.DragEvent) {
+    if (!canManageProjects || !e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    projectDragCounter.current = 0;
+    setProjectDropActive(false);
+    // In case the chat's own overlay was showing when the drag crossed over.
+    dragCounter.current = 0;
+    setDragActive(false);
+    if (projectFileUploading) return;
+    if (e.dataTransfer.files?.length) handleProjectFiles(e.dataTransfer.files);
+  }
+
   async function send(text: string) {
     const trimmed = text.trim();
     if ((!trimmed && pendingFiles.length === 0) || loading) return;
@@ -1627,7 +1671,20 @@ export default function ErnieChatClient({
           to a project to live"), mirroring the right-hand conversation
           panel's styling. Replaces the earlier "Files (n)" popup. */}
       {!isPopup && activeProject && (
-        <div className="flex w-72 shrink-0 flex-col overflow-hidden rounded-2xl border border-[color:var(--e-border)] bg-[color:var(--e-panel)] shadow-[0_0_0_1px_rgba(0,0,0,0.4)]">
+        <div
+          className="relative flex w-72 shrink-0 flex-col overflow-hidden rounded-2xl border border-[color:var(--e-border)] bg-[color:var(--e-panel)] shadow-[0_0_0_1px_rgba(0,0,0,0.4)]"
+          onDragEnter={handleProjectDragEnter}
+          onDragOver={handleProjectDragOver}
+          onDragLeave={handleProjectDragLeave}
+          onDrop={handleProjectDrop}
+        >
+          {projectDropActive && (
+            <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center rounded-2xl border-2 border-dashed border-[color:var(--e-accent)] bg-[color:var(--e-deep)]/90 p-6 text-center">
+              <p className="font-[family-name:var(--e-font-body)] text-sm font-medium text-[color:var(--e-accent-hover)]">
+                Drop files to add them to this Project
+              </p>
+            </div>
+          )}
           <div className="h-[3px] w-full shrink-0 bg-gradient-to-r from-[color:var(--e-accent-dark)] via-[color:var(--e-accent)] to-[color:var(--e-accent-hover)]" />
           <div className="flex items-center justify-between gap-2 border-b border-[color:var(--e-divider)] px-4 py-4">
             <h2 className="min-w-0 truncate font-[family-name:var(--e-font-head)] text-sm font-bold tracking-tight text-[color:var(--e-text)]">
@@ -1653,7 +1710,7 @@ export default function ErnieChatClient({
               <p className="px-1 py-3 text-sm text-[color:var(--e-muted)]">Loading…</p>
             ) : projectFiles.length === 0 ? (
               <p className="px-1 py-3 text-sm text-[color:var(--e-muted)]">
-                No files yet.{canManageProjects && " Use “+ Add” to add some."}
+                No files yet.{canManageProjects && " Use “+ Add” or drag files here."}
               </p>
             ) : (
               projectFiles.map((f) => (
