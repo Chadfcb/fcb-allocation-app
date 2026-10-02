@@ -14,6 +14,10 @@ import {
   FILE_CLAIM_CORRECTION,
   FILE_CLAIM_FALLBACK_NOTE,
   fileCaptureFailedNote,
+  findSandboxFileIds,
+  isSandboxResultBlock,
+  isSandboxServerToolName,
+  sandboxCallSummary,
 } from "@/lib/ernie/replyBudget";
 
 // Ernie's chat backend. Open to every signed-in user, read-only: this route
@@ -431,6 +435,7 @@ export async function POST(req: NextRequest) {
         // claim must call a tool (2026-10-02).
         let forceToolNextRound = false;
         let fileCaptureFailures = 0;
+        const capturedAnthropicFileIds = new Set<string>();
         // animate_image only ever starts a render (see lib/ernie/tools.ts,
         // lib/ernie/files.ts) — this is how the client learns which job(s)
         // to start polling app/api/ernie/video-jobs/[id] for, right away
@@ -544,8 +549,7 @@ export async function POST(req: NextRequest) {
             content.some(
               // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
               (b: any) =>
-                b.type === "server_tool_use" &&
-                (b.name === "bash_code_execution" || b.name === "text_editor_code_execution"),
+                b.type === "server_tool_use" && isSandboxServerToolName(b.name),
             )
           ) {
             send({ type: "status", label: "Working in the sandbox" });
@@ -569,14 +573,26 @@ export async function POST(req: NextRequest) {
                 url: b.input?.url,
               });
             }
-            if (b.type === "server_tool_use" && (b.name === "bash_code_execution" || b.name === "text_editor_code_execution")) {
-              await logErnieToolExecution(supabase, user.id, conversationId, b.name, b.input ?? {});
+            // Any sandbox sub-tool (bash, text editor, Python
+            // "code_execution", …) — see isSandboxServerToolName (2026-10-02).
+            if (b.type === "server_tool_use" && isSandboxServerToolName(b.name)) {
+              await logErnieToolExecution(supabase, user.id, conversationId, String(b.name), sandboxCallSummary(b.input)).catch(() => {});
             }
-            if (b.type === "bash_code_execution_tool_result") {
-              const result = b.content;
-              const files = result?.type === "bash_code_execution_result" ? result.content ?? [] : [];
-              for (const f of files) {
-                if (!f?.file_id) continue;
+            // Any sandbox result block, whatever its exact shape — the old
+            // check only recognized "bash_code_execution_tool_result", so
+            // files from other result types were silently dropped (the real
+            // cause of "said he made a file but none attached", 2026-10-02).
+            if (isSandboxResultBlock(b)) {
+              const fileIdsInBlock = findSandboxFileIds(b.content);
+              await logErnieToolExecution(supabase, user.id, conversationId, "sandbox_result", {
+                result_type: b.type,
+                inner_type: b.content?.type ?? null,
+                file_ids: fileIdsInBlock,
+              }).catch(() => {});
+              for (const fileId of fileIdsInBlock) {
+                if (capturedAnthropicFileIds.has(fileId)) continue;
+                capturedAnthropicFileIds.add(fileId);
+                const f = { file_id: fileId };
                 try {
                   const captured = await captureCodeExecutionFile(supabase, user.id, f.file_id);
                   outputFileIds.push(captured.id);
@@ -596,6 +612,34 @@ export async function POST(req: NextRequest) {
                     error: captureErr instanceof Error ? captureErr.message : String(captureErr),
                   }).catch(() => {});
                 }
+              }
+            }
+          }
+
+          // Belt-and-braces (2026-10-02): if a file_id shows up anywhere
+          // else in this round's blocks (a result shape not anticipated
+          // above), still capture it rather than dropping it silently.
+          {
+            const stray = findSandboxFileIds(
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shapes vary
+              content.filter((blk: any) => blk?.type !== "web_search_tool_result" && blk?.type !== "web_fetch_tool_result"),
+            ).filter((id) => !capturedAnthropicFileIds.has(id));
+            for (const fileId of stray) {
+              capturedAnthropicFileIds.add(fileId);
+              try {
+                const captured = await captureCodeExecutionFile(supabase, user.id, fileId);
+                outputFileIds.push(captured.id);
+                await logErnieToolExecution(supabase, user.id, conversationId, "code_execution_file_created", {
+                  anthropic_file_id: fileId,
+                  file_name: captured.file_name,
+                  found_by: "fallback_scan",
+                }).catch(() => {});
+              } catch (captureErr) {
+                fileCaptureFailures++;
+                await logErnieToolExecution(supabase, user.id, conversationId, "code_execution_file_capture_failed", {
+                  anthropic_file_id: fileId,
+                  error: captureErr instanceof Error ? captureErr.message : String(captureErr),
+                }).catch(() => {});
               }
             }
           }

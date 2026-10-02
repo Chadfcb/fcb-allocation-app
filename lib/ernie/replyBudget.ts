@@ -147,3 +147,66 @@ export const FILE_CLAIM_FALLBACK_NOTE =
 export function fileCaptureFailedNote(count: number): string {
   return `\n\nHeads up: I made ${count === 1 ? "a file" : `${count} files`} but ${count === 1 ? "it" : "they"} couldn't be attached to this reply. Please ask me again and I'll rebuild ${count === 1 ? "it" : "them"}.`;
 }
+
+// ---------------------------------------------------------------------------
+// Sandbox file finder (added 2026-10-02 — the REAL fix for "said he made a
+// file but none attached").
+//
+// Root cause, proven 2026-10-02: Ernie WAS building the files — the Claude
+// Console's Files page showed 8 "Yeast Order Summary.docx"-style files made
+// that day, and each request showed the extra inference pass a sandbox run
+// adds. But the routes only recognized one result shape
+// ("bash_code_execution_tool_result" with a "bash_code_execution_result"
+// inside). Anthropic's sandbox can also hand files back in other result
+// blocks (e.g. "code_execution_tool_result" from the Python sub-tool — the
+// same name in Shanelle's 2026-09-23 crash message), and those were silently
+// ignored: nothing logged, nothing attached. Last file the old check caught:
+// 2026-09-23 12:57 (a bash `cp` into $OUTPUT_DIR).
+//
+// Instead of matching one exact shape, walk every server-tool result block
+// and pick up anything carrying a file_id. Web search/fetch results are
+// skipped (they never carry sandbox files).
+// ---------------------------------------------------------------------------
+
+const NON_SANDBOX_RESULT_TYPES = new Set(["web_search_tool_result", "web_fetch_tool_result"]);
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shapes vary by tool version
+export function isSandboxResultBlock(b: any): boolean {
+  return (
+    typeof b?.type === "string" &&
+    b.type.endsWith("_tool_result") &&
+    b.type !== "tool_result" &&
+    !NON_SANDBOX_RESULT_TYPES.has(b.type)
+  );
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- walks arbitrary nested JSON
+export function findSandboxFileIds(node: any, found: string[] = [], depth = 0): string[] {
+  if (!node || typeof node !== "object" || depth > 8) return found;
+  if (Array.isArray(node)) {
+    for (const item of node) findSandboxFileIds(item, found, depth + 1);
+    return found;
+  }
+  if (typeof node.file_id === "string" && node.file_id && !found.includes(node.file_id)) {
+    found.push(node.file_id);
+  }
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "file_id") continue;
+    if (value && typeof value === "object") findSandboxFileIds(value, found, depth + 1);
+  }
+  return found;
+}
+
+// Server tool calls that are the sandbox (any sub-tool name), as opposed to
+// web_search / web_fetch.
+export function isSandboxServerToolName(name: unknown): boolean {
+  return typeof name === "string" && name !== "web_search" && name !== "web_fetch";
+}
+
+// Short, always-insertable summary of a sandbox call for the activity log
+// (full scripts can be long; the old code logged the whole input).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- tool input shape varies
+export function sandboxCallSummary(input: any): Record<string, unknown> {
+  const raw = typeof input === "string" ? input : JSON.stringify(input ?? {});
+  return { input_start: raw.slice(0, 1500), input_length: raw.length };
+}
