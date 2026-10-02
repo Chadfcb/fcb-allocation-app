@@ -95,16 +95,19 @@ export default function DistributorInventoryPage() {
         // NOT the shared sort_order used by Inventory & Allocation /
         // Purchase Orders / Pricing / Distributor Data.
         //
-        // Deliberately NOT filtered on `active` — that flag only controls
-        // whether a distributor shows up as a column on Inventory &
-        // Allocation for the current week. A distributor pulled from that
-        // grid (e.g. between weeks) should still show up here and keep
-        // syncing on-hand numbers from Ekos; track_inventory is the only
-        // gate for this page.
+        // Core distributors ONLY (2026-10-02, per Chad): Matagrano,
+        // Markstein, Valley Wide, Coast, Guardian, Mussetter, Superior.
+        // Not filtered on `active` (the weekly on/off toggle on Inventory &
+        // Allocation) or `track_inventory` — nothing hides a Core
+        // distributor here. Non-Core rows ("Markstein C", "Valley WIde 2",
+        // ...) never show up, and new distributors made on Inventory &
+        // Allocation never appear here because the app can't make one Core
+        // (sql/distributors_core_lockdown.sql). Same rule the Ekos sync
+        // follows (app/api/distributor-inventory/sync/route.ts).
         supabase
           .from("distributors")
           .select("*")
-          .eq("track_inventory", true)
+          .eq("is_core_distributor", true)
           .order("inventory_sort_order", { ascending: true, nullsFirst: false })
           .order("name"),
       ]);
@@ -307,8 +310,8 @@ export default function DistributorInventoryPage() {
           <p className="mb-2 text-sm text-neutral-400">
             Paste distributor on-hand entries (JSON) read from Ekos&apos;s Distributor Inventory
             report, then Sync. Each entry is matched by distributor and product name and upserted
-            into this week only — anything that doesn&apos;t match an active distributor or
-            product is skipped and listed below.
+            into this week only. Only the 7 Core distributors are updated — any other distributor
+            name, or a product that doesn&apos;t match, is skipped and listed below.
           </p>
           <textarea
             value={syncText}

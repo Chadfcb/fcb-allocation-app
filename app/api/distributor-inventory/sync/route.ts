@@ -14,11 +14,17 @@ import { createClient } from "@/lib/supabase/server";
 //
 // Semantics: each entry is upserted into distributor_inventory for the
 // CURRENT week (most recently started) only — this never touches past
-// weeks. A distributor match only requires track_inventory (NOT active —
-// a distributor pulled from this week's Inventory & Allocation grid still
-// syncs its on-hand numbers here); a product match requires active. A
-// name that doesn't match is skipped and reported back in `errors` rather
-// than silently dropped.
+// weeks. A product match requires active. A name that doesn't match is
+// skipped and reported back in `errors` rather than silently dropped.
+//
+// CORE DISTRIBUTORS ONLY (2026-10-02, per Chad): the sync updates ONLY the
+// Core distributors — Matagrano, Markstein, Valley Wide, Coast, Guardian,
+// Mussetter, Superior (distributors.is_core_distributor, which can only be
+// changed in Supabase — see sql/distributors_core_lockdown.sql). Nothing
+// prevents a Core distributor from being updated: not its `active` toggle,
+// not `track_inventory`, not other rows with similar names. Any other
+// distributor name ("Markstein C", "Valleywide", ...) is rejected and
+// reported back, never written. Rules: claude/ekos-sync-reference.md.
 interface SyncEntry {
   distributor: string;
   product: string;
@@ -69,12 +75,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "No week has been started yet." }, { status: 400 });
   }
 
-  // Not filtered on `active` here — that flag only controls whether a
-  // distributor shows up as a column on Inventory & Allocation for the
-  // current week. A distributor pulled from that grid should still accept
-  // synced on-hand numbers here; track_inventory is the only gate.
+  // Core distributors only — see the header comment.
   const [{ data: distributors }, { data: products }] = await Promise.all([
-    supabase.from("distributors").select("id, name").eq("track_inventory", true),
+    supabase.from("distributors").select("id, name").eq("is_core_distributor", true),
     supabase.from("products").select("id, name").eq("active", true),
   ]);
 
@@ -83,6 +86,7 @@ export async function POST(req: NextRequest) {
   );
   const productByName = new Map((products ?? []).map((p) => [p.name.trim().toLowerCase(), p.id]));
 
+  const coreNames = (distributors ?? []).map((d) => d.name).sort().join(", ");
   const errors: string[] = [];
   let syncedCount = 0;
 
@@ -91,7 +95,9 @@ export async function POST(req: NextRequest) {
     const productId = productByName.get((entry.product ?? "").trim().toLowerCase());
 
     if (!distributorId) {
-      errors.push(`Unknown distributor "${entry.distributor}" — skipped.`);
+      errors.push(
+        `"${entry.distributor}" isn't one of the Core distributors (${coreNames}) — skipped.`,
+      );
       continue;
     }
     if (!productId) {
