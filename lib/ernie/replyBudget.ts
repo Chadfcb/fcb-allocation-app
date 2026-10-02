@@ -149,52 +149,61 @@ export function fileCaptureFailedNote(count: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Sandbox file finder (added 2026-10-02 — the REAL fix for "said he made a
-// file but none attached").
+// Sandbox output files (2026-10-02 — exact formats, confirmed from the log).
 //
-// Root cause, proven 2026-10-02: Ernie WAS building the files — the Claude
-// Console's Files page showed 8 "Yeast Order Summary.docx"-style files made
-// that day, and each request showed the extra inference pass a sandbox run
-// adds. But the routes only recognized one result shape
-// ("bash_code_execution_tool_result" with a "bash_code_execution_result"
-// inside). Anthropic's sandbox can also hand files back in other result
-// blocks (e.g. "code_execution_tool_result" from the Python sub-tool — the
-// same name in Shanelle's 2026-09-23 crash message), and those were silently
-// ignored: nothing logged, nothing attached. Last file the old check caught:
-// 2026-09-23 12:57 (a bash `cp` into $OUTPUT_DIR).
+// History: the routes first only recognized "bash_code_execution_tool_result",
+// so files made by the sandbox's Python sub-tool (reported in
+// "code_execution_tool_result") were silently dropped — Ernie said "here's
+// your file" and nothing attached. A same-day stopgap grabbed ANY file_id
+// found anywhere in a round; that also picked up the app's own file ids
+// from Ernie's read_uploaded_file calls, tried to download them from
+// Anthropic, failed (HTTP 400), and showed a false "couldn't be attached"
+// warning. Removed.
 //
-// Instead of matching one exact shape, walk every server-tool result block
-// and pick up anything carrying a file_id. Web search/fetch results are
-// skipped (they never carry sandbox files).
+// The sandbox reports the files it created (whatever it saved to
+// $OUTPUT_DIR) in exactly these two result formats, both confirmed in
+// ernie_tool_execution_log on 2026-10-02:
+//   bash_code_execution_tool_result → content.type "bash_code_execution_result"
+//   code_execution_tool_result      → content.type "code_execution_result"
+// each with content.content = [{ file_id, ... }]. Only those lists are
+// output files. Any OTHER sandbox result format is reported (logged as
+// "sandbox_result_unknown_format") instead of guessed at.
 // ---------------------------------------------------------------------------
 
-const NON_SANDBOX_RESULT_TYPES = new Set(["web_search_tool_result", "web_fetch_tool_result"]);
+const SANDBOX_OUTPUT_FORMATS: Record<string, string> = {
+  bash_code_execution_tool_result: "bash_code_execution_result",
+  code_execution_tool_result: "code_execution_result",
+};
+// Sandbox result blocks that never carry output files.
+const SANDBOX_NO_FILE_RESULTS = new Set(["text_editor_code_execution_tool_result"]);
+const NON_SANDBOX_RESULTS = new Set(["web_search_tool_result", "web_fetch_tool_result"]);
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shapes vary by tool version
-export function isSandboxResultBlock(b: any): boolean {
-  return (
-    typeof b?.type === "string" &&
-    b.type.endsWith("_tool_result") &&
-    b.type !== "tool_result" &&
-    !NON_SANDBOX_RESULT_TYPES.has(b.type)
-  );
+export interface SandboxOutputCheck {
+  isSandboxResult: boolean;
+  fileIds: string[];
+  // Set when this looks like a sandbox result in a format we don't know —
+  // the caller logs it so a new format shows up plainly.
+  unknownFormat: string | null;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- walks arbitrary nested JSON
-export function findSandboxFileIds(node: any, found: string[] = [], depth = 0): string[] {
-  if (!node || typeof node !== "object" || depth > 8) return found;
-  if (Array.isArray(node)) {
-    for (const item of node) findSandboxFileIds(item, found, depth + 1);
-    return found;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shapes vary by tool version
+export function sandboxOutputFiles(b: any): SandboxOutputCheck {
+  const type = typeof b?.type === "string" ? b.type : "";
+  if (!type.endsWith("_tool_result") || type === "tool_result" || NON_SANDBOX_RESULTS.has(type)) {
+    return { isSandboxResult: false, fileIds: [], unknownFormat: null };
   }
-  if (typeof node.file_id === "string" && node.file_id && !found.includes(node.file_id)) {
-    found.push(node.file_id);
-  }
-  for (const [key, value] of Object.entries(node)) {
-    if (key === "file_id") continue;
-    if (value && typeof value === "object") findSandboxFileIds(value, found, depth + 1);
-  }
-  return found;
+  if (SANDBOX_NO_FILE_RESULTS.has(type)) return { isSandboxResult: true, fileIds: [], unknownFormat: null };
+  const expectedInner = SANDBOX_OUTPUT_FORMATS[type];
+  const innerType = b?.content?.type;
+  if (!expectedInner) return { isSandboxResult: true, fileIds: [], unknownFormat: `${type}/${innerType ?? "?"}` };
+  // An error result (e.g. "..._tool_result_error") has no files — not unknown.
+  if (innerType !== expectedInner) return { isSandboxResult: true, fileIds: [], unknownFormat: null };
+  const list = Array.isArray(b.content.content) ? b.content.content : [];
+  const fileIds = list
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+    .map((f: any) => f?.file_id)
+    .filter((id: unknown): id is string => typeof id === "string" && id.length > 0);
+  return { isSandboxResult: true, fileIds, unknownFormat: null };
 }
 
 // Server tool calls that are the sandbox (any sub-tool name), as opposed to

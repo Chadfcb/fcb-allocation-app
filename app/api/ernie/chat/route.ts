@@ -14,8 +14,7 @@ import {
   FILE_CLAIM_CORRECTION,
   FILE_CLAIM_FALLBACK_NOTE,
   fileCaptureFailedNote,
-  findSandboxFileIds,
-  isSandboxResultBlock,
+  sandboxOutputFiles,
   isSandboxServerToolName,
   sandboxCallSummary,
 } from "@/lib/ernie/replyBudget";
@@ -419,7 +418,7 @@ export async function POST(req: NextRequest) {
         const projectSystemPrompt = project
           ? `\n\nThis conversation is happening inside the Ernie Project "${project.name}"${
               project.description ? ` — ${project.description}` : ""
-            }. It has its own file library, separate from anyone's directly-uploaded files: query ernie_project_files (id, project_id, file_name, storage_path, description, mime_type, size_bytes, added_by, created_at) via run_read_only_query, filtered to project_id = '${project.id}', to see what's in it — read the whole table for this project rather than guessing a filter, since it's small. Use get_file_for_download (bucket "ernie-project-files") to actually hand one of those files over as a download. You only ever see the files of a Project you/this user have real access to — RLS enforces that automatically, the same as everywhere else.`
+            }. It has its own file library, separate from anyone's directly-uploaded files: query ernie_project_files (id, project_id, file_name, storage_path, description, mime_type, size_bytes, added_by, created_at) via run_read_only_query, filtered to project_id = '${project.id}', to see what's in it — read the whole table for this project rather than guessing a filter, since it's small. Use read_library_file (bucket "ernie-project-files") to read one of those files without attaching it, and get_file_for_download only when someone wants the file itself handed over as a download. You only ever see the files of a Project you/this user have real access to — RLS enforces that automatically, the same as everywhere else.`
           : "";
 
         let finalText = "";
@@ -578,12 +577,17 @@ export async function POST(req: NextRequest) {
             if (b.type === "server_tool_use" && isSandboxServerToolName(b.name)) {
               await logErnieToolExecution(supabase, user.id, conversationId, String(b.name), sandboxCallSummary(b.input)).catch(() => {});
             }
-            // Any sandbox result block, whatever its exact shape — the old
-            // check only recognized "bash_code_execution_tool_result", so
-            // files from other result types were silently dropped (the real
-            // cause of "said he made a file but none attached", 2026-10-02).
-            if (isSandboxResultBlock(b)) {
-              const fileIdsInBlock = findSandboxFileIds(b.content);
+            // Files the sandbox created — read only from its two official
+            // "output files" result formats (see sandboxOutputFiles in
+            // lib/ernie/replyBudget.ts, 2026-10-02).
+            const sandboxCheck = sandboxOutputFiles(b);
+            if (sandboxCheck.isSandboxResult) {
+              const fileIdsInBlock = sandboxCheck.fileIds;
+              if (sandboxCheck.unknownFormat) {
+                await logErnieToolExecution(supabase, user.id, conversationId, "sandbox_result_unknown_format", {
+                  format: sandboxCheck.unknownFormat,
+                }).catch(() => {});
+              }
               await logErnieToolExecution(supabase, user.id, conversationId, "sandbox_result", {
                 result_type: b.type,
                 inner_type: b.content?.type ?? null,
@@ -612,34 +616,6 @@ export async function POST(req: NextRequest) {
                     error: captureErr instanceof Error ? captureErr.message : String(captureErr),
                   }).catch(() => {});
                 }
-              }
-            }
-          }
-
-          // Belt-and-braces (2026-10-02): if a file_id shows up anywhere
-          // else in this round's blocks (a result shape not anticipated
-          // above), still capture it rather than dropping it silently.
-          {
-            const stray = findSandboxFileIds(
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic content block shapes vary
-              content.filter((blk: any) => blk?.type !== "web_search_tool_result" && blk?.type !== "web_fetch_tool_result"),
-            ).filter((id) => !capturedAnthropicFileIds.has(id));
-            for (const fileId of stray) {
-              capturedAnthropicFileIds.add(fileId);
-              try {
-                const captured = await captureCodeExecutionFile(supabase, user.id, fileId);
-                outputFileIds.push(captured.id);
-                await logErnieToolExecution(supabase, user.id, conversationId, "code_execution_file_created", {
-                  anthropic_file_id: fileId,
-                  file_name: captured.file_name,
-                  found_by: "fallback_scan",
-                }).catch(() => {});
-              } catch (captureErr) {
-                fileCaptureFailures++;
-                await logErnieToolExecution(supabase, user.id, conversationId, "code_execution_file_capture_failed", {
-                  anthropic_file_id: fileId,
-                  error: captureErr instanceof Error ? captureErr.message : String(captureErr),
-                }).catch(() => {});
               }
             }
           }

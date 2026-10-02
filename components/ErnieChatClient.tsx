@@ -1529,6 +1529,101 @@ export default function ErnieChatClient({
     );
   }
 
+  // Small square thumbnail for an image in the Project Files panel —
+  // same signed-URL cache as MediaPreviewBox, just 40px instead of a big
+  // preview block (2026-10-02 redesign).
+  function ProjectFileThumb({ f }: { f: ProjectFile }) {
+    const [url, setUrl] = useState<string | null>(previewUrlCache.current.get(f.id) ?? null);
+    useEffect(() => {
+      if (previewUrlCache.current.has(f.id)) return;
+      let cancelled = false;
+      (async () => {
+        const { data } = await supabase.storage.from("ernie-project-files").createSignedUrl(f.storage_path, 3600);
+        if (!cancelled && data?.signedUrl) {
+          previewUrlCache.current.set(f.id, data.signedUrl);
+          setUrl(data.signedUrl);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- f.id is the stable identity
+    }, [f.id]);
+    if (!url) {
+      return <div className="h-10 w-10 shrink-0 rounded-md border border-[color:var(--e-border)] bg-[color:var(--e-surface)]" />;
+    }
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- a signed Supabase Storage URL
+      <img
+        src={url}
+        alt={f.file_name}
+        title="Click to view full size"
+        className="h-10 w-10 shrink-0 cursor-zoom-in rounded-md border border-[color:var(--e-border)] object-cover"
+        onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+      />
+    );
+  }
+
+  // One row in the Project Files panel (redesigned 2026-10-02, per Chad:
+  // "its terrible to try and see whats in there... I cant even see the x on
+  // some of them... i dont want a scroll bar in it to have to see the x").
+  // Full file name wraps instead of being cut off; size + date underneath;
+  // Download and remove buttons sit in a fixed column on the right so they
+  // can never be pushed out of view. Nothing in a row is wider than the
+  // panel, so there's never a sideways scroll bar.
+  function ProjectFileRow({ f, onRemove }: { f: ProjectFile; onRemove?: () => void }) {
+    const isImage = (f.mime_type || "").startsWith("image/");
+    const added = f.created_at ? new Date(f.created_at).toLocaleDateString() : null;
+    return (
+      <div className="flex w-full min-w-0 items-start gap-2 rounded-lg border border-[color:var(--e-border)] bg-[color:var(--e-surface)] p-2">
+        {isImage ? (
+          <ProjectFileThumb f={f} />
+        ) : (
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-[color:var(--e-panel)] text-lg">
+            {fileIcon(f.file_name)}
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="break-words text-[13px] leading-snug text-[color:var(--e-text)] [overflow-wrap:anywhere]">
+            {f.file_name}
+          </p>
+          <p className="mt-0.5 text-[11px] text-[color:var(--e-muted)]">
+            {[f.size_bytes != null ? formatBytes(f.size_bytes) : null, added].filter(Boolean).join(" · ")}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-col items-center gap-1">
+          <button
+            type="button"
+            onClick={() => handleDownloadProjectFile(f)}
+            disabled={downloadingId === f.id}
+            title="Download"
+            aria-label={`Download ${f.file_name}`}
+            className="flex h-7 w-7 items-center justify-center rounded-md text-[color:var(--e-muted)] hover:bg-[color:var(--e-panel)] hover:text-[color:var(--e-accent-hover)] disabled:opacity-50"
+          >
+            {downloadingId === f.id ? (
+              "…"
+            ) : (
+              <svg viewBox="0 0 20 20" fill="none" className="h-4 w-4" aria-hidden="true">
+                <path d="M10 3v10m0 0l-4-4m4 4l4-4M4 16h12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
+          </button>
+          {onRemove && (
+            <button
+              type="button"
+              onClick={onRemove}
+              title="Remove from this Project"
+              aria-label={`Remove ${f.file_name}`}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-[color:var(--e-faint)] hover:bg-[color:var(--e-panel)] hover:text-red-400"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className={`ernie-theme ${fontVariables} mx-auto flex w-full flex-col ${isPopup ? "max-w-full gap-2 p-3" : "max-w-[1600px] gap-3 p-6"}`}
@@ -1714,7 +1809,7 @@ export default function ErnieChatClient({
           {projectFileUploadError && (
             <p className="border-b border-[color:var(--e-divider)] px-4 py-2 text-xs text-red-400">{projectFileUploadError}</p>
           )}
-          <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto p-3 font-[family-name:var(--e-font-body)]">
+          <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overflow-x-hidden p-3 font-[family-name:var(--e-font-body)]">
             {projectFilesLoading ? (
               <p className="px-1 py-3 text-sm text-[color:var(--e-muted)]">Loading…</p>
             ) : projectFiles.length === 0 ? (
@@ -1723,28 +1818,9 @@ export default function ErnieChatClient({
               </p>
             ) : (
               projectFiles.map((f) => (
-                <FileChip
+                <ProjectFileRow
                   key={f.id}
-                  f={{
-                    id: f.id,
-                    file_name: f.file_name,
-                    mime_type: f.mime_type,
-                    size_bytes: f.size_bytes,
-                    storage_path: f.storage_path,
-                    // A Project's file library lives in its own "ernie-project-files"
-                    // Storage bucket (see handleProjectFiles' upload and
-                    // handleDownloadProjectFile below) — a different bucket than
-                    // ERNIE_FILES_BUCKET ("ernie-files"), which is where chat-attached
-                    // files live. Without this, MediaPreviewBox's `f.source_bucket ||
-                    // ERNIE_FILES_BUCKET` fallback always picked the wrong bucket for a
-                    // Project file, so createSignedUrl silently failed (error, no
-                    // signedUrl) and the preview sat on "Loading…" forever (Chad,
-                    // 2026-09-15: "previews are trying to show in the files section,
-                    // but not working") — Download still worked because
-                    // handleDownloadProjectFile already hardcodes the right bucket.
-                    source_bucket: "ernie-project-files",
-                  }}
-                  onDownload={() => handleDownloadProjectFile(f)}
+                  f={f}
                   onRemove={canManageProjects ? () => removeProjectFile(f) : undefined}
                 />
               ))

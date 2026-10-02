@@ -302,7 +302,7 @@ Sales section tables (all admin-only, folded in from the old FCB Pricing desktop
 
 Two Postgres functions already implement the exact packaging/label bill-of-materials math the Inventory & Allocation page uses — call them from SQL rather than re-deriving the recipe yourself: classify_product_packaging(product_name text) returns one of can_19_2oz/can_16oz/can_12oz/keg_1_2bbl/keg_1_6bbl/tap_handle/unrecognized; packaging_consumed_for_week(week_id uuid) returns a table(item_key, consumed) of total packaging consumed by that week's allocations (every distributor combined — join allocations yourself, filtered by distributor_id, if you need one distributor's share instead).
 
-Any table above with a storage_path column (event_materials, pos_library, pos_label_files, ernie_reference_documents, ernie_project_files today — there may be more as the app grows) is describing a real file, not just data. Querying one of those only tells you the file EXISTS — to actually hand it to the user as a download, call get_file_for_download with that row's storage_path and its bucket (event-materials for event_materials/pos_library, pos-label-files for pos_label_files, reference-docs for ernie_reference_documents, ernie-project-files for ernie_project_files). Whenever someone asks you to pull up, send them, or let them download a specific file — not just tell them about it — that's the tool to reach for.`,
+Any table above with a storage_path column (event_materials, pos_library, pos_label_files, ernie_reference_documents, ernie_project_files today — there may be more as the app grows) is describing a real file, not just data. Querying one of those only tells you the file EXISTS — to READ what's in it, call read_library_file; to actually hand it to the user as a download, call get_file_for_download — both with that row's storage_path and its bucket (event-materials for event_materials/pos_library, pos-label-files for pos_label_files, reference-docs for ernie_reference_documents, ernie-project-files for ernie_project_files). Whenever someone asks you to pull up, send them, or let them download a specific file — not just tell them about it — that's the tool to reach for.`,
     input_schema: {
       type: "object" as const,
       properties: {
@@ -326,7 +326,7 @@ Any table above with a storage_path column (event_materials, pos_library, pos_la
   {
     name: "read_uploaded_file",
     description:
-      "Read the contents of a previously-uploaded (or previously Ernie-produced) file again, by file_id — for when someone refers to a file from earlier in this or a past conversation without re-attaching it, OR a file get_file_for_download just fetched from elsewhere in the app (e.g. an Ernie Project's file library) — call this right after with the same file_id to actually read it, not just hand over a download link. Spreadsheets (.xlsx), CSV, Word documents (.docx), plain text, images, and PDFs all work.",
+      "Read the contents of a previously-uploaded (or previously Ernie-produced) file again, by file_id — for when someone refers to a file from earlier in this or a past conversation without re-attaching it. To read a file that lives elsewhere in the app (an Ernie Project's file library, POS files, reference docs, event materials), use read_library_file instead — it reads without attaching anything. Spreadsheets (.xlsx), CSV, Word documents (.docx), plain text, images, and PDFs all work.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -454,9 +454,9 @@ IMPORTANT: rendering takes 1-3+ minutes — far too long to happen inside this r
     description:
       `Fetch a file that already exists somewhere else in the app — found via run_read_only_query against a table with a storage_path column (event_materials, pos_library, pos_label_files, ernie_reference_documents, ernie_project_files today) — and hand it to the user as a real downloadable attachment in this chat, instead of just describing that it exists. Pass the exact bucket and storage_path from that row.
 
-This only creates the download chip — it does NOT read the file's content for you. If the user (or the task) needs to know what's actually IN the file — a Project's spreadsheet, PDF, or Word doc, not just a link to it — call read_uploaded_file with the same file_id right after this succeeds; skipping that step and only describing the download chip is not the same as having read it.
+ONLY use this when the person actually wants the file handed to them ("send me", "give me", "let me download"). It attaches the file to your reply. It does NOT read the file. To read or use what's IN a file (e.g. pulling numbers out of a Project's Word doc to make something new), use read_library_file instead — that reads it WITHOUT attaching it, so the person only gets the files they asked for.
 
-Whether this succeeds depends entirely on whether YOU (the signed-in user asking) actually have access to that file, same as everywhere else in the app — an error back from this tool means access is restricted, not that anything is broken, so explain it that way rather than guessing at a bug. Use this any time someone asks you to pull up, send, analyze, or let them download a specific file.`,
+Whether this succeeds depends entirely on whether YOU (the signed-in user asking) actually have access to that file, same as everywhere else in the app — an error back from this tool means access is restricted, not that anything is broken, so explain it that way rather than guessing at a bug. Use this when someone asks you to pull up, send, or let them download a specific file.`,
     input_schema: {
       type: "object" as const,
       properties: {
@@ -471,6 +471,33 @@ Whether this succeeds depends entirely on whether YOU (the signed-in user asking
         file_name: {
           type: "string",
           description: "A human-readable file name to show the user. Omit to derive one from the path.",
+        },
+      },
+      required: ["bucket", "path"],
+    },
+  },
+  {
+    // Added 2026-10-02: reading a file used to REQUIRE get_file_for_download
+    // first, which also attached it to the reply — so asking Ernie to make a
+    // .txt from a Project's Word doc came back with the Word doc attached
+    // too. Reading and handing-over are now separate tools.
+    name: "read_library_file",
+    description:
+      `Read the contents of a file that already exists somewhere in the app — found via run_read_only_query against a table with a storage_path column (ernie_project_files, event_materials, pos_library, pos_label_files, ernie_reference_documents) — WITHOUT attaching it to your reply. Pass the exact bucket and storage_path from that row. Use this whenever you need what's IN a file (to answer a question, or to build a new file from it). If the person also wants the file itself handed to them, that's get_file_for_download, separately. Spreadsheets (.xlsx), CSV, Word documents (.docx), plain text, images, and PDFs all work. Access follows the signed-in user's own permissions, same as get_file_for_download.`,
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        bucket: {
+          type: "string",
+          description: 'The storage bucket name, e.g. "ernie-project-files" or "event-materials".',
+        },
+        path: {
+          type: "string",
+          description: "The file's storage_path exactly as returned by the query that found it.",
+        },
+        file_name: {
+          type: "string",
+          description: "The file's name, if known. Omit to derive one from the path.",
         },
       },
       required: ["bucket", "path"],
@@ -1151,6 +1178,7 @@ const TOOL_STATUS_LABELS: Record<string, string> = {
   edit_image: "Editing your image",
   animate_image: "Starting your animation",
   get_file_for_download: "Fetching that file",
+  read_library_file: "Reading that file",
   fetch_url_as_file: "Fetching that from the web",
   browse_website: "Browsing the web",
   stage_uploaded_file_for_query: "Loading your file for analysis",
@@ -3607,6 +3635,35 @@ export async function runErnieTool(
         return await fetchExternalFileForDownload(supabase, currentUser.id, bucket, path, fileName);
       } catch (err) {
         return { error: err instanceof Error ? err.message : "Couldn't fetch that file." };
+      }
+    }
+
+    case "read_library_file": {
+      // Same access path as get_file_for_download (the bucket's own RLS,
+      // via fetchExternalFileForDownload), but the result goes back to
+      // Ernie as content to read — the routes only attach files from
+      // get_file_for_download / edit_spreadsheet / exports, never this.
+      const bucket = typeof input.bucket === "string" ? input.bucket.trim() : "";
+      const path = typeof input.path === "string" ? input.path.trim() : "";
+      if (!bucket || !path) return { error: "Both bucket and path are required." };
+      const {
+        data: { user: readingUser },
+      } = await supabase.auth.getUser();
+      if (!readingUser) return { error: "Not signed in." };
+      try {
+        const fileName = typeof input.file_name === "string" ? input.file_name : undefined;
+        const fetched = await fetchExternalFileForDownload(supabase, readingUser.id, bucket, path, fileName);
+        const { data: file, error } = await supabase
+          .from("ernie_files")
+          .select("id, file_name, mime_type, size_bytes, storage_path, source_bucket")
+          .eq("id", (fetched as { id: string }).id)
+          .maybeSingle();
+        if (error) throw error;
+        if (!file) return { error: "Found the file but couldn't open it to read." };
+        const blocks = await buildFileContentBlocks(supabase, file);
+        return { __contentBlocks: blocks };
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : "Couldn't read that file." };
       }
     }
 
