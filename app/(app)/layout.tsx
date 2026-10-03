@@ -39,7 +39,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const appearance = await getAppearance(profile?.id);
 
   return (
-    <div className={`site-theme ${fontVariables} flex min-h-screen bg-black`}>
+    <div className={`site-theme ${fontVariables} flex min-h-screen`}>
       <SiteAppearanceProvider initial={appearance}>
         <Sidebar
           role={profile?.role}
@@ -47,17 +47,22 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           isSuperAdmin={profile?.is_super_admin}
         />
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="border-b border-neutral-800 bg-neutral-950">
-            <div className="flex items-center justify-end gap-3 px-4 py-3">
+          {/* Facelift (2026-10-03): same buttons and info as before, now as
+              pill buttons sitting on the page instead of a black bar. */}
+          <header>
+            <div className="flex flex-wrap items-center justify-end gap-2.5 px-4 pt-3">
               <CustomizeButton />
               <FeedbackButton />
-              <div className="flex items-center gap-3 text-sm text-neutral-400">
+              <span className="fcb-header-chip text-sm text-neutral-200">
+                <span className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-brand/20 text-xs font-bold uppercase text-neutral-100">
+                  {(profile?.email ?? "?").slice(0, 2)}
+                </span>
                 <span>
                   {profile?.email} <span className="text-neutral-600">·</span>{" "}
-                  <span className="capitalize">{profile?.role}</span>
+                  <span className="capitalize text-neutral-400">{profile?.role}</span>
                 </span>
-                <SignOutButton />
-              </div>
+              </span>
+              <SignOutButton />
             </div>
           </header>
           <main className="mx-auto w-full max-w-[2200px] px-4 py-6">{children}</main>

@@ -4,11 +4,10 @@
    tool, so we keep one consistent look rather than following the OS setting.
    Since 2026-09-29 each person can pick their own look from the Customize
    button in the header; that works by overriding these variables and
-   Tailwind's gray scale per person (see lib/appearance.ts). With no
-   customizing, everything below is exactly the original look. */
+   Tailwind's gray scale per person (see lib/appearance.ts). */
 :root {
-  --background: #000000;
-  --foreground: #e5e5e5;
+  --background: #080b0a;
+  --foreground: #e8edea;
 }
 
 @theme inline {
@@ -25,10 +24,226 @@
   --color-ink: #000000;
 }
 
+/* ===========================================================================
+   FACELIFT (2026-10-03) — the "Hynex" look, per Chad. Design notes:
+   claude/app-facelift-direction.md. RESTYLE ONLY: no page's sections,
+   columns, wording or data change — only how they look.
+
+   1. FCB Dark's gray scale is now a soft green-tinted charcoal instead of
+      pure black/gray. Every page already draws with Tailwind's gray scale
+      (bg-neutral-950, border-neutral-800...), so this one block restyles the
+      whole site. Customize themes still replace these with their own
+      (lib/appearance.ts writes later, so it wins).
+   =========================================================================== */
+:root {
+  --color-black: #080b0a;
+  --color-neutral-50: #f8faf9;
+  --color-neutral-100: #f2f6f4;
+  --color-neutral-200: #e8edea;
+  --color-neutral-300: #d3dad6;
+  --color-neutral-400: #a3ada8;
+  --color-neutral-500: #7c8782;
+  --color-neutral-600: #56615b;
+  --color-neutral-700: #2e3833;
+  --color-neutral-800: #1f2723;
+  --color-neutral-900: #141a17;
+  --color-neutral-950: #0d1210;
+  /* inline-style grays (tone() in lib/appearance.ts) */
+  --tone-171717: #141a17;
+  --tone-191919: #151b18;
+  --tone-2a2a2a: #26302b;
+  --tone-404040: #2e3833;
+  --tone-525252: #56615b;
+  --tone-6b6b68: #6a756f;
+  --tone-737373: #7c8782;
+  --tone-9a9a97: #97a29c;
+  --tone-a3a3a3: #a3ada8;
+  --tone-f5f5f5: #f2f6f4;
+  /* status pill text (soft versions of the same status colors); light
+     themes swap these for darker ones in lib/appearance.ts */
+  --st-green: #a6dc8b;
+  --st-orange: #ffc266;
+  --st-blue: #8ec3ff;
+  --st-gray: #a3ada8;
+  /* the person's accent (FCB green unless they customize). Defined here
+     because Tailwind's @theme inline doesn't publish --color-brand as a
+     variable. */
+  --fcb-accent: var(--site-accent, #6abc46);
+  /* the green "highlight" (sidebar's active item) — follows the accent */
+  --hl-strong: color-mix(in srgb, var(--fcb-accent) 20%, transparent);
+  --hl-soft: color-mix(in srgb, var(--fcb-accent) 6%, transparent);
+  --hl-line: color-mix(in srgb, var(--fcb-accent) 30%, transparent);
+  --hl-glow: color-mix(in srgb, var(--fcb-accent) 12%, transparent);
+  /* the faint hue on every card */
+  --card-hue-a: color-mix(in srgb, var(--fcb-accent) 10%, transparent);
+  --card-hue-b: color-mix(in srgb, var(--fcb-accent) 3.1%, transparent);
+  --card-line: color-mix(in srgb, var(--fcb-accent) 16%, transparent);
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* 2. Font + page background (signed-in pages). The Customize "font" choice
+   still overrides this (its rule comes later). */
+.site-theme {
+  font-family: var(--font-jakarta), Arial, Helvetica, sans-serif;
+  font-variant-numeric: tabular-nums;
+  background-color: var(--color-black);
+  background-image:
+    radial-gradient(900px 520px at 75% -10%, color-mix(in srgb, var(--fcb-accent) 10%, transparent), transparent 70%),
+    radial-gradient(700px 500px at 0% 100%, color-mix(in srgb, var(--fcb-accent) 6%, transparent), transparent 70%);
+  background-attachment: fixed;
+}
+
+/* 3. Cards — every panel/table box (rounded + border-neutral-800) becomes a
+   rounded card with the faint green hue fading from its top-left corner. */
+.site-theme main :is(.rounded-lg, .rounded-xl).border-neutral-800 {
+  border-radius: 20px;
+  border-color: var(--card-line);
+  background-image: linear-gradient(155deg, var(--card-hue-a) 0%, var(--card-hue-b) 35%, rgba(255, 255, 255, 0.015) 70%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* 4. Buttons and inputs — pill shaped, like the reference's top bar. */
+.site-theme :is(button, a).rounded-md.border,
+.site-theme :is(input, select).rounded-md,
+.site-theme :is(input, select).rounded {
+  border-radius: 999px;
+}
+.site-theme textarea.rounded-md {
+  border-radius: 14px;
+}
+
+/* 5. The main call-to-action buttons (white "Go to Inventory & Allocation"
+   style) use the sidebar's green highlight instead of a solid white block. */
+.site-theme main :is(a, button).bg-white {
+  border-radius: 999px;
+  background-color: transparent;
+  background-image: linear-gradient(90deg, var(--hl-strong), var(--hl-soft));
+  color: #f2f7f0;
+  box-shadow: inset 0 0 0 1px var(--hl-line), 0 0 24px var(--hl-glow);
+}
+.site-theme main :is(a, button).bg-white:hover {
+  background-image: linear-gradient(90deg, color-mix(in srgb, var(--fcb-accent) 28%, transparent), var(--hl-soft));
+}
+
+/* 6. Status tags and status dropdowns (Paid / Pending / Ordered / Not
+   Ordered / Approved / Delivered) — soft tinted pills in the SAME colors
+   instead of bright solid blocks. Pages color these inline with the status
+   color + black text; both the server's and the browser's spelling of that
+   inline style are matched. Only spans/selects with black text: color
+   pickers (distributor color swatches) and dropdown option lists keep their
+   true colors. */
+.site-theme :is(span, select):is([style*="color:#000000"], [style*="color: rgb(0, 0, 0)"]) {
+  border-radius: 999px;
+  border-color: transparent;
+}
+.site-theme :is(span, select):is([style*="color:#000000"], [style*="color: rgb(0, 0, 0)"]):is([style*="background-color:#00ff00"], [style*="background-color: rgb(0, 255, 0)"]) {
+  background-color: color-mix(in srgb, #6abc46 16%, var(--color-neutral-950)) !important;
+  color: var(--st-green) !important;
+}
+.site-theme :is(span, select):is([style*="color:#000000"], [style*="color: rgb(0, 0, 0)"]):is([style*="background-color:#ff9900"], [style*="background-color: rgb(255, 153, 0)"]) {
+  background-color: color-mix(in srgb, #ff9900 16%, var(--color-neutral-950)) !important;
+  color: var(--st-orange) !important;
+}
+.site-theme :is(span, select):is([style*="color:#000000"], [style*="color: rgb(0, 0, 0)"]):is([style*="background-color:#3399ff"], [style*="background-color: rgb(51, 153, 255)"]) {
+  background-color: color-mix(in srgb, #3399ff 16%, var(--color-neutral-950)) !important;
+  color: var(--st-blue) !important;
+}
+.site-theme :is(span, select):is([style*="color:#000000"], [style*="color: rgb(0, 0, 0)"]):is([style*="background-color:#525252"], [style*="background-color: rgb(82, 82, 82)"]) {
+  background-color: color-mix(in srgb, #ffffff 7%, var(--color-neutral-950)) !important;
+  color: var(--st-gray) !important;
+}
+
+/* 7. Sidebar (components/Sidebar.tsx) — the locked-in floating panel. */
+.fcb-sidebar {
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.015));
+}
+.fcb-nav-label {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  color: var(--color-neutral-500);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.fcb-nav-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  color: var(--color-neutral-400);
+  font-size: 14px;
+  font-weight: 500;
+  text-align: left;
+}
+.fcb-nav-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--color-neutral-100);
+}
+.fcb-nav-item.is-active {
+  background: linear-gradient(90deg, var(--hl-strong), var(--hl-soft));
+  color: #f2f7f0;
+  box-shadow: inset 0 0 0 1px var(--hl-line), 0 0 24px var(--hl-glow);
+}
+.fcb-nav-item.is-active .fcb-nav-icon {
+  color: color-mix(in srgb, var(--fcb-accent) 70%, #ffffff);
+}
+.fcb-nav-sub-group {
+  margin-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+.fcb-nav-sub {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  margin-left: -1px;
+  padding: 7px 12px 7px 18px;
+  border-left: 2px solid transparent;
+  border-radius: 0 10px 10px 0;
+  color: var(--color-neutral-500);
+  font-size: 13px;
+  text-align: left;
+}
+.fcb-nav-sub:hover {
+  color: var(--color-neutral-100);
+}
+.fcb-nav-sub.is-parent {
+  color: var(--color-neutral-400);
+  font-weight: 600;
+}
+.fcb-nav-sub.is-active {
+  border-left-color: var(--fcb-accent);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--fcb-accent) 18%, transparent), color-mix(in srgb, var(--fcb-accent) 3%, transparent));
+  color: #f2f7f0;
+  font-weight: 600;
+}
+
+/* 8. Header — pill buttons sit right on the page (no bar). */
+.fcb-header-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 14px 0 5px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 /* Firefox scrollbar styling to match the theme */

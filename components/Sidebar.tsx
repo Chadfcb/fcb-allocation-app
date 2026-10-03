@@ -428,6 +428,13 @@ export default function Sidebar({
 }) {
   const pathname = usePathname();
   const [hidden, setHidden] = useState(false);
+  // Facelift (2026-10-03): the MAIN and DEPARTMENTS group labels can fold
+  // their group away. Not remembered — they start open on every page load.
+  const [mainOpen, setMainOpen] = useState(true);
+  const [departmentsOpen, setDepartmentsOpen] = useState(true);
+  // Admins see a small Ekos sync status card at the bottom of the sidebar
+  // (latest automatic/Run now/pasted runs from sync_runs, admin-readable).
+  const [ekosStatus, setEkosStatus] = useState<{ title: string; detail: string; color: string } | null>(null);
   const [ernieExpanded, setErnieExpanded] = useState(true);
   const [financeExpanded, setFinanceExpanded] = useState(true);
   const [operationsExpanded, setOperationsExpanded] = useState(true);
@@ -574,6 +581,49 @@ export default function Sidebar({
   // feature part — only clicking the new button does — so the trail
   // (section → page → button) stays lit until they actually find it.
   // Parent sections pick this up automatically via sectionShowsNew().
+  useEffect(() => {
+    if (role !== "admin") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("sync_runs")
+          .select("source, status, started_at")
+          .like("source", "ekos_%")
+          .order("started_at", { ascending: false })
+          .limit(10);
+        if (cancelled || error || !data || data.length === 0) return;
+        // Latest run of each Ekos source.
+        const latest = new Map<string, { status: string; started_at: string }>();
+        for (const r of data as { source: string; status: string; started_at: string }[]) {
+          if (!latest.has(r.source)) latest.set(r.source, r);
+        }
+        const runs = [...latest.values()];
+        const newest = runs.reduce((a, b) => (a.started_at > b.started_at ? a : b));
+        const when = new Date(newest.started_at).toLocaleString("en-US", {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        });
+        const failed = runs.some((r) => r.status === "failed");
+        const issues = runs.some((r) => r.status === "issues");
+        setEkosStatus(
+          failed
+            ? { title: "Ekos sync failed", detail: `Last run ${when}. Open Ekos Sync for details.`, color: "#f87171" }
+            : issues
+              ? { title: "Ekos sync needs a look", detail: `Last run ${when}. Open Ekos Sync for details.`, color: "#ffc266" }
+              : { title: "Ekos sync healthy", detail: `Last run ${when}. Runs weekdays 4–5am.`, color: "var(--fcb-accent)" },
+        );
+      } catch {
+        // No status card if it can't be read — never breaks the sidebar.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [role, supabase]);
+
   function showsNew(id: string) {
     if (NEW_SIDEBAR_IDS.includes(id) && !seenNew[id]) return true;
     return featureIdsOnPage(id).some((featureId) => !seenNew[featureId]);
@@ -753,29 +803,27 @@ export default function Sidebar({
     return hasSection(role, sections, section, isSuperAdmin);
   }
 
-  // Site-wide active-page highlight: a green left border + green text
-  // (FCB's brand green, #6ABC46, sampled from the hop cone in the company
-  // logo) for whichever page is currently open, applied identically to
-  // every nav link — Dashboard, Ernie AI, every Operations/Sales item, the
-  // POS > Labels brand/size tree, Events Calendar, Users, and Tasks.
-  // border-l-2 is always reserved (transparent when inactive) so the text
-  // doesn't shift left/right as a link becomes active.
-  const linkClass = (href: string) =>
-    `flex items-center gap-2 rounded border-l-2 px-2 py-1.5 ${
-      isActive(href)
-        ? "border-brand bg-neutral-900 font-semibold text-brand"
-        : "border-transparent text-neutral-400 hover:bg-neutral-900 hover:text-white"
-    }`;
+  // Facelift (2026-10-03, per Chad — "the sidebar looks great, lets lock
+  // that in"): the floating rounded panel from the Hynex reference. Same
+  // links, same access rules, same expand/collapse and New! logic as before
+  // — only the look changed. The current page gets the soft green highlight
+  // (top-level links) or a green left bar (links inside a section). Styles:
+  // the .fcb-* classes in app/globals.css.
+  const topLinkClass = (href: string) => `fcb-nav-item ${isActive(href) ? "is-active" : ""}`;
+  const linkClass = (href: string) => `fcb-nav-sub ${isActive(href) ? "is-active" : ""}`;
+  const parentClass = (open: boolean) => `fcb-nav-item ${open ? "text-neutral-100" : ""}`;
 
   if (hidden) {
     return (
-      <div className="shrink-0 border-r border-neutral-800 bg-neutral-950 p-2">
+      <div className="shrink-0 p-3">
         <button
           type="button"
           onClick={() => setHidden(false)}
-          className="whitespace-nowrap rounded-md border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-900"
+          aria-label="Show menu"
+          title="Show menu"
+          className="fcb-sidebar flex h-11 w-11 items-center justify-center text-neutral-300 hover:text-white"
         >
-          Show menu
+          <IconChevrons dir="right" />
         </button>
       </div>
     );
@@ -826,406 +874,593 @@ export default function Sidebar({
     ...(showUpcTree ? ["section:upcs", ...upcDescendantIds()] : []),
   ];
 
-  return (
-    <div className="flex w-56 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950 p-3">
-      <div className="mb-4 flex items-center justify-between gap-2">
-        <span className="font-semibold text-neutral-100">FCB Data</span>
+  const showMainGroup = role === "admin" || showErnie || showTasks;
+  const showDepartments =
+    visibleFinance.length > 0 ||
+    visibleOperations.length > 0 ||
+    showPosTree ||
+    showUpcTree ||
+    visibleSales.length > 0 ||
+    showPosSection ||
+    visibleCalendars.length > 0;
+
+  // Right side of a parent row: its New! tag (if any) + the open/closed arrow.
+  const parentRight = (isNew: boolean, open: boolean) => (
+    <span className="ml-auto flex items-center gap-2">
+      {isNew && <NewBadge inline />}
+      <IconChevron open={open} />
+    </span>
+  );
+
+  // One brand -> sizes branch of the Labels / UPC's trees.
+  const brandTree = (brands: { treeKey: string; label: string; sizes: { href: string; label: string }[] }[]) =>
+    brands.map((brand) => (
+      <div key={brand.treeKey} className="flex flex-col">
         <button
           type="button"
-          onClick={() => setHidden(true)}
-          className="rounded-md border border-neutral-700 px-2 py-1 text-xs text-neutral-400 hover:bg-neutral-900"
+          onClick={() => {
+            togglePosTree(brand.treeKey);
+            dismissNew(`section:${brand.treeKey}`);
+          }}
+          className="fcb-nav-sub"
         >
-          Hide
+          {brand.label}
+          {parentRight(
+            sectionShowsNew(`section:${brand.treeKey}`, brand.sizes.map((s) => s.href)),
+            !!posTreeExpanded[brand.treeKey],
+          )}
         </button>
+        {posTreeExpanded[brand.treeKey] && (
+          <div className="fcb-nav-sub-group">
+            {brand.sizes.map((s) => (
+              <Link key={s.href} href={s.href} className={linkClass(s.href)} onClick={() => dismissNew(s.href)}>
+                {s.label}
+                {showsNew(s.href) && <NewBadge />}
+              </Link>
+            ))}
+          </div>
+        )}
       </div>
+    ));
 
-      <nav className="flex flex-col gap-1 text-sm">
-        {role === "admin" && (
-          <Link href="/dashboard" className={linkClass("/dashboard")} onClick={() => dismissNew("/dashboard")}>
-            Dashboard
-            {showsNew("/dashboard") && <NewBadge />}
+  return (
+    <div className="flex w-[17rem] shrink-0 flex-col p-3 pr-0">
+      <div className="fcb-sidebar flex flex-1 flex-col gap-5 px-3.5 py-4">
+        <div className="flex items-center justify-between gap-2 pl-2 pr-1">
+          <div className="flex items-center gap-2.5">
+            <div
+              className="flex h-[34px] w-[34px] items-center justify-center rounded-[11px] border"
+              style={{
+                background: "color-mix(in srgb, var(--fcb-accent) 16%, transparent)",
+                borderColor: "color-mix(in srgb, var(--fcb-accent) 35%, transparent)",
+              }}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-brand" aria-hidden="true">
+                <circle cx="12" cy="12" r="8" />
+                <path d="M12 4a8 8 0 0 1 8 8" />
+              </svg>
+            </div>
+            <div className="flex flex-col leading-tight">
+              <span className="text-base font-bold tracking-tight text-neutral-100">FCB Data</span>
+              <span className="text-[11px] text-neutral-500">Full Circle Brewing</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setHidden(true)}
+            aria-label="Hide menu"
+            title="Hide menu"
+            className="flex h-[30px] w-[30px] items-center justify-center rounded-[10px] border border-white/10 bg-white/[0.03] text-neutral-400 hover:text-white"
+          >
+            <IconChevrons dir="left" />
+          </button>
+        </div>
+
+        <nav className="flex flex-col gap-5">
+          {showMainGroup && (
+            <div className="flex flex-col gap-1.5">
+              <button type="button" onClick={() => setMainOpen((v) => !v)} className="fcb-nav-label">
+                <span>Main</span>
+                <IconChevron open={mainOpen} small />
+              </button>
+              {mainOpen && (
+                <>
+                  {role === "admin" && (
+                    <Link href="/dashboard" className={topLinkClass("/dashboard")} onClick={() => dismissNew("/dashboard")}>
+                      <IconHome />
+                      Dashboard
+                      {showsNew("/dashboard") && <NewBadge />}
+                    </Link>
+                  )}
+
+                  {showErnie && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          toggleErnie();
+                          dismissNew("section:ernie");
+                        }}
+                        className={parentClass(ernieExpanded)}
+                      >
+                        <IconSparkle />
+                        Ernie AI
+                        {parentRight(
+                          sectionShowsNew(
+                            "section:ernie",
+                            ERNIE_LINKS.map((link) => link.href),
+                          ),
+                          ernieExpanded,
+                        )}
+                      </button>
+                      {ernieExpanded && (
+                        <div className="fcb-nav-sub-group">
+                          {ERNIE_LINKS.map((link) => (
+                            <Link
+                              key={link.href}
+                              href={link.href}
+                              className={linkClass(link.href)}
+                              onClick={() => dismissNew(link.href)}
+                            >
+                              {link.label}
+                              {showsNew(link.href) && <NewBadge />}
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* Tasks (formerly "Projects") — the company-wide
+                      action/directive tracker, gated by the "tasks" section. */}
+                  {showTasks && (
+                    <Link href="/tasks" className={topLinkClass("/tasks")} onClick={() => dismissNew("/tasks")}>
+                      <IconCheck />
+                      Tasks
+                      {showsNew("/tasks") && <NewBadge />}
+                    </Link>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {showDepartments && (
+            <div className="flex flex-col gap-1.5">
+              <button type="button" onClick={() => setDepartmentsOpen((v) => !v)} className="fcb-nav-label">
+                <span>Departments</span>
+                <IconChevron open={departmentsOpen} small />
+              </button>
+              {departmentsOpen && (
+                <>
+                  {visibleFinance.length > 0 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          toggleFinance();
+                          dismissNew("section:finance");
+                        }}
+                        className={parentClass(financeExpanded)}
+                      >
+                        <IconChart />
+                        Finance
+                        {parentRight(
+                          sectionShowsNew("section:finance", visibleFinance.map((link) => link.href)),
+                          financeExpanded,
+                        )}
+                      </button>
+                      {financeExpanded && (
+                        <div className="fcb-nav-sub-group">
+                          {visibleFinance.map((link) => (
+                            <Link
+                              key={link.href}
+                              href={link.href}
+                              className={linkClass(link.href)}
+                              onClick={() => dismissNew(link.href)}
+                            >
+                              {link.label}
+                              {showsNew(link.href) && <NewBadge />}
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {(visibleOperations.length > 0 || showPosTree || showUpcTree) && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          toggleOperations();
+                          dismissNew("section:operations");
+                        }}
+                        className={parentClass(operationsExpanded)}
+                      >
+                        <IconLayers />
+                        Operations
+                        {parentRight(sectionShowsNew("section:operations", operationsDescendantIds), operationsExpanded)}
+                      </button>
+                      {operationsExpanded && (
+                        <div className="fcb-nav-sub-group">
+                          {opsBeforeLabels.map((link) => (
+                            <Link
+                              key={link.href}
+                              href={link.href}
+                              className={linkClass(link.href)}
+                              onClick={() => dismissNew(link.href)}
+                            >
+                              {link.label}
+                              {showsNew(link.href) && <NewBadge />}
+                            </Link>
+                          ))}
+
+                          {/* Labels — a sub-category of Operations (moved
+                              from POS 2026-09-05, per Chad), gated by the
+                              'pos_labels' section. */}
+                          {showPosTree && (
+                            <div className="flex flex-col">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  togglePosTree("pos-labels");
+                                  dismissNew("section:pos-labels");
+                                }}
+                                className="fcb-nav-sub is-parent"
+                              >
+                                Labels
+                                {parentRight(
+                                  sectionShowsNew("section:pos-labels", labelsDescendantIds()),
+                                  !!posTreeExpanded["pos-labels"],
+                                )}
+                              </button>
+                              {posTreeExpanded["pos-labels"] && (
+                                <div className="fcb-nav-sub-group">{brandTree(POS_LABEL_BRANDS)}</div>
+                              )}
+                            </div>
+                          )}
+
+                          {/* UPC's — brand -> size tree set up exactly like
+                              Labels (2026-09-05, per Chad). */}
+                          {showUpcTree && (
+                            <div className="flex flex-col">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  togglePosTree("upcs");
+                                  dismissNew("section:upcs");
+                                }}
+                                className="fcb-nav-sub is-parent"
+                              >
+                                UPC&apos;s
+                                {parentRight(
+                                  sectionShowsNew("section:upcs", upcDescendantIds()),
+                                  !!posTreeExpanded["upcs"],
+                                )}
+                              </button>
+                              {posTreeExpanded["upcs"] && <div className="fcb-nav-sub-group">{brandTree(UPC_BRANDS)}</div>}
+                            </div>
+                          )}
+
+                          {opsAfterLabels.map((link) => (
+                            <Link
+                              key={link.href}
+                              href={link.href}
+                              className={linkClass(link.href)}
+                              onClick={() => dismissNew(link.href)}
+                            >
+                              {link.label}
+                              {showsNew(link.href) && <NewBadge />}
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {visibleSales.length > 0 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          toggleSales();
+                          dismissNew("section:sales");
+                        }}
+                        className={parentClass(salesExpanded)}
+                      >
+                        <IconCart />
+                        Sales
+                        {parentRight(sectionShowsNew("section:sales", visibleSales.map((link) => link.href)), salesExpanded)}
+                      </button>
+                      {salesExpanded && (
+                        <div className="fcb-nav-sub-group">
+                          {visibleSales.map((link) => (
+                            <Link
+                              key={link.href}
+                              href={link.href}
+                              className={linkClass(link.href)}
+                              onClick={() => dismissNew(link.href)}
+                            >
+                              {link.label}
+                              {showsNew(link.href) && <NewBadge />}
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* POS — its own top-level section (restored 2026-09-05,
+                      per Chad), between Sales and Calendars. */}
+                  {showPosSection && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          togglePos();
+                          dismissNew("section:pos");
+                        }}
+                        className={parentClass(posExpanded)}
+                      >
+                        <IconCard />
+                        POS
+                        {parentRight(sectionShowsNew("section:pos", visiblePos.map((link) => link.href)), posExpanded)}
+                      </button>
+                      {posExpanded && (
+                        <div className="fcb-nav-sub-group">
+                          {visiblePos.map((link) => (
+                            <Link
+                              key={link.href}
+                              href={link.href}
+                              className={linkClass(link.href)}
+                              onClick={() => dismissNew(link.href)}
+                            >
+                              {link.label}
+                              {showsNew(link.href) && <NewBadge />}
+                            </Link>
+                          ))}
+                          {visiblePos.length === 0 && (
+                            <p className="px-[18px] py-1.5 text-xs leading-relaxed text-neutral-600">Nothing here yet.</p>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {visibleCalendars.length > 0 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          toggleCalendars();
+                          dismissNew("section:calendars");
+                        }}
+                        className={parentClass(calendarsExpanded)}
+                      >
+                        <IconCalendar />
+                        Calendars
+                        {parentRight(
+                          sectionShowsNew("section:calendars", visibleCalendars.map((link) => link.href)),
+                          calendarsExpanded,
+                        )}
+                      </button>
+                      {calendarsExpanded && (
+                        <div className="fcb-nav-sub-group">
+                          {visibleCalendars.map((link) => (
+                            <Link
+                              key={link.href}
+                              href={link.href}
+                              className={linkClass(link.href)}
+                              onClick={() => dismissNew(link.href)}
+                            >
+                              {link.label}
+                              {showsNew(link.href) && <NewBadge />}
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Admin — added 2026-10-03, per Chad (Users, Audit Log, Ekos
+              Sync). The section label is its open/close switch. */}
+          {visibleAdmin.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  toggleAdmin();
+                  dismissNew("section:admin");
+                }}
+                className="fcb-nav-label"
+              >
+                <span>Admin</span>
+                <span className="flex items-center gap-2">
+                  {sectionShowsNew("section:admin", visibleAdmin.map((link) => link.href)) && <NewBadge inline />}
+                  <IconChevron open={adminExpanded} small />
+                </span>
+              </button>
+              {adminExpanded &&
+                visibleAdmin.map((link) => (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    className={topLinkClass(link.href)}
+                    onClick={() => dismissNew(link.href)}
+                  >
+                    <AdminIcon href={link.href} />
+                    {link.label}
+                    {showsNew(link.href) && <NewBadge />}
+                  </Link>
+                ))}
+            </div>
+          )}
+
+          {nothingVisible && (
+            <p className="px-3 text-xs leading-relaxed text-neutral-600">
+              No sections granted yet — ask an admin to give you access from Users.
+            </p>
+          )}
+        </nav>
+
+        {role === "admin" && ekosStatus && (
+          <Link
+            href="/admin/ekos-sync"
+            className="mt-auto flex flex-col gap-1.5 rounded-[18px] border p-3.5"
+            style={{
+              background:
+                "linear-gradient(160deg, color-mix(in srgb, var(--fcb-accent) 16%, transparent), color-mix(in srgb, var(--fcb-accent) 3%, transparent))",
+              borderColor: "color-mix(in srgb, var(--fcb-accent) 22%, transparent)",
+            }}
+          >
+            <span className="flex items-center gap-2 text-[13px] font-semibold text-neutral-100">
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{ background: ekosStatus.color, boxShadow: `0 0 10px ${ekosStatus.color}` }}
+              />
+              {ekosStatus.title}
+            </span>
+            <span className="text-xs leading-snug text-neutral-400">{ekosStatus.detail}</span>
           </Link>
         )}
-
-        {showErnie && (
-          <>
-            <button
-              type="button"
-              onClick={() => {
-                toggleErnie();
-                dismissNew("section:ernie");
-              }}
-              className="mt-1 flex items-center gap-2 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
-            >
-              Ernie AI
-              {sectionShowsNew(
-                "section:ernie",
-                ERNIE_LINKS.map((link) => link.href),
-              ) && <NewBadge />}
-            </button>
-            {ernieExpanded && (
-              <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
-                {ERNIE_LINKS.map((link) => (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    className={linkClass(link.href)}
-                    onClick={() => dismissNew(link.href)}
-                  >
-                    {link.label}
-                    {showsNew(link.href) && <NewBadge />}
-                  </Link>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-
-        {/* Tasks (formerly "Projects") — the company-wide action/directive
-            tracker. Gated by the "tasks" section (added 2026-09-04), same as
-            every other link here — anyone with it checked gets full,
-            unrestricted use of Tasks itself (create/assign/resolve/delete),
-            this only controls who can get into the page at all. */}
-        {showTasks && (
-          <Link href="/tasks" className={`mt-1 ${linkClass("/tasks")}`} onClick={() => dismissNew("/tasks")}>
-            Tasks
-            {showsNew("/tasks") && <NewBadge />}
-          </Link>
-        )}
-
-        {visibleFinance.length > 0 && (
-          <>
-            <button
-              type="button"
-              onClick={() => {
-                toggleFinance();
-                dismissNew("section:finance");
-              }}
-              className="mt-2 flex items-center gap-2 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
-            >
-              Finance
-              {sectionShowsNew("section:finance", visibleFinance.map((link) => link.href)) && <NewBadge />}
-            </button>
-            {financeExpanded && (
-              <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
-                {visibleFinance.map((link) => (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    className={linkClass(link.href)}
-                    onClick={() => dismissNew(link.href)}
-                  >
-                    {link.label}
-                    {showsNew(link.href) && <NewBadge />}
-                  </Link>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-
-        {(visibleOperations.length > 0 || showPosTree || showUpcTree) && (
-          <>
-            <button
-              type="button"
-              onClick={() => {
-                toggleOperations();
-                dismissNew("section:operations");
-              }}
-              className="mt-1 flex items-center gap-2 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
-            >
-              Operations
-              {sectionShowsNew("section:operations", operationsDescendantIds) && <NewBadge />}
-            </button>
-            {operationsExpanded && (
-              <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
-                {opsBeforeLabels.map((link) => (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    className={linkClass(link.href)}
-                    onClick={() => dismissNew(link.href)}
-                  >
-                    {link.label}
-                    {showsNew(link.href) && <NewBadge />}
-                  </Link>
-                ))}
-
-                {/* Labels — moved here from its own top-level "POS" nav
-                    entry, per Chad 2026-09-05: "Labels needs to be a sub
-                    category of Operations... remove it from POS." POS
-                    itself has no items left and no longer shows up top-
-                    level at all (see lib/permissions.ts SECTION_GROUPS,
-                    which made this same move for the Users > Edit grant
-                    checkboxes on the same date). Still gated by the same
-                    'pos_labels' section/showPosTree as before — only
-                    where it renders changed. */}
-                {showPosTree && (
-                  <div className="flex flex-col gap-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        togglePosTree("pos-labels");
-                        dismissNew("section:pos-labels");
-                      }}
-                      className="rounded px-2 py-1 text-left text-sm font-semibold text-neutral-400 hover:bg-neutral-900 hover:text-white flex items-center gap-2"
-                    >
-                      Labels
-                      {sectionShowsNew("section:pos-labels", labelsDescendantIds()) && <NewBadge />}
-                    </button>
-                    {posTreeExpanded["pos-labels"] && (
-                      <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
-                        {POS_LABEL_BRANDS.map((brand) => (
-                          <div key={brand.treeKey} className="flex flex-col gap-1">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                togglePosTree(brand.treeKey);
-                                dismissNew(`section:${brand.treeKey}`);
-                              }}
-                              className="flex items-center gap-2 rounded px-2 py-1 text-left text-sm text-neutral-400 hover:bg-neutral-900 hover:text-white"
-                            >
-                              {brand.label}
-                              {sectionShowsNew(`section:${brand.treeKey}`, brand.sizes.map((s) => s.href)) && <NewBadge />}
-                            </button>
-                            {posTreeExpanded[brand.treeKey] && (
-                              <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
-                                {brand.sizes.map((s) => (
-                                  <Link
-                                    key={s.href}
-                                    href={s.href}
-                                    className={linkClass(s.href)}
-                                    onClick={() => dismissNew(s.href)}
-                                  >
-                                    {s.label}
-                                    {showsNew(s.href) && <NewBadge />}
-                                  </Link>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* UPC's — new expandable brand+size tree, added
-                    2026-09-05 right after Labels, set up exactly like it
-                    per Chad: "i want it set up exactly like the labels
-                    is." Same two-level structure (brand -> size), just an
-                    editable Product/UPC table on each size's page instead
-                    of a file library. */}
-                {showUpcTree && (
-                  <div className="flex flex-col gap-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        togglePosTree("upcs");
-                        dismissNew("section:upcs");
-                      }}
-                      className="rounded px-2 py-1 text-left text-sm font-semibold text-neutral-400 hover:bg-neutral-900 hover:text-white flex items-center gap-2"
-                    >
-                      UPC&apos;s
-                      {sectionShowsNew("section:upcs", upcDescendantIds()) && <NewBadge />}
-                    </button>
-                    {posTreeExpanded["upcs"] && (
-                      <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
-                        {UPC_BRANDS.map((brand) => (
-                          <div key={brand.treeKey} className="flex flex-col gap-1">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                togglePosTree(brand.treeKey);
-                                dismissNew(`section:${brand.treeKey}`);
-                              }}
-                              className="flex items-center gap-2 rounded px-2 py-1 text-left text-sm text-neutral-400 hover:bg-neutral-900 hover:text-white"
-                            >
-                              {brand.label}
-                              {sectionShowsNew(`section:${brand.treeKey}`, brand.sizes.map((s) => s.href)) && <NewBadge />}
-                            </button>
-                            {posTreeExpanded[brand.treeKey] && (
-                              <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
-                                {brand.sizes.map((s) => (
-                                  <Link
-                                    key={s.href}
-                                    href={s.href}
-                                    className={linkClass(s.href)}
-                                    onClick={() => dismissNew(s.href)}
-                                  >
-                                    {s.label}
-                                    {showsNew(s.href) && <NewBadge />}
-                                  </Link>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {opsAfterLabels.map((link) => (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    className={linkClass(link.href)}
-                    onClick={() => dismissNew(link.href)}
-                  >
-                    {link.label}
-                    {showsNew(link.href) && <NewBadge />}
-                  </Link>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-
-        {visibleSales.length > 0 && (
-          <>
-            <button
-              type="button"
-              onClick={() => {
-                toggleSales();
-                dismissNew("section:sales");
-              }}
-              className="mt-1 flex items-center gap-2 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
-            >
-              Sales
-              {sectionShowsNew("section:sales", visibleSales.map((link) => link.href)) && <NewBadge />}
-            </button>
-            {salesExpanded && (
-              <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
-                {visibleSales.map((link) => (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    className={linkClass(link.href)}
-                    onClick={() => dismissNew(link.href)}
-                  >
-                    {link.label}
-                    {showsNew(link.href) && <NewBadge />}
-                  </Link>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-
-        {/* POS — its own top-level section, empty for now. Restored
-            2026-09-05 per Chad after it got removed by mistake along with
-            Labels (Labels moved to Operations, which was the actual
-            request — POS itself was meant to stay, just empty, ready for
-            new items). Placed here, between Sales and Calendars, per Chad. */}
-        {showPosSection && (
-          <>
-            <button
-              type="button"
-              onClick={() => {
-                togglePos();
-                dismissNew("section:pos");
-              }}
-              className="mt-1 flex items-center gap-2 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
-            >
-              POS
-              {sectionShowsNew("section:pos", visiblePos.map((link) => link.href)) && <NewBadge />}
-            </button>
-            {posExpanded && (
-              <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
-                {visiblePos.map((link) => (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    className={linkClass(link.href)}
-                    onClick={() => dismissNew(link.href)}
-                  >
-                    {link.label}
-                    {showsNew(link.href) && <NewBadge />}
-                  </Link>
-                ))}
-                {visiblePos.length === 0 && (
-                  <p className="px-2 py-1 text-xs leading-relaxed text-neutral-600">
-                    Nothing here yet.
-                  </p>
-                )}
-              </div>
-            )}
-          </>
-        )}
-
-        {visibleCalendars.length > 0 && (
-          <>
-            <button
-              type="button"
-              onClick={() => {
-                toggleCalendars();
-                dismissNew("section:calendars");
-              }}
-              className="mt-1 flex items-center gap-2 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
-            >
-              Calendars
-              {sectionShowsNew("section:calendars", visibleCalendars.map((link) => link.href)) && <NewBadge />}
-            </button>
-            {calendarsExpanded && (
-              <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
-                {visibleCalendars.map((link) => (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    className={linkClass(link.href)}
-                    onClick={() => dismissNew(link.href)}
-                  >
-                    {link.label}
-                    {showsNew(link.href) && <NewBadge />}
-                  </Link>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-
-        {/* Admin — added 2026-10-03, per Chad (Users, Audit Log, Ekos Sync).
-            Replaces the standalone Users and Audit Log links that used to
-            sit here; same pages, same access rules. */}
-        {visibleAdmin.length > 0 && (
-          <>
-            <button
-              type="button"
-              onClick={() => {
-                toggleAdmin();
-                dismissNew("section:admin");
-              }}
-              className="mt-1 flex items-center gap-2 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
-            >
-              Admin
-              {sectionShowsNew("section:admin", visibleAdmin.map((link) => link.href)) && <NewBadge />}
-            </button>
-            {adminExpanded && (
-              <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
-                {visibleAdmin.map((link) => (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    className={linkClass(link.href)}
-                    onClick={() => dismissNew(link.href)}
-                  >
-                    {link.label}
-                    {showsNew(link.href) && <NewBadge />}
-                  </Link>
-                ))}
-              </div>
-            )}
-          </>
-        )}
-
-        {nothingVisible && (
-          <p className="mt-2 px-2 text-xs leading-relaxed text-neutral-600">
-            No sections granted yet — ask an admin to give you access from
-            Users.
-          </p>
-        )}
-      </nav>
+      </div>
     </div>
+  );
+}
+
+// --- Sidebar icons (thin line icons, facelift 2026-10-03) -------------------
+
+function NavIcon({ children }: { children: React.ReactNode }) {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="fcb-nav-icon shrink-0"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
+}
+function IconHome() {
+  return (
+    <NavIcon>
+      <path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" />
+    </NavIcon>
+  );
+}
+function IconSparkle() {
+  return (
+    <NavIcon>
+      <path d="M12 3l1.8 4.6L18 9l-4.2 1.4L12 15l-1.8-4.6L6 9l4.2-1.4z" />
+      <path d="M19 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" />
+    </NavIcon>
+  );
+}
+function IconCheck() {
+  return (
+    <NavIcon>
+      <rect x="4" y="4" width="16" height="16" rx="4" />
+      <path d="M8.5 12l2.5 2.5 4.5-5" />
+    </NavIcon>
+  );
+}
+function IconChart() {
+  return (
+    <NavIcon>
+      <path d="M4 19V5M4 19h16M8 15l3-4 3 2 5-6" />
+    </NavIcon>
+  );
+}
+function IconLayers() {
+  return (
+    <NavIcon>
+      <path d="M3 7l9-4 9 4-9 4z" />
+      <path d="M3 12l9 4 9-4M3 17l9 4 9-4" />
+    </NavIcon>
+  );
+}
+function IconCart() {
+  return (
+    <NavIcon>
+      <path d="M3 3h2l2.4 12.2a1 1 0 0 0 1 .8h9.2a1 1 0 0 0 1-.8L20 7H6" />
+      <circle cx="9" cy="20" r="1.3" />
+      <circle cx="17" cy="20" r="1.3" />
+    </NavIcon>
+  );
+}
+function IconCard() {
+  return (
+    <NavIcon>
+      <rect x="3" y="5" width="18" height="14" rx="3" />
+      <path d="M3 10h18M7 15h4" />
+    </NavIcon>
+  );
+}
+function IconCalendar() {
+  return (
+    <NavIcon>
+      <rect x="3" y="5" width="18" height="16" rx="3" />
+      <path d="M3 10h18M8 3v4M16 3v4" />
+    </NavIcon>
+  );
+}
+function AdminIcon({ href }: { href: string }) {
+  if (href.startsWith("/admin/users")) {
+    return (
+      <NavIcon>
+        <circle cx="9" cy="8" r="3.5" />
+        <path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-4-6" />
+      </NavIcon>
+    );
+  }
+  if (href.startsWith("/admin/ekos-sync")) {
+    return (
+      <NavIcon>
+        <path d="M20 12a8 8 0 0 1-14 5.3M4 12a8 8 0 0 1 14-5.3" />
+        <path d="M18 3v4h-4M6 21v-4h4" />
+      </NavIcon>
+    );
+  }
+  return (
+    <NavIcon>
+      <path d="M7 3h7l5 5v13H7z" />
+      <path d="M14 3v5h5M10 13h6M10 17h6" />
+    </NavIcon>
+  );
+}
+function IconChevron({ open, small = false }: { open: boolean; small?: boolean }) {
+  return (
+    <svg
+      width={small ? 12 : 13}
+      height={small ? 12 : 13}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      className={`shrink-0 text-neutral-500 transition-transform ${open ? "" : "-rotate-90"}`}
+      aria-hidden="true"
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+function IconChevrons({ dir }: { dir: "left" | "right" }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+      <path d={dir === "left" ? "M11 17l-5-5 5-5M18 17l-5-5 5-5" : "M13 17l5-5-5-5M6 17l5-5-5-5"} />
+    </svg>
   );
 }

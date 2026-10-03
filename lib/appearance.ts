@@ -24,8 +24,9 @@
 // For inline style={{ }} colors that don't go through Tailwind, use tone()
 // below instead of a raw gray hex so they follow the theme too.
 //
-// The default ("FCB Dark") produces NO overrides at all, so anyone who never
-// opens Customize sees the site exactly as it was.
+// The default ("FCB Dark") produces NO overrides here; since the facelift
+// (2026-10-03) its look — green-tinted charcoal grays, card hue, pill
+// buttons, soft status pills — is defined directly in app/globals.css.
 
 import {
   baseColorsFor,
@@ -225,7 +226,7 @@ export function siteFontStack(font: ErnieFontKey): string | null {
     case "typewriter":
       return "var(--font-plex-mono), ui-monospace, monospace";
     default:
-      return null; // the site's original font (Arial)
+      return null; // the site's default font (Plus Jakarta Sans since 2026-10-03)
   }
 }
 
@@ -254,6 +255,11 @@ export function siteColorVars(a: ErnieAppearance): Record<string, string> {
   if (!dark) {
     Object.assign(vars, LIGHT_MODE_STATUS_SWAP);
     vars["--site-chip-shade"] = "45%";
+    // Facelift status pills (app/globals.css #6): darker text on light pages.
+    vars["--st-green"] = "#2f7a1f";
+    vars["--st-orange"] = "#9a5a00";
+    vars["--st-blue"] = "#1f5fae";
+    vars["--st-gray"] = mix(bg, fg, 0.65);
   }
   return vars;
 }

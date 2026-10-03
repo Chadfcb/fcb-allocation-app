@@ -25,7 +25,7 @@ export default function CustomizeButton() {
         openCustomize();
       }}
       title="Change FCB-Data's colors, text size, and font (just for you)"
-      className="inline-flex items-center rounded-md border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm font-medium text-neutral-200 hover:bg-neutral-800"
+      className="inline-flex h-10 items-center rounded-md border border-white/10 bg-white/[0.03] px-4 text-sm font-medium text-neutral-200 hover:bg-white/[0.07]"
     >
       Customize
       {customizeNew.isNew && <NewBadge inline />}
