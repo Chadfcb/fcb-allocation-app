@@ -91,7 +91,7 @@ async function openSession(): Promise<EkosSession> {
       if (!isAllowedRequest(req, signedIn)) {
         try {
           const u = new URL(req.url());
-          if (isEkosHost(u.hostname)) pushDiag(diag.blocked, `${req.method()} ${u.hostname}${u.pathname}`);
+          if (isEkosHost(u.hostname)) pushDiag(diag.blocked, `${req.method()} ${u.hostname}${safePath(u.pathname)}`);
         } catch {
           // ignore
         }
@@ -104,7 +104,7 @@ async function openSession(): Promise<EkosSession> {
     page.on("response", (res) => {
       try {
         const u = new URL(res.url());
-        if (res.status() >= 400 && isEkosHost(u.hostname)) pushDiag(diag.httpErrors, `${res.status()} ${u.pathname}`);
+        if (res.status() >= 400 && isEkosHost(u.hostname)) pushDiag(diag.httpErrors, `${res.status()} ${safePath(u.pathname)}`);
       } catch {
         // ignore
       }
@@ -134,6 +134,18 @@ async function openSession(): Promise<EkosSession> {
       );
     }
     signedIn = true;
+    // Sign-in is only finished once Ekos's app has its session key (the
+    // "token" cookie) — wait for it so the first page read isn't bounced
+    // back to the sign-in page.
+    const tokenDeadline = Date.now() + 25_000;
+    while (Date.now() < tokenDeadline) {
+      const cookies = await page.cookies().catch(() => []);
+      if (cookies.some((c) => c.name === "token" && c.value)) break;
+      await sleep(500);
+    }
+    if (!(await page.cookies().catch(() => [])).some((c) => c.name === "token" && c.value)) {
+      throw new Error(`Ekos sign-in didn't finish (no session from Ekos).${await describePage(page)}`);
+    }
     return { browser, page };
   } catch (err) {
     await browser.close().catch(() => {});
@@ -156,6 +168,11 @@ function isAllowedRequest(req: HTTPRequest, signedIn: boolean): boolean {
   // Anything that SENDS data elsewhere (tracking beacons) is not.
   if (!isEkosHost(url.hostname)) return isRead;
   if (isRead) return true;
+  // Finishing sign-in: right after the sign-in page, Ekos's app trades a
+  // one-time code for its session key (POST /API/api/Auth/Code/...). Found
+  // from the first live run 2026-10-03 — blocking it left the reader signed
+  // out. It's part of signing in, not a change to Ekos data.
+  if (url.hostname === "app.goekos.com" && /^\/api\/api\/auth\//i.test(url.pathname)) return true;
   // The sign-in post itself (before signing in only).
   if (!signedIn && url.hostname === "app.goekos.com" && (url.pathname === "/" || /default|login/i.test(url.pathname))) {
     return true;
@@ -163,6 +180,11 @@ function isAllowedRequest(req: HTTPRequest, signedIn: boolean): boolean {
   // Data lookups some Ekos screens make with POST.
   if (signedIn && /(get|search|list|query|layout|report|filter)/i.test(url.pathname)) return true;
   return false;
+}
+
+// Hide one-time sign-in codes from anything written to the run log.
+function safePath(path: string): string {
+  return /\/auth\//i.test(path) ? path.replace(/(\/auth\/[^/]+\/).*/i, "$1…") : path;
 }
 
 function isEkosHost(host: string): boolean {
@@ -430,14 +452,15 @@ async function waitFor(check: () => Promise<boolean>, what: string, timeoutMs = 
 }
 
 // Where the hidden browser was stuck, for the run log.
-async function describePage(): Promise<string> {
+async function describePage(onPage?: Page): Promise<string> {
   const parts: string[] = [];
   try {
-    const s = current ? await current : null;
-    if (s) {
-      const u = new URL(s.page.url());
+    // During sign-in the session isn't finished yet, so the page is passed in.
+    const page = onPage ?? (current ? (await current).page : null);
+    if (page) {
+      const u = new URL(page.url());
       parts.push(`page ${u.pathname}`);
-      const text = await s.page
+      const text = await page
         .evaluate(() => (document.body?.innerText || "").replace(/\s+/g, " ").trim().slice(0, 160))
         .catch(() => "");
       parts.push(text ? `showing "${text}"` : "page was blank");
