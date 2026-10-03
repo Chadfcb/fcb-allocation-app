@@ -287,10 +287,11 @@ export async function readEkosOpenPurchaseOrders(): Promise<EkosPurchaseOrder[]>
   return out;
 }
 
-// Numbers visible in the Open list + its "1-4 of 4" total.
+// Numbers visible in the Open list + its "1-4 of 4" total. (On the PO list
+// that count is a <span>; on Distributor Inventory it is a <p> — read both.)
 async function shownPoNumbers(page: Page): Promise<{ numbers: string[]; total: number } | null> {
   return page.evaluate(() => {
-    const range = [...document.querySelectorAll("p")]
+    const range = [...document.querySelectorAll("p, span")]
       .map((p) => (p.textContent || "").trim())
       .find((t) => /^\d+-\d+ of \d+$/.test(t) || /^0 of 0$/.test(t));
     const table = document.querySelector("table");
@@ -393,7 +394,7 @@ export async function readEkosDistributorInventory(): Promise<EkosInventoryRow[]
       const rows = [...table.querySelectorAll("tbody tr")].map((r) =>
         [...(r as HTMLTableRowElement).cells].map((c) => (c as HTMLElement).innerText.trim()),
       );
-      const range = [...document.querySelectorAll("p")]
+      const range = [...document.querySelectorAll("p, span")]
         .map((p) => (p.textContent || "").trim())
         .filter((t) => /^\d+-\d+ of \d+$/.test(t))
         .pop();
@@ -428,7 +429,7 @@ export async function readEkosDistributorInventory(): Promise<EkosInventoryRow[]
 // Runs in the page: clicks the report's previous/next arrow (the first /
 // last arrow button next to "1-25 of 95"). Returns false when it's disabled.
 function clickPager(direction: string): boolean {
-  const label = [...document.querySelectorAll("p")]
+  const label = [...document.querySelectorAll("p, span")]
     .filter((p) => /^\d+-\d+ of \d+$/.test((p.textContent || "").trim()))
     .pop();
   if (!label) return false;
