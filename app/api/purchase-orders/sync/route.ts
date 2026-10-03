@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { syncEkosPurchaseOrders, type EkosPurchaseOrder } from "@/lib/syncs/ekosPurchaseOrders";
+import { recordSyncRun } from "@/lib/syncs/runLog";
 
 // Syncs the current "Open - Purchase Orders" list from Ekos into the app.
 //
@@ -21,25 +23,9 @@ import { createClient } from "@/lib/supabase/server";
 // always match whatever's currently on the PO in Ekos. A PO already
 // sitting in Holding or Completed is left alone if it's simply missing
 // from the payload — that's expected, not a new event.
-interface SyncItem {
-  itemName: string;
-  quantity: number | null;
-  unitCost: number | null;
-  lineTotal: number | null;
-}
-
-interface SyncPurchaseOrder {
-  ekosPoNumber: string;
-  supplier: string;
-  poDate: string | null;
-  expectedDeliveryDate: string | null;
-  totalCost: number | null;
-  status: string | null;
-  ekosLastModifiedBy: string | null;
-  comments: string | null;
-  items: SyncItem[];
-}
-
+// The actual sync rules now live in lib/syncs/ekosPurchaseOrders.ts
+// (2026-10-03) so the Automatic Syncs job (Admin → Ekos Sync) uses the
+// exact same logic. This route is the "Sync from Ekos" paste box.
 export async function POST(req: NextRequest) {
   const supabase = await createClient();
   const {
@@ -60,7 +46,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Admins only" }, { status: 403 });
   }
 
-  let body: { purchaseOrders?: SyncPurchaseOrder[] };
+  let body: { purchaseOrders?: EkosPurchaseOrder[] };
   try {
     body = await req.json();
   } catch {
@@ -72,112 +58,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Expected { purchaseOrders: [...] }" }, { status: 400 });
   }
 
-  const incomingNumbers = purchaseOrders
-    .map((po) => po.ekosPoNumber?.trim())
-    .filter((n): n is string => Boolean(n));
-
-  // Move POs that are no longer open in Ekos into Holding — only ones
-  // currently 'open'; a PO already sitting in Holding or Completed is left
-  // alone even if it's still missing from this sync.
-  const { data: existingOpen } = await supabase
-    .from("purchase_orders")
-    .select("id, ekos_po_number")
-    .eq("record_status", "open");
-  const toHold = (existingOpen ?? []).filter((row) => !incomingNumbers.includes(row.ekos_po_number));
-  if (toHold.length > 0) {
-    await supabase
-      .from("purchase_orders")
-      .update({ record_status: "holding" })
-      .in(
-        "id",
-        toHold.map((r) => r.id)
-      );
-  }
-
-  const errors: string[] = [];
-  let syncedCount = 0;
-
-  for (const po of purchaseOrders) {
-    const ekosPoNumber = po.ekosPoNumber?.trim();
-    if (!ekosPoNumber || !po.supplier) {
-      errors.push(`Skipped a PO missing its number or supplier.`);
-      continue;
-    }
-
-    const { data: upserted, error } = await supabase
-      .from("purchase_orders")
-      .upsert(
-        {
-          ekos_po_number: ekosPoNumber,
-          supplier: po.supplier,
-          po_date: po.poDate || null,
-          expected_delivery_date: po.expectedDeliveryDate || null,
-          total_cost: po.totalCost ?? null,
-          status: po.status ?? null,
-          comments: po.comments ?? null,
-          ekos_last_modified_by: po.ekosLastModifiedBy ?? null,
-          synced_by: user.id,
-          synced_at: new Date().toISOString(),
-          // Always back to 'open' — handles a PO that had drifted into
-          // Holding or Completed and is open in Ekos again.
-          record_status: "open",
-        },
-        { onConflict: "ekos_po_number" }
-      )
-      .select()
-      .single();
-
-    if (error || !upserted) {
-      errors.push(`PO ${ekosPoNumber}: ${error?.message ?? "unknown error"}`);
-      continue;
-    }
-
-    // Replace line items wholesale — simplest way to keep them in sync with
-    // whatever's currently on the PO in Ekos.
-    await supabase.from("purchase_order_items").delete().eq("purchase_order_id", upserted.id);
-
-    const items = Array.isArray(po.items) ? po.items : [];
-    if (items.length > 0) {
-      const { error: itemsError } = await supabase.from("purchase_order_items").insert(
-        items.map((item, index) => ({
-          purchase_order_id: upserted.id,
-          item_name: item.itemName,
-          quantity: item.quantity ?? null,
-          unit_cost: item.unitCost ?? null,
-          line_total: item.lineTotal ?? null,
-          sort_order: index,
-        }))
-      );
-      if (itemsError) {
-        errors.push(`PO ${ekosPoNumber} items: ${itemsError.message}`);
-        continue;
-      }
-    }
-
-    syncedCount += 1;
-  }
-
-  // Stamp "Last Ekos sync" for the Dashboard — the sync running at all is
-  // the event Chad wants to see, so this is unconditional (not gated on
-  // syncedCount>0): a run that finds nothing changed still counts as a
-  // completed sync. Added 2026-09-09 alongside the Distributor Inventory
-  // sync route and the new ekos_sync_status table.
-  //
-  // Checked explicitly (fixed 2026-09-10) — this silently failed for a full
-  // day under RLS (missing INSERT policy on ekos_sync_status; see
-  // sql/ekos_sync_status.sql) with nothing here to surface it. Doesn't fail
-  // the whole sync (the PO data itself synced fine either way) — just makes
-  // sure it shows up in `errors` instead of vanishing.
-  const { error: syncStatusError } = await supabase
-    .from("ekos_sync_status")
-    .upsert({ id: 1, last_synced_at: new Date().toISOString() });
-  if (syncStatusError) {
-    errors.push(`Dashboard "Last Ekos sync" timestamp not updated: ${syncStatusError.message}`);
-  }
-
-  return NextResponse.json({
-    syncedCount,
-    movedToHoldingCount: toHold.length,
-    errors,
+  const startedAt = new Date();
+  const result = await syncEkosPurchaseOrders(supabase, purchaseOrders, user.id);
+  await recordSyncRun({
+    source: "ekos_purchase_orders",
+    trigger: "paste",
+    status: result.errors.length > 0 ? "issues" : "ok",
+    startedAt,
+    syncedCount: result.syncedCount,
+    issues: result.errors,
+    summary: `${result.syncedCount} POs synced, ${result.movedToHoldingCount} moved to Holding`,
+    runBy: user.id,
   });
+
+  return NextResponse.json(result);
 }

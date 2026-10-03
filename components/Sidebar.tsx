@@ -111,6 +111,10 @@ const NEW_SIDEBAR_IDS: string[] = [
   "/finance/distributor-data",
   // Batch Ingredients — new Operations sub-link, added 2026-09-16, per Chad.
   "/batch-ingredients",
+  // Ekos Sync — new page under the new Admin category, added 2026-10-03,
+  // per Chad. (Users and Audit Log moved into Admin the same day — a move,
+  // not new content, so they aren't flagged.)
+  "/admin/ekos-sync",
 ];
 
 // NewBadge now lives in components/NewBadge.tsx (shared with in-page
@@ -186,12 +190,24 @@ const ERNIE_STORAGE_KEY = "fcb-sidebar-ernie-expanded";
 // (/ernie/projects) is its own page for creating/opening Projects. Both
 // still gated by the same "ernie_ai" section grant as before — this only
 // splits the ONE page into two, it doesn't add a new permission.
+// Admin — new top-level category, added 2026-10-03, per Chad: "Lets make a
+// new Admin Category, that has sub categories of Users, Audit Log, Ekos
+// Sync." Users and Audit Log keep their same pages, addresses and access
+// rules (Users: admins only; Audit Log: the "audit_log" section) — they're
+// just grouped here now instead of standing alone.
+const ADMIN_STORAGE_KEY = "fcb-sidebar-admin-expanded";
+const ADMIN_LINKS: { href: string; label: string; section?: SectionKey }[] = [
+  { href: "/admin/users", label: "Users" },
+  { href: "/admin/audit", label: "Audit Log", section: "audit_log" },
+  { href: "/admin/ekos-sync", label: "Ekos Sync" },
+];
+
 const ERNIE_LINKS: { href: string; label: string }[] = [
   { href: "/ernie", label: "My Ernie AI" },
   { href: "/ernie/projects", label: "Projects" },
 ];
 
-type TopLevelCategory = "ernie" | "finance" | "operations" | "sales" | "calendars" | "pos";
+type TopLevelCategory = "ernie" | "finance" | "operations" | "sales" | "calendars" | "pos" | "admin";
 
 // Which top-level category (if any) a given pathname belongs to — added
 // 2026-09-10, per Chad ("we built in that other categories would close if
@@ -218,6 +234,7 @@ function topLevelCategoryForPath(pathname: string): TopLevelCategory | null {
   if (SALES_LINKS.some((l) => l.href === pathname)) return "sales";
   if (CALENDARS_LINKS.some((l) => l.href === pathname)) return "calendars";
   if (POS_LINKS.some((l) => l.href === pathname)) return "pos";
+  if (ADMIN_LINKS.some((l) => l.href === pathname)) return "admin";
   return null;
 }
 
@@ -417,6 +434,7 @@ export default function Sidebar({
   const [salesExpanded, setSalesExpanded] = useState(true);
   const [calendarsExpanded, setCalendarsExpanded] = useState(true);
   const [posExpanded, setPosExpanded] = useState(true);
+  const [adminExpanded, setAdminExpanded] = useState(true);
   const [posTreeExpanded, setPosTreeExpanded] = useState<
     Record<string, boolean>
   >({ "pos-labels": true, upcs: true });
@@ -432,6 +450,11 @@ export default function Sidebar({
     // Hydrate persisted expand/collapse prefs after mount rather than in the
     // initial useState — reading localStorage during the initializer would
     // mismatch between server render (no localStorage) and client.
+    const storedAdmin = localStorage.getItem(ADMIN_STORAGE_KEY);
+    if (storedAdmin !== null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional post-mount hydration from localStorage
+      setAdminExpanded(storedAdmin === "true");
+    }
     const storedErnie = localStorage.getItem(ERNIE_STORAGE_KEY);
     if (storedErnie !== null) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional post-mount hydration from localStorage
@@ -501,6 +524,7 @@ export default function Sidebar({
       { key: "sales", setExpanded: setSalesExpanded, storageKey: SALES_STORAGE_KEY },
       { key: "calendars", setExpanded: setCalendarsExpanded, storageKey: CALENDARS_STORAGE_KEY },
       { key: "pos", setExpanded: setPosExpanded, storageKey: POS_STORAGE_KEY },
+      { key: "admin", setExpanded: setAdminExpanded, storageKey: ADMIN_STORAGE_KEY },
     ];
     for (const section of sections) {
       const shouldBeOpen = section.key === active;
@@ -600,7 +624,11 @@ export default function Sidebar({
   // one is ever expanded at a time. Closing the section you're currently
   // in still just closes it, same as before — this only kicks in when a
   // section is being opened.
-  function closeOtherTopLevelSections(except: "ernie" | "finance" | "operations" | "sales" | "calendars" | "pos") {
+  function closeOtherTopLevelSections(except: TopLevelCategory) {
+    if (except !== "admin") {
+      setAdminExpanded(false);
+      localStorage.setItem(ADMIN_STORAGE_KEY, "false");
+    }
     if (except !== "ernie") {
       setErnieExpanded(false);
       localStorage.setItem(ERNIE_STORAGE_KEY, "false");
@@ -625,6 +653,15 @@ export default function Sidebar({
       setPosExpanded(false);
       localStorage.setItem(POS_STORAGE_KEY, "false");
     }
+  }
+
+  function toggleAdmin() {
+    setAdminExpanded((prev) => {
+      const next = !prev;
+      localStorage.setItem(ADMIN_STORAGE_KEY, String(next));
+      if (next) closeOtherTopLevelSections("admin");
+      return next;
+    });
   }
 
   function toggleErnie() {
@@ -764,6 +801,9 @@ export default function Sidebar({
   const showErnie = can(ERNIE_SECTION);
   const showTasks = can("tasks");
   const showAuditLog = can("audit_log");
+  // Users and Ekos Sync are admins-only (same rule Users always had); Audit
+  // Log follows its own "audit_log" section grant.
+  const visibleAdmin = ADMIN_LINKS.filter((link) => (link.section ? can(link.section) : role === "admin"));
 
   const nothingVisible =
     role !== "admin" &&
@@ -1145,31 +1185,38 @@ export default function Sidebar({
           </>
         )}
 
-        {role === "admin" && (
-          <Link
-            href="/admin/users"
-            className={`mt-1 ${linkClass("/admin/users")}`}
-            onClick={() => dismissNew("/admin/users")}
-          >
-            Users
-            {showsNew("/admin/users") && <NewBadge />}
-          </Link>
-        )}
-
-        {/* Audit Log — moved here from inside Operations, per Chad,
-            2026-09-05: "lets move audit log to a main category, below
-            Users, and out of operations." Same "audit_log" section/page
-            as before, just a standalone top-level link now instead of an
-            Operations sub-link. */}
-        {showAuditLog && (
-          <Link
-            href="/admin/audit"
-            className={`mt-1 ${linkClass("/admin/audit")}`}
-            onClick={() => dismissNew("/admin/audit")}
-          >
-            Audit Log
-            {showsNew("/admin/audit") && <NewBadge />}
-          </Link>
+        {/* Admin — added 2026-10-03, per Chad (Users, Audit Log, Ekos Sync).
+            Replaces the standalone Users and Audit Log links that used to
+            sit here; same pages, same access rules. */}
+        {visibleAdmin.length > 0 && (
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                toggleAdmin();
+                dismissNew("section:admin");
+              }}
+              className="mt-1 flex items-center gap-2 rounded px-2 py-1.5 text-left font-semibold text-neutral-300 hover:bg-neutral-900"
+            >
+              Admin
+              {sectionShowsNew("section:admin", visibleAdmin.map((link) => link.href)) && <NewBadge />}
+            </button>
+            {adminExpanded && (
+              <div className="ml-2 flex flex-col gap-1 border-l border-neutral-800 pl-3">
+                {visibleAdmin.map((link) => (
+                  <Link
+                    key={link.href}
+                    href={link.href}
+                    className={linkClass(link.href)}
+                    onClick={() => dismissNew(link.href)}
+                  >
+                    {link.label}
+                    {showsNew(link.href) && <NewBadge />}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </>
         )}
 
         {nothingVisible && (
