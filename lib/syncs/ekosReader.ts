@@ -317,8 +317,17 @@ async function readPoDetail(
       .frames()
       .find((f) => /default\.aspx/i.test(f.url()) && f.url().toLowerCase().includes(guid.toLowerCase()));
     if (!frame) return false;
-    return frame.evaluate(() => !!document.querySelector("table[id*='po_items']")).catch(() => false);
-  }, `PO ${number}'s page`);
+    // Ekos fills the PO Items list in after the page appears — wait until its
+    // header row (Item / Quantity Ordered / Total Item Cost) is actually there.
+    return frame
+      .evaluate(() => {
+        const t = document.querySelector("table[id*='po_items']") as HTMLTableElement | null;
+        if (!t || !t.rows.length) return false;
+        const h = [...t.rows[0].cells].map((c) => (c.textContent || "").replace(/\s+/g, " ").trim().toUpperCase());
+        return h.includes("ITEM") && h.includes("QUANTITY ORDERED") && h.includes("TOTAL ITEM COST");
+      })
+      .catch(() => false);
+  }, `PO ${number}'s item list`);
 
   const data = await frame!.evaluate(() => {
     const fields: Record<string, string> = {};
@@ -333,7 +342,9 @@ async function readPoDetail(
       }
     }
     const table = document.querySelector("table[id*='po_items']") as HTMLTableElement | null;
-    const headers = table ? [...table.rows[0].cells].map((c) => (c.textContent || "").trim().toUpperCase()) : [];
+    const headers = table
+      ? [...table.rows[0].cells].map((c) => (c.textContent || "").replace(/\s+/g, " ").trim().toUpperCase())
+      : [];
     const rows = table ? [...table.rows].slice(1).map((r) => [...r.cells].map((c) => (c.textContent || "").trim())) : [];
     const countText = (document.body.innerText.match(/\((\d+) items?\)/) || [])[1] ?? null;
     return { fields, headers, rows, itemCount: countText === null ? null : Number(countText) };
@@ -344,7 +355,9 @@ async function readPoDetail(
   const iQty = col("QUANTITY ORDERED");
   const iTotal = col("TOTAL ITEM COST");
   if (iItem < 0 || iQty < 0 || iTotal < 0) {
-    throw new Error(`PO ${number}'s item list looks different than expected — the reader needs an update. Nothing was changed.`);
+    throw new Error(
+      `PO ${number}'s item list looks different than expected — the reader needs an update. Nothing was changed. [Details: columns seen: ${data.headers.join(" | ") || "none"}]`,
+    );
   }
   const rows = data.rows.filter((r) => r.length > iTotal && r[iItem]);
   if (data.itemCount !== null && data.itemCount !== rows.length) {
