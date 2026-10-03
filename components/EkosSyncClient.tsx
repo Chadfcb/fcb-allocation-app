@@ -164,17 +164,28 @@ export default function EkosSyncClient({ sources }: { sources: SourceMeta[] }) {
                 <p className="text-xs text-neutral-500">{s.description}</p>
                 {!s.built && <p className="mt-1 text-xs text-amber-400">Automatic reading from Ekos is the next step — not built yet.</p>}
               </div>
-              <button
-                type="button"
-                onClick={() => toggle(s)}
-                disabled={!s.built && !on}
-                title={!s.built ? "Can't switch on until the automatic reading step is built" : on ? "Switch off" : "Switch on"}
-                className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium ${
-                  on ? "bg-emerald-900 text-emerald-200" : "bg-neutral-800 text-neutral-400"
-                } disabled:opacity-50`}
-              >
-                {on ? "On" : "Off"}
-              </button>
+              {/* Slider switch (Chad, 2026-10-03): left = Off, click slides right = On. */}
+              <div className="flex shrink-0 items-center gap-2">
+                <span className={`text-xs font-medium ${on ? "text-emerald-300" : "text-neutral-500"}`}>{on ? "On" : "Off"}</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={on}
+                  aria-label={`${s.label}: ${on ? "on" : "off"}`}
+                  onClick={() => toggle(s)}
+                  disabled={!s.built && !on}
+                  title={!s.built ? "Can't switch on until the automatic reading step is built" : on ? "Switch off" : "Switch on"}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    on ? "bg-emerald-500" : "bg-neutral-700"
+                  } disabled:opacity-50`}
+                >
+                  <span
+                    className={`inline-block h-5 w-5 rounded-full bg-[#ffffff] shadow transition-transform ${
+                      on ? "translate-x-[22px]" : "translate-x-0.5"
+                    }`}
+                  />
+                </button>
+              </div>
             </div>
           );
         })}
