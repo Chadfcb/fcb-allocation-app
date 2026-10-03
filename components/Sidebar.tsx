@@ -103,6 +103,9 @@ const NEW_SIDEBAR_IDS: string[] = [
   // 2026-09-05, per Chad.
   "/sales/chain-authorizations",
   "/sales/chain-mandates",
+  // Tanks — new 3D tank view under MAIN, right below Dashboard (2026-10-03),
+  // per Chad.
+  "/tanks",
   // Football POS — new POS sub-link, added 2026-09-05, per Chad.
   "/pos/football",
   // Cash Flow Dashboard — new Finance section, added 2026-09-09, per Chad.
@@ -973,6 +976,16 @@ export default function Sidebar({
                     </Link>
                   )}
 
+                  {/* Tanks (2026-10-03) — 3D x-ray view of every unitank.
+                      Admins only, same as Dashboard. */}
+                  {role === "admin" && (
+                    <Link href="/tanks" className={topLinkClass("/tanks")} onClick={() => dismissNew("/tanks")}>
+                      <IconTank />
+                      Tanks
+                      {showsNew("/tanks") && <NewBadge />}
+                    </Link>
+                  )}
+
                   {showErnie && (
                     <>
                       <button
@@ -1357,6 +1370,14 @@ function IconHome() {
   return (
     <NavIcon>
       <path d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" />
+    </NavIcon>
+  );
+}
+function IconTank() {
+  return (
+    <NavIcon>
+      <path d="M8 3h8M7 6a5 3 0 0 1 10 0v8l-5 5-5-5z" />
+      <path d="M8.5 21v-2.5M15.5 21v-2.5" />
     </NavIcon>
   );
 }
