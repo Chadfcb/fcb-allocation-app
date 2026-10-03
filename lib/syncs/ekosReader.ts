@@ -32,6 +32,19 @@ interface EkosSession {
   page: Page;
 }
 
+// What went wrong inside the hidden browser — added to a "Timed out"
+// error so a failed run says WHY (first live run 2026-10-03 timed out with
+// no clue). Only page paths, never query strings or cookies.
+const diag = { errors: [] as string[], blocked: [] as string[], httpErrors: [] as string[] };
+function pushDiag(list: string[], item: string) {
+  if (list.length < 8 && !list.includes(item)) list.push(item);
+}
+
+// A normal desktop Chrome identity — some sites refuse to draw their pages
+// for a browser that announces itself as "HeadlessChrome".
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36";
+
 let current: Promise<EkosSession> | null = null;
 
 // One signed-in browser shared by both Ekos sources in a run.
@@ -67,14 +80,34 @@ async function openSession(): Promise<EkosSession> {
     page.setDefaultTimeout(NAV_TIMEOUT_MS);
     await page.setViewport({ width: 1568, height: 900 });
 
+    await page.setUserAgent(USER_AGENT);
+    diag.errors.length = 0;
+    diag.blocked.length = 0;
+    diag.httpErrors.length = 0;
+
     let signedIn = false;
     await page.setRequestInterception(true);
     page.on("request", (req: HTTPRequest) => {
       if (!isAllowedRequest(req, signedIn)) {
+        try {
+          const u = new URL(req.url());
+          if (isEkosHost(u.hostname)) pushDiag(diag.blocked, `${req.method()} ${u.hostname}${u.pathname}`);
+        } catch {
+          // ignore
+        }
         req.abort("blockedbyclient").catch(() => {});
         return;
       }
       req.continue().catch(() => {});
+    });
+    page.on("pageerror", (err) => pushDiag(diag.errors, String((err as Error)?.message ?? err).slice(0, 160)));
+    page.on("response", (res) => {
+      try {
+        const u = new URL(res.url());
+        if (res.status() >= 400 && isEkosHost(u.hostname)) pushDiag(diag.httpErrors, `${res.status()} ${u.pathname}`);
+      } catch {
+        // ignore
+      }
     });
     page.on("dialog", (d) => d.dismiss().catch(() => {}));
 
@@ -116,13 +149,13 @@ function isAllowedRequest(req: HTTPRequest, signedIn: boolean): boolean {
     return false;
   }
   if (url.protocol === "data:" || url.protocol === "blob:") return true;
-  const host = url.hostname;
-  const isEkos = host === "app.goekos.com" || host.endsWith(".goekos-tech.net") || host.endsWith(".goekos.com");
-  // Analytics/telemetry/fonts etc. aren't needed — skip them (faster, and
-  // nothing leaves the browser that doesn't have to).
-  if (!isEkos) return false;
   const method = req.method().toUpperCase();
-  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return true;
+  const isRead = method === "GET" || method === "HEAD" || method === "OPTIONS";
+  // Ekos's pages load scripts from other sites (analytics, help widget) and
+  // break if those are missing, so plain loads from anywhere are allowed.
+  // Anything that SENDS data elsewhere (tracking beacons) is not.
+  if (!isEkosHost(url.hostname)) return isRead;
+  if (isRead) return true;
   // The sign-in post itself (before signing in only).
   if (!signedIn && url.hostname === "app.goekos.com" && (url.pathname === "/" || /default|login/i.test(url.pathname))) {
     return true;
@@ -130,6 +163,10 @@ function isAllowedRequest(req: HTTPRequest, signedIn: boolean): boolean {
   // Data lookups some Ekos screens make with POST.
   if (signedIn && /(get|search|list|query|layout|report|filter)/i.test(url.pathname)) return true;
   return false;
+}
+
+function isEkosHost(host: string): boolean {
+  return host === "app.goekos.com" || host.endsWith(".goekos-tech.net") || host.endsWith(".goekos.com");
 }
 
 function sleep(ms: number) {
@@ -389,5 +426,27 @@ async function waitFor(check: () => Promise<boolean>, what: string, timeoutMs = 
     if (await check().catch(() => false)) return;
     await sleep(500);
   }
-  throw new Error(`Timed out waiting for ${what} in Ekos — nothing was changed.`);
+  throw new Error(`Timed out waiting for ${what} in Ekos — nothing was changed.${await describePage()}`);
+}
+
+// Where the hidden browser was stuck, for the run log.
+async function describePage(): Promise<string> {
+  const parts: string[] = [];
+  try {
+    const s = current ? await current : null;
+    if (s) {
+      const u = new URL(s.page.url());
+      parts.push(`page ${u.pathname}`);
+      const text = await s.page
+        .evaluate(() => (document.body?.innerText || "").replace(/\s+/g, " ").trim().slice(0, 160))
+        .catch(() => "");
+      parts.push(text ? `showing "${text}"` : "page was blank");
+    }
+  } catch {
+    // ignore
+  }
+  if (diag.errors.length) parts.push(`page errors: ${diag.errors.join(" | ")}`);
+  if (diag.httpErrors.length) parts.push(`Ekos refused: ${diag.httpErrors.join(", ")}`);
+  if (diag.blocked.length) parts.push(`blocked by the reader: ${diag.blocked.join(", ")}`);
+  return parts.length ? ` [Details: ${parts.join("; ")}]` : "";
 }
