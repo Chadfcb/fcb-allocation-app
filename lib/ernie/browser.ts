@@ -102,7 +102,7 @@ function checkUrl(raw: string): URL {
   return u;
 }
 
-async function launchBrowser(): Promise<Browser> {
+export async function launchBrowser(): Promise<Browser> {
   // Local development (e.g. `npm run dev` on Windows) can't use the Linux
   // serverless Chromium — point ERNIE_CHROME_PATH at a local Chrome instead.
   const localChrome = process.env.ERNIE_CHROME_PATH;
