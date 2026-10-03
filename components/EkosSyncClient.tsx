@@ -49,6 +49,7 @@ export default function EkosSyncClient({ sources }: { sources: SourceMeta[] }) {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [snapshotGroup, setSnapshotGroup] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openRunId, setOpenRunId] = useState<string | null>(null);
 
@@ -103,15 +104,20 @@ export default function EkosSyncClient({ sources }: { sources: SourceMeta[] }) {
     }
   }
 
-  async function runNow() {
+  // snapshot = "Run now + snapshots": records every step of the run for
+  // diagnosing a failure (lib/syncs/snapshots.ts).
+  async function runNow(snapshot = false) {
     setError(null);
     setMessage(null);
+    setSnapshotGroup(null);
     setRunning(true);
     try {
-      const data = (await post({ action: "run_now" })) as {
+      const data = (await post({ action: "run_now", snapshot })) as {
         ran: { label: string; status: string; syncedCount: number }[];
         skipped: { label: string; reason: string }[];
+        snapshotGroup?: string;
       };
+      if (data.snapshotGroup) setSnapshotGroup(data.snapshotGroup);
       if (data.ran.length === 0) {
         setMessage("Nothing ran — no automatic sources are switched on yet.");
       } else {
@@ -140,17 +146,43 @@ export default function EkosSyncClient({ sources }: { sources: SourceMeta[] }) {
             something needs a look.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={runNow}
-          disabled={running}
-          className="flex items-center gap-2 rounded-md bg-brand px-3 py-2 text-sm font-medium text-on-brand hover:bg-brand-hover disabled:opacity-50"
-        >
-          {running ? "Running…" : "Run now"}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => runNow(true)}
+            disabled={running}
+            title="Runs every built source (even ones switched off) and saves a screenshot + details of every step"
+            className="rounded-md border border-neutral-700 px-3 py-2 text-sm text-neutral-300 hover:bg-neutral-900 disabled:opacity-50"
+          >
+            Run now + snapshots
+          </button>
+          <a href="/admin/ekos-sync/snapshots" className="text-xs text-neutral-500 hover:underline">
+            Snapshots
+          </a>
+          <button
+            type="button"
+            onClick={() => runNow(false)}
+            disabled={running}
+            className="flex items-center gap-2 rounded-md bg-brand px-3 py-2 text-sm font-medium text-on-brand hover:bg-brand-hover disabled:opacity-50"
+          >
+            {running ? "Running…" : "Run now"}
+          </button>
+        </div>
       </div>
 
-      {message && <p className="rounded-md border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200">{message}</p>}
+      {message && (
+        <p className="rounded-md border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200">
+          {message}
+          {snapshotGroup && (
+            <>
+              {" "}
+              <a href={`/admin/ekos-sync/snapshots?group=${snapshotGroup}`} className="text-brand hover:underline">
+                View snapshots →
+              </a>
+            </>
+          )}
+        </p>
+      )}
       {error && <p className="rounded-md border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-300">{error}</p>}
 
       <section className="flex flex-col gap-2">

@@ -2,6 +2,7 @@ import type { Browser, Frame, HTTPRequest, Page } from "puppeteer-core";
 import { launchBrowser } from "@/lib/ernie/browser";
 import type { EkosPurchaseOrder, EkosPoItem } from "@/lib/syncs/ekosPurchaseOrders";
 import type { EkosInventoryRow } from "@/lib/syncs/ekosNameMap";
+import { snap, watchPage } from "@/lib/syncs/snapshots";
 
 // Ekos reader for the Automatic Syncs (Admin → Ekos Sync) — added
 // 2026-10-03, Phase 2 of claude/ekos-auto-sync-plan.md.
@@ -111,7 +112,9 @@ async function openSession(): Promise<EkosSession> {
     });
     page.on("dialog", (d) => d.dismiss().catch(() => {}));
 
+    watchPage(page);
     await page.goto(`${EKOS_ORIGIN}/`, { waitUntil: "networkidle2" });
+    await snap(page, "Ekos sign-in page");
     const hasForm = await page.$("#txtUsername");
     if (!hasForm || !(await page.$("#txtPassword")) || !(await page.$("#btnLogin"))) {
       throw new Error("Ekos's sign-in page looks different than expected — the reader needs an update.");
@@ -146,8 +149,11 @@ async function openSession(): Promise<EkosSession> {
     if (!(await page.cookies().catch(() => [])).some((c) => c.name === "token" && c.value)) {
       throw new Error(`Ekos sign-in didn't finish (no session from Ekos).${await describePage(page)}`);
     }
+    await snap(page, "Signed in");
     return { browser, page };
   } catch (err) {
+    const page = (await browser.pages().catch(() => []))[0];
+    if (page) await snap(page, `Sign-in FAILED: ${err instanceof Error ? err.message.slice(0, 120) : ""}`);
     await browser.close().catch(() => {});
     throw err;
   }
@@ -246,7 +252,9 @@ export async function readEkosOpenPurchaseOrders(): Promise<EkosPurchaseOrder[]>
   page.on("response", onResponse);
   try {
     await page.goto(OPEN_PO_LIST_URL, { waitUntil: "networkidle2" });
+    await snap(page, "Open PO list — just opened");
     await waitFor(async () => (await shownPoNumbers(page)) !== null, "the Open Purchase Orders list");
+    await snap(page, "Open PO list — ready");
   } finally {
     page.off("response", onResponse);
   }
@@ -311,6 +319,7 @@ async function readPoDetail(
   number: string,
 ): Promise<{ fields: Record<string, string>; items: EkosPoItem[] }> {
   await page.goto(PO_DETAIL_URL(guid), { waitUntil: "networkidle2" });
+  await snap(page, `PO ${number} — just opened`);
   let frame: Frame | undefined;
   await waitFor(async () => {
     frame = page
@@ -329,6 +338,7 @@ async function readPoDetail(
       .catch(() => false);
   }, `PO ${number}'s item list`);
 
+  await snap(page, `PO ${number} — items ready`);
   const data = await frame!.evaluate(() => {
     const fields: Record<string, string> = {};
     for (const tr of document.querySelectorAll("tr")) {
@@ -385,6 +395,7 @@ async function readPoDetail(
 export async function readEkosDistributorInventory(): Promise<EkosInventoryRow[]> {
   const { page } = await getEkosSession();
   await page.goto(DISTRIBUTOR_INVENTORY_URL, { waitUntil: "networkidle2" });
+  await snap(page, "Distributor Inventory — just opened");
   await waitFor(
     () => page.evaluate(() => !!document.querySelector("table tbody tr") && /\d+ of \d+/.test(document.body.innerText)),
     "the Distributor Inventory report",
@@ -462,7 +473,14 @@ async function waitFor(check: () => Promise<boolean>, what: string, timeoutMs = 
     if (await check().catch(() => false)) return;
     await sleep(500);
   }
-  throw new Error(`Timed out waiting for ${what} in Ekos — nothing was changed.${await describePage()}`);
+  const details = await describePage();
+  try {
+    const page = current ? (await current).page : null;
+    if (page) await snap(page, `TIMED OUT waiting for ${what}`);
+  } catch {
+    // ignore
+  }
+  throw new Error(`Timed out waiting for ${what} in Ekos — nothing was changed.${details}`);
 }
 
 // Where the hidden browser was stuck, for the run log.

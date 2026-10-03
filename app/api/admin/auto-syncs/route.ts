@@ -5,6 +5,7 @@ import { runAutoSyncs, SYNC_SOURCES } from "@/lib/syncs/autoSyncs";
 
 // Admin → Ekos Sync controls (added 2026-10-03). Admins only.
 //   { action: "run_now" }                         — run every switched-on source now
+//   { action: "run_now", snapshot: true }         — same, recording every step (diagnostic)
 //   { action: "set_enabled", key, enabled }       — flip a source's on/off switch
 export const maxDuration = 300;
 
@@ -18,10 +19,11 @@ export async function POST(req: NextRequest) {
     action?: string;
     key?: string;
     enabled?: boolean;
+    snapshot?: boolean;
   };
 
   if (body.action === "run_now") {
-    const summary = await runAutoSyncs("run_now", profile.id);
+    const summary = await runAutoSyncs("run_now", profile.id, { snapshot: !!body.snapshot });
     return NextResponse.json({ ok: true, ...summary });
   }
 

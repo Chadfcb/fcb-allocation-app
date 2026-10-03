@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendMail } from "@/lib/email/sendMail";
 import { recordSyncRun, type SyncTrigger } from "@/lib/syncs/runLog";
+import { startSnapshots, stopSnapshots } from "@/lib/syncs/snapshots";
 import { syncEkosPurchaseOrders } from "@/lib/syncs/ekosPurchaseOrders";
 import { syncEkosDistributorInventory } from "@/lib/syncs/ekosDistributorInventory";
 import { translateEkosInventory } from "@/lib/syncs/ekosNameMap";
@@ -76,19 +77,29 @@ export const SYNC_SOURCES: SyncSourceDef[] = [
 const ALERT_EMAILS = ["chad@fullcirclebrewing.com"];
 
 export interface AutoSyncSummary {
+  snapshotGroup?: string;
   ran: { key: string; label: string; status: "ok" | "issues" | "failed"; syncedCount: number; issues: string[] }[];
   skipped: { key: string; label: string; reason: string }[];
 }
 
-export async function runAutoSyncs(trigger: SyncTrigger, runBy: string | null): Promise<AutoSyncSummary> {
+// options.snapshot ("Run now + snapshots"): records every step the hidden
+// browser takes (lib/syncs/snapshots.ts), runs every BUILT source even if
+// it's switched off (it's a diagnostic run), and sends no email (Chad is
+// watching it).
+export async function runAutoSyncs(
+  trigger: SyncTrigger,
+  runBy: string | null,
+  options: { snapshot?: boolean } = {},
+): Promise<AutoSyncSummary> {
   const admin = createAdminClient();
   const { data: rows } = await admin.from("sync_sources").select("key, enabled");
   const enabled = new Map((rows ?? []).map((r) => [r.key as string, !!r.enabled]));
 
   const summary: AutoSyncSummary = { ran: [], skipped: [] };
+  if (options.snapshot) summary.snapshotGroup = startSnapshots();
 
   for (const source of SYNC_SOURCES) {
-    if (!enabled.get(source.key)) {
+    if (!enabled.get(source.key) && !(options.snapshot && source.run)) {
       summary.skipped.push({ key: source.key, label: source.label, reason: "Switched off" });
       continue;
     }
@@ -120,6 +131,10 @@ export async function runAutoSyncs(trigger: SyncTrigger, runBy: string | null): 
 
   // Sign out of Ekos / close the hidden browser.
   await closeEkosSession();
+  if (options.snapshot) {
+    stopSnapshots();
+    return summary;
+  }
 
   // Email only when something actually needs attention — a clean run sends
   // nothing (Chad's standing rule for the sync).
