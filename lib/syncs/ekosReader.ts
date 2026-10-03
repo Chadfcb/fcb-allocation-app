@@ -79,9 +79,29 @@ async function openSession(): Promise<EkosSession> {
     const page = (await browser.pages())[0] ?? (await browser.newPage());
     page.setDefaultNavigationTimeout(NAV_TIMEOUT_MS);
     page.setDefaultTimeout(NAV_TIMEOUT_MS);
-    await page.setViewport({ width: 1568, height: 900 });
 
     await page.setUserAgent(USER_AGENT);
+    // ROOT CAUSE of the PO-items failures (found from the snapshot run,
+    // 2026-10-03): Ekos's sign-in page records the screen size and platform
+    // (hidden fields hidScreenWidth / hidScreenHeight / hidPlatform), and
+    // Ekos then serves its older screens in a small-screen "card" layout —
+    // the PO Items list had no header row, one card per item. A hidden
+    // browser reports a small screen and a Linux platform. Report a normal
+    // 1920×1080 Windows desktop, the same as Chad's Chrome sends.
+    // Screen size via Chrome's own device settings (applies to every frame);
+    // platform via a small script that runs before Ekos's own scripts.
+    const cdp = await page.createCDPSession();
+    await cdp.send("Emulation.setDeviceMetricsOverride", {
+      width: 1568,
+      height: 900,
+      deviceScaleFactor: 1,
+      mobile: false,
+      screenWidth: 1920,
+      screenHeight: 1080,
+    });
+    await page.evaluateOnNewDocument(
+      "try{Object.defineProperty(navigator,'platform',{get:()=>'Win32'});Object.defineProperty(navigator,'maxTouchPoints',{get:()=>0});}catch(e){}",
+    );
     diag.errors.length = 0;
     diag.blocked.length = 0;
     diag.httpErrors.length = 0;
@@ -328,14 +348,23 @@ async function readPoDetail(
     if (!frame) return false;
     // Ekos fills the PO Items list in after the page appears — wait until its
     // header row (Item / Quantity Ordered / Total Item Cost) is actually there.
-    return frame
+    const state = await frame
       .evaluate(() => {
         const t = document.querySelector("table[id*='po_items']") as HTMLTableElement | null;
-        if (!t || !t.rows.length) return false;
+        if (!t || !t.rows.length) return "waiting";
         const h = [...t.rows[0].cells].map((c) => (c.textContent || "").replace(/\s+/g, " ").trim().toUpperCase());
-        return h.includes("ITEM") && h.includes("QUANTITY ORDERED") && h.includes("TOTAL ITEM COST");
+        if (h.includes("ITEM") && h.includes("QUANTITY ORDERED") && h.includes("TOTAL ITEM COST")) return "ready";
+        // Small-screen "card" layout: one cell per item, labels inside.
+        if (t.rows[0].cells.length === 1 && /Item Number/i.test(t.rows[0].textContent || "")) return "cards";
+        return "waiting";
       })
-      .catch(() => false);
+      .catch(() => "waiting");
+    if (state === "cards") {
+      throw new StopWaiting(
+        `Ekos showed PO ${number}'s items in its small-screen layout, which the reader can't read — nothing was changed.`,
+      );
+    }
+    return state === "ready";
   }, `PO ${number}'s item list`);
 
   await snap(page, `PO ${number} — items ready`);
@@ -467,10 +496,17 @@ function clickPager(direction: string): boolean {
   return true;
 }
 
+// Thrown from a waitFor check to stop at once with a clear reason.
+class StopWaiting extends Error {}
+
 async function waitFor(check: () => Promise<boolean>, what: string, timeoutMs = NAV_TIMEOUT_MS): Promise<void> {
   const until = Date.now() + timeoutMs;
   while (Date.now() < until) {
-    if (await check().catch(() => false)) return;
+    try {
+      if (await check()) return;
+    } catch (err) {
+      if (err instanceof StopWaiting) throw err;
+    }
     await sleep(500);
   }
   const details = await describePage();
