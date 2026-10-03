@@ -8,11 +8,11 @@
 // report. This replaced the old one-distributor-at-a-time Distributor Data
 // page entirely.
 //
-// Data arrives the same way Purchase Orders does: there's no live Ekos API,
-// so a live Claude-in-Chrome session (or Chad by hand) reads Ekos's own
-// "Distributor Inventory" report and posts the numbers to
-// /api/distributor-inventory/sync, matched up to FCB Data's distributor and
-// product names. On Hand and Daily Rate of Sale are also editable by hand
+// Data arrives from the automatic Ekos sync (Admin → Ekos Sync): the app's
+// server reads Ekos's own "Distributor Inventory" report and matches it to
+// FCB Data's names (lib/syncs/). The "Sync from Ekos" paste box was removed
+// 2026-10-03 at Chad's request once the automatic sync was proven.
+// On Hand and Daily Rate of Sale are also editable by hand
 // for a quick manual correction; Projected Days on Hand is always computed
 // (on hand ÷ daily rate), never stored.
 
@@ -50,14 +50,6 @@ export default function DistributorInventoryPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState<string | null>(null);
-
-  const [syncOpen, setSyncOpen] = useState(false);
-  const [syncText, setSyncText] = useState("");
-  const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<{ syncedCount: number; errors: string[] } | null>(
-    null
-  );
-  const [syncError, setSyncError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -233,39 +225,6 @@ export default function DistributorInventoryPage() {
     return cell.on_hand_qty / cell.rate_of_sale;
   }
 
-  async function handleSync() {
-    setSyncing(true);
-    setSyncError(null);
-    setSyncResult(null);
-
-    let payload: unknown;
-    try {
-      payload = JSON.parse(syncText);
-    } catch {
-      setSyncError("That's not valid JSON — check for a stray comma or missing bracket.");
-      setSyncing(false);
-      return;
-    }
-
-    const res = await fetch("/api/distributor-inventory/sync", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const json = await res.json();
-
-    if (!res.ok) {
-      setSyncError(json.error ?? "Sync failed");
-      setSyncing(false);
-      return;
-    }
-
-    setSyncResult(json);
-    setSyncText("");
-    setSyncing(false);
-    await load();
-  }
-
   const combined: CombinedRow[] = [
     ...products.map((p): CombinedRow => ({ kind: "product", item: p })),
     ...dividers.map((d): CombinedRow => ({ kind: "divider", item: d })),
@@ -296,51 +255,7 @@ export default function DistributorInventoryPage() {
             in Ekos.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setSyncOpen((prev) => !prev)}
-          className="shrink-0 rounded-md border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-900"
-        >
-          {syncOpen ? "Close" : "Sync from Ekos"}
-        </button>
       </div>
-
-      {syncOpen && (
-        <div className="rounded-lg border border-yellow-500/40 bg-yellow-500/[0.03] p-3">
-          <p className="mb-2 text-sm text-neutral-400">
-            Paste distributor on-hand entries (JSON) read from Ekos&apos;s Distributor Inventory
-            report, then Sync. Each entry is matched by distributor and product name and upserted
-            into this week only. Only the 7 Core distributors are updated — any other distributor
-            name, or a product that doesn&apos;t match, is skipped and listed below.
-          </p>
-          <textarea
-            value={syncText}
-            onChange={(e) => setSyncText(e.target.value)}
-            rows={8}
-            placeholder='{"entries": [{"distributor": "Matagrano", "product": "Big Daddy IPA (Keg - 1/2 bbl)", "onHand": 39, "rateOfSale": 8.4}]}'
-            className="block w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 font-mono text-xs text-neutral-100"
-          />
-          <div className="mt-2 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleSync}
-              disabled={syncing || !syncText.trim()}
-              className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-black hover:bg-neutral-200 disabled:opacity-50"
-            >
-              {syncing ? "Syncing…" : "Sync"}
-            </button>
-            {syncError && <p className="text-sm text-red-400">{syncError}</p>}
-            {syncResult && (
-              <p className="text-sm text-neutral-300">
-                Synced {syncResult.syncedCount}
-                {syncResult.errors.length > 0 && (
-                  <span className="text-red-400"> — {syncResult.errors.join("; ")}</span>
-                )}
-              </p>
-            )}
-          </div>
-        </div>
-      )}
 
       <div className="overflow-x-auto rounded-lg border border-neutral-800 bg-neutral-950">
         <table className="w-full border-collapse text-sm">

@@ -4,11 +4,10 @@
 // orders (buying ingredients/supplies from suppliers), synced in from Ekos.
 // Live via Supabase Realtime, same as the rest of the app.
 //
-// The "Sync from Ekos" box is how new data actually arrives: there's no
-// live Ekos API, so a live Claude-in-Chrome session (driven by Chad, using
-// his own already-logged-in Ekos tab) reads the current Open - Purchase
-// Orders list and posts it here as JSON, same shape this box accepts by
-// hand if anyone ever needed to.
+// New data arrives from the automatic Ekos sync (Admin → Ekos Sync): the
+// app's server reads Ekos's Open - Purchase Orders list (lib/syncs/). The
+// "Sync from Ekos" paste box was removed 2026-10-03 at Chad's request once
+// the automatic sync was proven.
 //
 // Lifecycle (added 2026-09-09) — every PO has a record_status:
 //   open      — currently open in Ekos (what the table above used to be,
@@ -67,16 +66,6 @@ export default function PurchaseOrdersPageClient() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-
-  const [syncOpen, setSyncOpen] = useState(false);
-  const [syncText, setSyncText] = useState("");
-  const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<{
-    syncedCount: number;
-    movedToHoldingCount: number;
-    errors: string[];
-  } | null>(null);
-  const [syncError, setSyncError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const {
@@ -311,39 +300,6 @@ export default function PurchaseOrdersPageClient() {
     }
   }
 
-  async function handleSync() {
-    setSyncing(true);
-    setSyncError(null);
-    setSyncResult(null);
-
-    let payload: unknown;
-    try {
-      payload = JSON.parse(syncText);
-    } catch {
-      setSyncError("That's not valid JSON — check for a stray comma or missing bracket.");
-      setSyncing(false);
-      return;
-    }
-
-    const res = await fetch("/api/purchase-orders/sync", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const json = await res.json();
-
-    if (!res.ok) {
-      setSyncError(json.error ?? "Sync failed");
-      setSyncing(false);
-      return;
-    }
-
-    setSyncResult(json);
-    setSyncText("");
-    setSyncing(false);
-    await load();
-  }
-
   const lastSyncedAt = orders.reduce<string | null>((latest, po) => {
     if (!po.synced_at) return latest;
     if (!latest || po.synced_at > latest) return po.synced_at;
@@ -525,50 +481,7 @@ export default function PurchaseOrdersPageClient() {
             )}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setSyncOpen((prev) => !prev)}
-          className="shrink-0 rounded-md border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-900"
-        >
-          {syncOpen ? "Close" : "Sync from Ekos"}
-        </button>
       </div>
-
-      {syncOpen && (
-        <div className="rounded-lg border border-yellow-500/40 bg-yellow-500/[0.03] p-3">
-          <p className="mb-2 text-sm text-neutral-400">
-            Paste the current Open - Purchase Orders data (JSON) from Ekos, then Sync. Anything
-            below that&apos;s no longer in that list moves to Holding — nothing gets deleted
-            automatically.
-          </p>
-          <textarea
-            value={syncText}
-            onChange={(e) => setSyncText(e.target.value)}
-            rows={8}
-            placeholder='{"purchaseOrders": [{"ekosPoNumber": "3145", "supplier": "MoreBeer", ...}]}'
-            className="block w-full rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 font-mono text-xs text-neutral-100"
-          />
-          <div className="mt-2 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleSync}
-              disabled={syncing || !syncText.trim()}
-              className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-black hover:bg-neutral-200 disabled:opacity-50"
-            >
-              {syncing ? "Syncing…" : "Sync"}
-            </button>
-            {syncError && <p className="text-sm text-red-400">{syncError}</p>}
-            {syncResult && (
-              <p className="text-sm text-neutral-300">
-                Synced {syncResult.syncedCount}, moved to Holding {syncResult.movedToHoldingCount}
-                {syncResult.errors.length > 0 && (
-                  <span className="text-red-400"> — {syncResult.errors.join("; ")}</span>
-                )}
-              </p>
-            )}
-          </div>
-        </div>
-      )}
 
       <div className="overflow-x-auto rounded-lg border border-neutral-800">
         <table className="min-w-full text-sm">
@@ -585,7 +498,7 @@ export default function PurchaseOrdersPageClient() {
             ) : openOrders.length === 0 ? (
               <tr>
                 <td colSpan={11} className="px-3 py-6 text-center text-neutral-500">
-                  No open purchase orders yet — use &quot;Sync from Ekos&quot; above to pull them
+                  No open purchase orders — the automatic Ekos sync (Admin → Ekos Sync) pulls them
                   in.
                 </td>
               </tr>
