@@ -2202,7 +2202,9 @@ export default function ErnieChatClient({
           )}
           {uploadError && <p className="mb-2 text-xs text-red-400">{uploadError}</p>}
 
-          <form onSubmit={handleSubmit} className="flex items-center gap-2 rounded-full border border-[color:var(--e-border)] bg-white py-1.5 pl-1.5 pr-2">
+          {/* Facelift 2026-10-03: the message bar is now dark like the rest of the
+              app (it used to stay white). */}
+          <form onSubmit={handleSubmit} className="flex items-center gap-2 rounded-full border border-[color:var(--e-border)] bg-[color:var(--e-surface)] py-1.5 pl-1.5 pr-2">
             <input
               ref={fileInputRef}
               type="file"
@@ -2218,7 +2220,7 @@ export default function ErnieChatClient({
               onClick={() => fileInputRef.current?.click()}
               disabled={loading || uploading}
               title="Attach a file"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-neutral-500 transition-colors hover:bg-neutral-100 hover:text-[color:var(--e-accent-dark)] disabled:opacity-50"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[color:var(--e-muted)] transition-colors hover:bg-white/5 hover:text-[color:var(--e-accent-hover)] disabled:opacity-50"
             >
               +
             </button>
@@ -2227,7 +2229,7 @@ export default function ErnieChatClient({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Ask Ernie something, or attach a file…"
-              className="flex-1 bg-transparent text-sm text-black placeholder:text-neutral-500 focus:outline-none"
+              className="flex-1 bg-transparent text-sm text-[color:var(--e-text)] placeholder:text-[color:var(--e-faint)] focus:outline-none"
             />
             <button
               type="submit"

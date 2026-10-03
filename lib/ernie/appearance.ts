@@ -50,26 +50,29 @@ export interface ErniePreset {
 
 export const ERNIE_PRESETS: ErniePreset[] = [
   {
+    // Facelift 2026-10-03: FCB Dark now matches the rest of the app's new
+    // look (green-tinted charcoal, soft green highlight for your own
+    // messages) — see app/globals.css and claude/app-facelift-direction.md.
     key: "fcb-dark",
     label: "FCB Dark (default)",
     mode: "dark",
-    colors: { background: "#12150f", text: "#eef1e9", accent: "#6ABC46", userBubble: "#6ABC46", ernieBubble: null },
+    colors: { background: "#0d1210", text: "#e8edea", accent: "#6ABC46", userBubble: "#6ABC46", ernieBubble: null },
     exact: {
-      "--e-panel": "#12150f",
-      "--e-modal": "#12150e",
-      "--e-surface": "#181c13",
-      "--e-border": "#262c1f",
-      "--e-divider": "#1c2117",
-      "--e-text": "#eef1e9",
-      "--e-muted": "#8f9885",
-      "--e-faint": "#5d6456",
+      "--e-panel": "#0d1210",
+      "--e-modal": "#0f1512",
+      "--e-surface": "#141a17",
+      "--e-border": "#24302a",
+      "--e-divider": "#1a211d",
+      "--e-text": "#e8edea",
+      "--e-muted": "#8a948f",
+      "--e-faint": "#5f6964",
       "--e-accent": "#6ABC46",
       "--e-accent-hover": "#7fce5c",
       "--e-accent-dark": "#4c8a32",
       "--e-on-accent": "#0b0e09",
-      "--e-deep": "#0b0e09",
-      "--e-user-bg": "#6ABC46",
-      "--e-user-text": "#0b0e09",
+      "--e-deep": "#080b0a",
+      "--e-user-bg": "#1a2b15",
+      "--e-user-text": "#f2f7f0",
     },
   },
   {
@@ -239,7 +242,8 @@ export function fontStackFor(font: ErnieFontKey): { body: string; head: string }
     case "typewriter":
       return { body: "var(--font-plex-mono), ui-monospace, monospace", head: "var(--font-plex-mono), ui-monospace, monospace" };
     default:
-      return { body: "var(--font-plex-sans), system-ui, sans-serif", head: "var(--font-archivo), system-ui, sans-serif" };
+      // Plus Jakarta Sans — the app's font since the 2026-10-03 facelift.
+      return { body: "var(--font-jakarta), system-ui, sans-serif", head: "var(--font-jakarta), system-ui, sans-serif" };
   }
 }
 
