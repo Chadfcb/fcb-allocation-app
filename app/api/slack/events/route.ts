@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getErnieTools, buildErnieSystemPrompt, runErnieTool } from "@/lib/ernie/tools";
+import { danglingServerToolUseIds, withoutDanglingServerToolUse } from "@/lib/ernie/replyBudget";
 import { hasSection, getUserSections, ERNIE_SECTION, type AnySectionKey } from "@/lib/permissions";
 import type { Role } from "@/lib/types/db";
 
@@ -50,13 +51,17 @@ import type { Role } from "@/lib/types/db";
 // SLACK_BOT_TOKEN, ANTHROPIC_API_KEY, plus the same NEXT_PUBLIC_SUPABASE_URL
 // / SUPABASE_SERVICE_ROLE_KEY the rest of the app already has.
 
-export const maxDuration = 60;
+// 60 -> 120 (2026-10-03): room for the extra second-chance rounds. The app's
+// Ernie routes already use 300 on this same Vercel plan.
+export const maxDuration = 120;
 
 const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET!;
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN!;
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY!;
 const ANTHROPIC_MODEL = "claude-sonnet-5";
-const MAX_TOOL_ROUNDS = 5;
+// 5 -> 7 (2026-10-03): the extra rounds are room for the "came back empty /
+// paused / cut off" second chances below, so a real answer still fits.
+const MAX_TOOL_ROUNDS = 7;
 
 // Anthropic's own hosted tools -- resolved server-side within the same API
 // response, no extra handling needed here beyond including them. Mirrors
@@ -393,7 +398,9 @@ async function askErnie(
       },
       body: JSON.stringify({
         model: ANTHROPIC_MODEL,
-        max_tokens: 1024,
+        // 1024 -> 2048 (2026-10-03), same as the app's Ernie
+        // (app/api/ernie/chat/route.ts). See the empty-reply note below.
+        max_tokens: 2048,
         // Prompt caching, same as the main Ernie chat backend -- the system
         // prompt + tool list are identical across every round of this loop
         // and across separate Slack messages for the same person. 1-hour
@@ -414,6 +421,49 @@ async function askErnie(
 
     const data = await res.json();
     const content = data.content ?? [];
+
+    // -----------------------------------------------------------------------
+    // Empty / paused / cut-off replies (added 2026-10-03).
+    // Seen live 2026-09-17 6:18 PM ("what's the grain bill for captain hazy")
+    // and 2026-10-03 5:25 + 5:26 PM (Art's and Chad's can questions, right
+    // after get_inventory_and_allocations): the AI finished a round with no
+    // text, and this route posted "Sorry, I didn't have anything to say to
+    // that." The app's Ernie has had second chances for this since 9/17
+    // (commit 6851457) but Slack never got them. Same three handlers as
+    // app/api/ernie/chat/route.ts, plus a log line so the reason shows in
+    // Vercel's logs (search "[slack/events] empty-round").
+    // -----------------------------------------------------------------------
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+    const hasText = content.some((b: any) => b.type === "text" && typeof b.text === "string" && b.text.trim());
+    if (!hasText && data.stop_reason !== "tool_use") {
+      console.warn(
+        "[slack/events] empty-round",
+        JSON.stringify({
+          round,
+          isLastRound,
+          stop_reason: data.stop_reason,
+          usage: data.usage,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
+          blocks: content.map((b: any) => b.type),
+        }),
+      );
+    }
+
+    // Anthropic paused a long-running server tool (web search/fetch) --
+    // hand its content back unchanged so it resumes. Never add a user
+    // message here (that causes a "tool use without tool_result" error).
+    if (data.stop_reason === "pause_turn" && !isLastRound) {
+      messages.push({ role: "assistant", content });
+      continue;
+    }
+    // Cut off by length in the middle of a server tool call: drop the
+    // half-finished call and ask for the step again.
+    if (data.stop_reason === "max_tokens" && danglingServerToolUseIds(content).length > 0 && !isLastRound) {
+      const kept = withoutDanglingServerToolUse(content);
+      messages.push({ role: "assistant", content: kept.length ? kept : [{ type: "text", text: "(My last step was cut off.)" }] });
+      messages.push({ role: "user", content: "Your last step was cut off before that tool finished. Please try that step again." });
+      continue;
+    }
 
     if (data.stop_reason === "tool_use") {
       messages.push({ role: "assistant", content });
@@ -481,7 +531,21 @@ async function askErnie(
       continue;
     }
 
-    return finalText || "Sorry, I didn't have anything to say to that.";
+    // No words this round (and not a tool call): one more round with a
+    // plain nudge instead of giving up. The last round is tool-free
+    // (tool_choice none), so it has to answer in text.
+    if (!finalText && !isLastRound) {
+      const kept = withoutDanglingServerToolUse(content);
+      messages.push({ role: "assistant", content: kept.length ? kept : [{ type: "text", text: "(No reply that round.)" }] });
+      messages.push({
+        role: "user",
+        content:
+          "SYSTEM CHECK (not from the person you're talking to): that round didn't produce a text reply or a tool call. Answer the person's question now in plain text using what you've already looked up -- keep it short and Slack-friendly. If you still need one more lookup, call that tool instead.",
+      });
+      continue;
+    }
+
+    return finalText || "Sorry, I couldn't finish an answer to that one -- please @-mention me and ask again.";
   }
 
   return "Sorry, I wasn't able to put together an answer for that.";
