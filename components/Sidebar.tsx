@@ -977,8 +977,9 @@ export default function Sidebar({
                   )}
 
                   {/* Tanks (2026-10-03) — 3D x-ray view of every unitank.
-                      Admins only, same as Dashboard. */}
-                  {role === "admin" && (
+                      Gated by its own "Tanks" access (Admin → Users), same
+                      as every other section. */}
+                  {can("tanks") && (
                     <Link href="/tanks" className={topLinkClass("/tanks")} onClick={() => dismissNew("/tanks")}>
                       <IconTank />
                       Tanks

@@ -35,7 +35,8 @@ export type SectionKey =
   | "tasks"
   | "chain_authorizations"
   | "chain_mandates"
-  | "football_pos";
+  | "football_pos"
+  | "tanks";
 
 // Ernie AI is deliberately its own grantable section, separate from every
 // page section above — an admin may want someone to have, say, Purchase
@@ -80,6 +81,7 @@ export type GroupKey =
   | "sales"
   | "events_calendar"
   | "pos_labels"
+  | "tanks"
   | "tasks"
   | "audit_log";
 
@@ -165,6 +167,17 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
     // shared pool, not per-brand artwork.
     label: "POS",
     items: [{ key: "football_pos", label: "Football POS" }],
+  },
+  {
+    // Tanks (3D tank view under MAIN) — its own Users > Edit toggle, added
+    // 2026-10-03 per Chad: "who has access to Tank? It needs to be gated as
+    // well." Before this it was admins-only with no checkbox. No SQL needed:
+    // user_section_access has no list of allowed keys, and Tanks has no
+    // table of its own yet (when the Ekos tank sync adds one, its RLS policy
+    // should use has_section(auth.uid(), 'tanks')).
+    key: "tanks",
+    label: "Tanks",
+    items: [{ key: "tanks", label: "Tanks" }],
   },
   {
     key: "tasks",
