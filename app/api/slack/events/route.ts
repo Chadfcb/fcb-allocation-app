@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getErnieTools, buildErnieSystemPrompt, runErnieTool } from "@/lib/ernie/tools";
 import { danglingServerToolUseIds, withoutDanglingServerToolUse } from "@/lib/ernie/replyBudget";
 import { getSlackUserClient } from "@/lib/ernie/slackUserSession";
+import { closeBrowseSession, logBrowseStep } from "@/lib/ernie/browser";
 import { hasSection, getUserSections, ERNIE_SECTION, type AnySectionKey } from "@/lib/permissions";
 import type { Role } from "@/lib/types/db";
 
@@ -52,9 +53,10 @@ import type { Role } from "@/lib/types/db";
 // SLACK_BOT_TOKEN, ANTHROPIC_API_KEY, plus the same NEXT_PUBLIC_SUPABASE_URL
 // / SUPABASE_SERVICE_ROLE_KEY the rest of the app already has.
 
-// 60 -> 120 (2026-10-03): room for the extra second-chance rounds. The app's
+// 60 -> 120 (2026-10-03): room for the extra second-chance rounds; -> 300
+// the same evening for opening FCB-Data pages in Ernie's browser. The app's
 // Ernie routes already use 300 on this same Vercel plan.
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 const SLACK_SIGNING_SECRET = process.env.SLACK_SIGNING_SECRET!;
 const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN!;
@@ -62,7 +64,7 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY!;
 const ANTHROPIC_MODEL = "claude-sonnet-5";
 // 5 -> 7 (2026-10-03): the extra rounds are room for the "came back empty /
 // paused / cut off" second chances below, so a real answer still fits.
-const MAX_TOOL_ROUNDS = 7;
+const MAX_TOOL_ROUNDS = 10;
 
 // Anthropic's own hosted tools -- resolved server-side within the same API
 // response, no extra handling needed here beyond including them. Mirrors
@@ -163,6 +165,12 @@ const SLACK_SIGNED_IN_EXTRA_TOOL_NAMES = new Set([
   "list_app_files",
   "read_app_file",
   "read_library_file",
+  // Added 2026-10-03, later: open any FCB-Data page signed in as the person
+  // (open_app_page) and keep looking around it (browse_website) -- "i want
+  // him to be able to find anything in the app" (Chad). Look-only: the
+  // browser blocks every change to FCB-Data (lib/ernie/browser.ts).
+  "open_app_page",
+  "browse_website",
 ]);
 
 // Slack event_ids we've already handled -- Slack retries delivery on slow
@@ -371,7 +379,7 @@ async function askErnie(
     // Added 2026-09-23: the shared system prompt describes the app's code
     // sandbox, file building, image tools, and web browser -- none of which
     // exist here in Slack -- so Ernie must not offer them in Slack.
-    " IMPORTANT -- in Slack you do NOT have the code sandbox, file creation (PDF, Word, spreadsheet, PowerPoint, charts), image generation/editing, or the web browser that the rest of these instructions describe; those only work in the FCB-Data app's Ernie page. If someone in Slack asks you to make a file or image, tell them plainly you can't do that here in Slack and to ask you on the Ernie page in FCB-Data, where you can build it for them." +
+    " IMPORTANT -- in Slack you do NOT have the code sandbox, file creation (PDF, Word, spreadsheet, PowerPoint, charts), or image generation/editing that the rest of these instructions describe; those only work in the FCB-Data app's Ernie page. If someone in Slack asks you to make a file or image, tell them plainly you can't do that here in Slack and to ask you on the Ernie page in FCB-Data, where you can build it for them." +
     " You're replying inside a Slack channel where more than one person may be talking -- each line of the conversation history is labeled with who said it. Keep replies short and Slack-appropriate: plain text, no markdown headers or asterisk bullets, and never mention threading (Ernie always posts as a new message here, never a threaded reply). When listing multiple items (e.g. events, orders, tasks), put each one on its own line -- a plain line break between items, not a comma-separated sentence and not markdown bullet syntax." +
     " If you propose creating or changing a task, task subcategory, or calendar event (create_task/update_task/create_task_subcategory/add_social_media_calendar_event/update_social_media_calendar_event/add_events_calendar_event/update_events_calendar_event/add_chain_calendar_event/update_chain_calendar_event), or a bundle of several of these via propose_actions, remember you only see messages where you're @-mentioned -- so after you show someone the preview (the FULL numbered list, for a bundle), explicitly tell them to @-mention you again with their approval (e.g. \"@Ernie yes, do that\") to confirm it. A plain reply with no @-mention won't reach you at all, so don't just say \"let me know\" -- say they need to tag you. When a request has more than one part (e.g. a new subcategory AND a task filed under it), you MUST actually call propose_actions to stage it -- never just describe the steps in plain text and say \"tag me to confirm,\" since nothing is actually staged until you call the tool, and a later confirmation will find nothing to confirm.";
 
@@ -400,8 +408,8 @@ async function askErnie(
       (t) => SLACK_ALLOWED_TOOL_NAMES.has(t.name) || (runsAsUser && SLACK_SIGNED_IN_EXTRA_TOOL_NAMES.has(t.name)),
     );
     systemPrompt += runsAsUser
-      ? " In Slack you are signed in AS this person, so your data tools -- including run_read_only_query, your general read-only search -- see exactly what their FCB-Data account can see. Use run_read_only_query for anything your specific tools don't cover (for example the Packaging Inventory panel: packaging_inventory + packaging_consumed_for_week), the same as on the Ernie page."
-      : " Right now in Slack you do NOT have run_read_only_query (your general search) -- only the specific tools listed. If a question needs data none of them return, say plainly you couldn't look that up from Slack this time and suggest asking on the Ernie page; never claim a tool is erroring unless a tool result actually returned an error.";
+      ? " In Slack you are signed in AS this person, so your data tools -- including run_read_only_query, your general read-only search -- see exactly what their FCB-Data account can see. Use run_read_only_query for raw records your specific tools don't cover, and open_app_page to open any FCB-Data page as this person and read it exactly as they'd see it -- that's how to answer anything shown on a page (e.g. the Packaging Inventory panel on /inventory: Consumed / Remaining, negative = short), the same as on the Ernie page."
+      : " Right now in Slack you do NOT have run_read_only_query (your general search), open_app_page or your browser -- only the specific tools listed. If a question needs data none of them return, say plainly you couldn't look that up from Slack this time and suggest asking on the Ernie page; never claim a tool is erroring unless a tool result actually returned an error.";
     tools = [...allowedDataTools, WEB_SEARCH_TOOL, WEB_FETCH_TOOL];
   } else {
     systemPrompt =
@@ -412,6 +420,9 @@ async function askErnie(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- see above
   const messages: any[] = [...history];
 
+  // Ernie's browser (open_app_page / browse_website) lives for this one
+  // Slack message only -- always closed at the end, however the reply ends.
+  try {
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const isLastRound = round === MAX_TOOL_ROUNDS - 1;
 
@@ -514,7 +525,17 @@ async function askErnie(
         } catch (toolErr) {
           result = { error: toolErr instanceof Error ? toolErr.message : "Tool lookup failed" };
         }
-        toolResults.push({ type: "tool_result", tool_use_id: block.id, content: JSON.stringify(result) });
+        if (block.name === "browse_website" && appUser) {
+          await logBrowseStep(supabase, appUser.userId, undefined, block.input, result).catch(() => {});
+        }
+        // A browser screenshot comes back as real image blocks -- hand those
+        // over as-is (never as a giant text blob).
+        const blocks = (result as { __contentBlocks?: unknown } | null)?.__contentBlocks;
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: Array.isArray(blocks) ? blocks : JSON.stringify(result),
+        });
       }
       messages.push({ role: "user", content: toolResults });
       continue;
@@ -575,6 +596,9 @@ async function askErnie(
   }
 
   return "Sorry, I wasn't able to put together an answer for that.";
+  } finally {
+    await closeBrowseSession(requestId).catch(() => {});
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- tool list mixes Ernie's own tool shape with Anthropic's hosted-tool shape

@@ -30,6 +30,14 @@
 //   4. Downloads are denied, pop-up dialogs are dismissed, and private /
 //      internal network addresses are never reachable.
 // Any website is allowed — no allow-list, per Chad.
+//
+// FCB-Data pages (added 2026-10-03, openAppPage below): Ernie can open the
+// app's own pages signed in AS the person asking (login cookie from
+// lib/ernie/appSession.ts), so he reads exactly what that person sees.
+// Read-only there too, enforced at the network: every request to FCB-Data
+// itself or to its database (Supabase) that isn't a plain read (GET/HEAD/
+// OPTIONS) is blocked — saves, status changes, "start new week", server
+// actions, everything — except Supabase's own login-refresh call.
 
 import chromium from "@sparticuz/chromium-min";
 import puppeteer, { type Browser, type Page, type HTTPRequest } from "puppeteer-core";
@@ -59,6 +67,40 @@ interface BrowseSession {
   page: Page;
   lastUsed: number;
   blockedNotes: string[];
+  // Which FCB-Data user this browser is signed in as (open_app_page), if any.
+  appUserId?: string;
+}
+
+// FCB-Data's own address and its database's address — any non-read request
+// to either is blocked (see the header note above).
+const APP_BASE_URL = (process.env.ERNIE_APP_URL || "https://www.fcb-data.com").replace(/\/+$/, "");
+function hostOf(u: string | undefined): string {
+  try {
+    return u ? new URL(u).hostname.toLowerCase() : "";
+  } catch {
+    return "";
+  }
+}
+const APP_HOSTS = new Set(
+  [hostOf(APP_BASE_URL), hostOf(APP_BASE_URL).replace(/^www\./, ""), "www." + hostOf(APP_BASE_URL).replace(/^www\./, "")].filter(Boolean),
+);
+const DB_HOST = hostOf(process.env.NEXT_PUBLIC_SUPABASE_URL);
+
+function isAppOrDbWrite(req: HTTPRequest): boolean {
+  const method = req.method().toUpperCase();
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return false;
+  let u: URL;
+  try {
+    u = new URL(req.url());
+  } catch {
+    return false;
+  }
+  const host = u.hostname.toLowerCase();
+  if (host === DB_HOST) {
+    // Supabase keeping the login fresh is the one allowed non-read call.
+    return !u.pathname.startsWith("/auth/v1/token");
+  }
+  return APP_HOSTS.has(host);
 }
 
 const sessions = new Map<string, BrowseSession>();
@@ -188,6 +230,11 @@ async function preparePage(page: Page, session: BrowseSession | null) {
       // data:/blob: URLs etc. — let them through, they don't leave the browser
     }
     if (host && isDisallowedHost(host)) {
+      req.abort("accessdenied").catch(() => {});
+      return;
+    }
+    if (isAppOrDbWrite(req)) {
+      session?.blockedNotes.push("A change to FCB-Data was blocked (Ernie only looks at the app, he never changes it).");
       req.abort("accessdenied").catch(() => {});
       return;
     }
@@ -579,6 +626,81 @@ export async function browseWebsite(requestId: string, input: BrowseInput): Prom
       // ignore
     }
     return { error: msg, ...(where && where !== "about:blank" ? { current_url: where } : {}) };
+  }
+}
+
+// open_app_page's implementation (see lib/ernie/tools.ts): open an FCB-Data
+// page in Ernie's browser, signed in as the person asking. getCookies is only
+// called the first time this reply's browser needs signing in (or if it was
+// signed in as someone else). After this, browse_website's click / select /
+// scroll / read / back all work on the same page — still read-only.
+export async function openAppPage(
+  requestId: string,
+  userId: string,
+  path: string,
+  getCookies: () => Promise<{ name: string; value: string }[]>,
+): Promise<unknown> {
+  if (!requestId) return { error: "Internal error: missing request id for the browser." };
+  let clean = String(path ?? "").trim();
+  if (!clean) clean = "/dashboard";
+  try {
+    // Accept a full fcb-data.com address too; keep only the path + query.
+    if (/^https?:\/\//i.test(clean)) {
+      const u = new URL(clean);
+      if (!APP_HOSTS.has(u.hostname.toLowerCase())) {
+        return { error: "open_app_page only opens FCB-Data pages — use browse_website for other sites." };
+      }
+      clean = u.pathname + u.search;
+    }
+  } catch {
+    return { error: `"${path}" isn't a valid FCB-Data page address.` };
+  }
+  if (!clean.startsWith("/")) clean = "/" + clean;
+
+  let session: BrowseSession;
+  try {
+    session = await withTimeout(getSession(requestId), 45_000, "Starting the browser");
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Couldn't start the browser." };
+  }
+  try {
+    return await withTimeout(
+      (async () => {
+        if (session.appUserId !== userId) {
+          const cookies = await getCookies();
+          await session.page.setCookie(...cookies.map((c) => ({ name: c.name, value: c.value, url: APP_BASE_URL, secure: APP_BASE_URL.startsWith("https:"), sameSite: "Lax" as const })));
+          session.appUserId = userId;
+        }
+        await session.page.goto(APP_BASE_URL + clean, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
+        // FCB-Data pages load their numbers after the page appears — wait
+        // for that to finish (longer than for an ordinary site).
+        await session.page.waitForNetworkIdle({ idleTime: 900, timeout: 12_000 }).catch(() => {});
+        session.lastUsed = Date.now();
+        if (/\/login(\b|\/|\?|$)/.test(new URL(session.page.url()).pathname)) {
+          session.appUserId = undefined;
+          return { error: "FCB-Data sent Ernie's browser to the login page — signing in as this person didn't work, so the page couldn't be read." };
+        }
+        const snap = await snapshot(session.page, READ_TEXT_CHARS);
+        const blocked = [...session.blockedNotes.splice(0), ...snap.blocked];
+        return {
+          url: snap.url,
+          title: snap.title,
+          signed_in_as: "the person asking (their own FCB-Data access)",
+          ...(blocked.length ? { blocked: Array.from(new Set(blocked)).join(" ") } : {}),
+          page_text: snap.text,
+          ...(snap.totalChars > READ_TEXT_CHARS
+            ? { page_text_note: `Showing the first ${READ_TEXT_CHARS} of ${snap.totalChars} characters — use browse_website action "read" with offset ${READ_TEXT_CHARS} for the rest.` }
+            : {}),
+          elements: snap.elements || "(no clickable elements found)",
+          next_steps:
+            'Same browser, same page: use browse_website (click / select / scroll / read / back / screenshot) with these element numbers to look further — e.g. pick another week, expand a row, or open a sidebar link. Everything is read-only.',
+        };
+      })(),
+      ACTION_TIMEOUT_MS + 15_000,
+      "Opening that FCB-Data page",
+    );
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "Couldn't open that FCB-Data page." };
   }
 }
 

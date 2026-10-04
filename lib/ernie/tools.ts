@@ -80,13 +80,15 @@ import {
   fetchUrlAsFile,
   generateOrEditImageWithGemini,
   startImageAnimation,
+  logErnieToolExecution,
   type SpreadsheetEditInput,
   type SpreadsheetSheetInput,
 } from "@/lib/ernie/files";
 import { listRepoPath, readRepoFile } from "@/lib/github";
 import { isBlockedPath, canAccessRepoPath } from "@/lib/ernie/fileAccessMap";
 import { logChange } from "@/lib/audit";
-import { browseWebsite, type BrowseInput } from "@/lib/ernie/browser";
+import { browseWebsite, openAppPage, type BrowseInput } from "@/lib/ernie/browser";
+import { createUserSession, appAuthCookies } from "@/lib/ernie/appSession";
 
 // Several Sales pages show numbers that are NOT stored in the database —
 // they're computed live in the browser from several tables at once (see
@@ -108,7 +110,7 @@ export const ERNIE_TOOLS = [
   {
     name: "get_inventory_and_allocations",
     description:
-      "Per-product inventory (on hand, unlabeled, to be packaged, total, remaining) and per-distributor allocations for one delivery week, including each distributor's PO number/status and price (so order value can be computed as quantity x price). Defaults to the current open week if week_label is omitted. UNITS: every quantity here (on hand, allocations, remaining) is in that product's own selling unit -- CASES for canned products, KEGS for kegs -- never cans. If someone asks for cans, convert: a 12x 19.2oz case = 12 cans, a 4x6 12oz case = 24 cans, a 6x4 16oz case = 24 cans; say which you did. This tool does NOT include the page's Packaging Inventory panel (cans/lids/trays/Pakteks/kegs on hand, used, remaining) -- for that use run_read_only_query on packaging_inventory with packaging_consumed_for_week(week_id) (remaining = on_hand_qty - consumed; negative = short).",
+      "Per-product inventory (on hand, unlabeled, to be packaged, total, remaining) and per-distributor allocations for one delivery week, including each distributor's PO number/status and price (so order value can be computed as quantity x price). Defaults to the current open week if week_label is omitted. UNITS: every quantity here (on hand, allocations, remaining) is in that product's own selling unit -- CASES for canned products, KEGS for kegs -- never cans. If someone asks for cans, convert: a 12x 19.2oz case = 12 cans, a 4x6 12oz case = 24 cans, a 6x4 16oz case = 24 cans; say which you did. This tool does NOT include the page's Packaging Inventory or Label Inventory panels (on hand / consumed / remaining) -- for those, open the page itself with open_app_page (path /inventory) and read the numbers exactly as shown.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -300,7 +302,7 @@ Sales section tables (all admin-only, folded in from the old FCB Pricing desktop
 
 - ernie_staged_rows(id, user_id, file_id, sheet_name, row_index, data jsonb) — scratch rows loaded from an uploaded/produced spreadsheet or CSV via stage_uploaded_file_for_query (call that FIRST; this table starts out empty for every file). Always filter by file_id. Each row's real columns live inside the jsonb "data" field, named exactly as that file's header row — read one with data->>'ColumnName' (text) and cast numeric ones, e.g. (data->>'Quantity')::numeric, before summing/averaging/comparing. This is how you do real bulk arithmetic (filter, group, weighted-average) on a file someone hands you, joined or compared against any other table above in the same query if needed.
 
-Two Postgres functions already implement the exact packaging/label bill-of-materials math the Inventory & Allocation page uses — call them from SQL rather than re-deriving the recipe yourself: classify_product_packaging(product_name text) returns one of can_19_2oz/can_16oz/can_12oz/keg_1_2bbl/keg_1_6bbl/tap_handle/unrecognized; packaging_consumed_for_week(week_id uuid) returns a table(item_key, consumed) of total packaging consumed by that week's allocations (every distributor combined — join allocations yourself, filtered by distributor_id, if you need one distributor's share instead).
+Two Postgres functions exist for packaging math — but NOTE (found 2026-10-03): packaging_consumed_for_week only counts allocations whose distributor PO is Delivered, while the Inventory & Allocation page counts every allocation, so its numbers do NOT match the page; for anything the page shows (Consumed, Remaining, shortages) open the page with open_app_page instead: classify_product_packaging(product_name text) returns one of can_19_2oz/can_16oz/can_12oz/keg_1_2bbl/keg_1_6bbl/tap_handle/unrecognized; packaging_consumed_for_week(week_id uuid) returns a table(item_key, consumed) of total packaging consumed by that week's allocations (every distributor combined — join allocations yourself, filtered by distributor_id, if you need one distributor's share instead).
 
 Any table above with a storage_path column (event_materials, pos_library, pos_label_files, ernie_reference_documents, ernie_project_files today — there may be more as the app grows) is describing a real file, not just data. Querying one of those only tells you the file EXISTS — to READ what's in it, call read_library_file; to actually hand it to the user as a download, call get_file_for_download — both with that row's storage_path and its bucket (event-materials for event_materials/pos_library, pos-label-files for pos_label_files, reference-docs for ernie_reference_documents, ernie-project-files for ernie_project_files). Whenever someone asks you to pull up, send them, or let them download a specific file — not just tell them about it — that's the tool to reach for.`,
     input_schema: {
@@ -544,6 +546,21 @@ It is strictly read-only, enforced by the browser itself: it will refuse to type
         offset: { type: "integer", description: 'For "read": character position to start from (use the value the previous read suggests).' },
       },
       required: ["action"],
+    },
+  },
+  {
+    name: "open_app_page",
+    description:
+      `Open a page of FCB-Data (this app) in your own browser, signed in as the person you're talking to — you see the page exactly as they would, with their access, including every number the page works out on screen (e.g. Inventory & Allocation's Packaging Inventory Consumed/Remaining). Returns the page's text and a numbered list of things on it; then keep going with browse_website (click / select / scroll / read / back / screenshot) on the same page. Strictly look-only: the browser blocks every save or change to FCB-Data. Takes a few seconds, so use it when the answer is on a page — not for things a specific tool already returns.`,
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        path: {
+          type: "string",
+          description: 'The page path, e.g. "/inventory", "/purchase-orders", "/dashboard" (a full https://www.fcb-data.com/... address also works).',
+        },
+      },
+      required: ["path"],
     },
   },
   {
@@ -1181,6 +1198,7 @@ const TOOL_STATUS_LABELS: Record<string, string> = {
   read_library_file: "Reading that file",
   fetch_url_as_file: "Fetching that from the web",
   browse_website: "Browsing the web",
+  open_app_page: "Opening that page in FCB-Data",
   stage_uploaded_file_for_query: "Loading your file for analysis",
   clear_staged_file_data: "Cleaning up staged data",
   list_app_files: "Browsing the app's code",
@@ -3690,6 +3708,25 @@ export async function runErnieTool(
       return await browseWebsite(requestId ?? "", input as unknown as BrowseInput);
     }
 
+    case "open_app_page": {
+      // Added 2026-10-03 (Chad: "i want him to be able to find anything in
+      // the app"). Signs Ernie's browser in as THIS user (lib/ernie/
+      // appSession.ts) — never anyone else — so the page shows exactly their
+      // access. Read-only is enforced in lib/ernie/browser.ts.
+      if (!userId) return { error: "This person isn't connected to an FCB-Data account, so app pages can't be opened for them." };
+      const path = typeof input.path === "string" ? input.path : "";
+      const result = (await openAppPage(requestId ?? "", userId, path, async () =>
+        appAuthCookies(await createUserSession(userId)),
+      )) as { url?: unknown; error?: unknown; blocked?: unknown };
+      await logErnieToolExecution(supabase, userId, currentConversationId, "open_app_page", {
+        path,
+        page_url: typeof result?.url === "string" ? result.url : undefined,
+        ...(result?.error ? { error: String(result.error).slice(0, 300) } : {}),
+        ...(result?.blocked ? { blocked: String(result.blocked).slice(0, 300) } : {}),
+      }).catch(() => {});
+      return result;
+    }
+
     case "stage_uploaded_file_for_query": {
       const fileId = input.file_id as string | undefined;
       if (!fileId) return { error: "No file_id provided." };
@@ -3871,7 +3908,9 @@ ${
 
 On the Inventory & Allocation tools: each product (at the whole-inventory level) and each distributor's allocation of that product carries a status_flag — one of good_confirmed (on hand, confirmed), dont_have, have_some, need_to_package, need_pakteks, need_labels, need_cans, or need_kegs. This is the direct, already-tracked answer to "what does distributor X's order still need" or "what needs to be packaged for X" — filter that distributor's allocations by status_flag rather than trying to infer a shortfall yourself from on-hand/remaining numbers, and say plainly if nothing is currently flagged that way rather than treating an empty result as a failure to answer.
 
-You also have run_read_only_query, a general-purpose tool that runs any read-only SQL SELECT against the app's own database — reach for it whenever a question isn't already covered by one of the specific tools above (for example: "do we have enough cans and lids on hand to cover this week's whole 16oz can order across every distributor", or any other cross-table or aggregate question) rather than guessing, refusing, or claiming you have no way to find out. Its own description lists the real table and column names to use, and two existing database functions (classify_product_packaging, packaging_consumed_for_week) that already implement the same packaging bill-of-materials math the Inventory page itself uses — call those instead of re-deriving the recipe from scratch. If a query comes back with zero rows for something that plausibly exists, that most often means this account doesn't have permission to see that data (see above), not that the data doesn't exist — say so rather than concluding there's nothing there. If a query is rejected outright (a database error message about what's not allowed), rewrite it as a single plain read-only SELECT and try again before giving up.
+You also have run_read_only_query, a general-purpose tool that runs any read-only SQL SELECT against the app's own database — reach for it whenever a question isn't already covered by one of the specific tools above (for example: "do we have enough cans and lids on hand to cover this week's whole 16oz can order across every distributor", or any other cross-table or aggregate question) rather than guessing, refusing, or claiming you have no way to find out. Its own description lists the real table and column names to use, and two database functions (classify_product_packaging, packaging_consumed_for_week) — but packaging_consumed_for_week counts only Delivered POs and does not match the Inventory page, so never use it for what the page shows. If a query comes back with zero rows for something that plausibly exists, that most often means this account doesn't have permission to see that data (see above), not that the data doesn't exist — say so rather than concluding there's nothing there. If a query is rejected outright (a database error message about what's not allowed), rewrite it as a single plain read-only SELECT and try again before giving up.
+
+You can also open ANY page of FCB-Data itself with open_app_page — in your own browser, signed in as the person you're talking to, so you see exactly what they'd see on that page and nothing they couldn't. This is the right way to answer anything that's SHOWN on a page, especially numbers the page works out on screen and aren't stored anywhere: the Packaging Inventory and Label Inventory panels (Consumed / Remaining — negative means short), Order Value, Total Pallets, Cash Flow totals, Margin/Cost per Case figures, and so on. Rule of thumb: if the person names a page or a section of a page ("in the packaging inventory section of inventory and allocations…"), open that page and read it rather than recomputing it yourself; use run_read_only_query for raw records and cross-table lists. After opening a page you can keep looking with browse_website (click a sidebar link, pick another week in a dropdown, expand a row, scroll, read more) — it's the same browser on the same page. Everything in FCB-Data is strictly look-only for you: any save, status change or other change is blocked by the browser itself, so never try to change anything there. Good starting pages: /dashboard, /inventory (Inventory & Allocation, incl. Packaging + Label Inventory), /purchase-orders, /distributor-inventory, /build-orders, /tasks, /events, /tanks — or open /dashboard and follow the sidebar links (the elements list shows them).
 
 Before you ever tell someone something "isn't tracked," "doesn't exist," or "has no data source in this app" — for ANY concept, not just files — check TWO things first, not just the database: (1) select file_name, description from ernie_reference_documents (it's small, read the whole table, don't try to filter by keyword) and actually look for it in the description text; (2) consider whether it might be a fixed value computed in code rather than stored data — if so, use read_app_file on the relevant lib/ file (lib/contributionMargin.ts, lib/marginAnalysis.ts, lib/costPerCase.ts, lib/pallets.ts, lib/packaging.ts are the ones that hold fixed constants/formulas behind the Sales and Inventory pages) and read the real number straight from the source, which is a better answer than a reference note anyway. Checking the database schema for a matching column/table name is NOT the same check and does not satisfy either of these — a concept like "excise tax" will never be a column name even when a real, on-the-record answer exists as a note or in the code itself. Only say something isn't tracked anywhere after all of this has also come back empty.
 
