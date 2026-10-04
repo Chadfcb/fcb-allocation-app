@@ -43,6 +43,7 @@ interface TankSpec {
   py: number; // circle center on the Ekos tank map (y)
   vol?: number; // bbl in the tank
   code?: string; // Ekos product code
+  product?: string; // full product name (Chad, 2026-10-04: show the full name, not the code)
   batch?: string;
   color?: string; // Ekos map color
 }
@@ -50,25 +51,25 @@ interface TankSpec {
 // Cellar layout + contents, from the Ekos tank map (2026-10-03 snapshot).
 const TANKS: TankSpec[] = [
   { name: "FV06", bbl: 60, px: 67, py: 85 },
-  { name: "FV05", bbl: 30, px: 190, py: 80, vol: 9.657629, code: "CHZY", batch: "#1299 Captain Hazy", color: "#2B5FDC" },
+  { name: "FV05", bbl: 30, px: 190, py: 80, vol: 9.657629, code: "CHZY", product: "Captain Save A Hop Hazy IPA", batch: "#1299 Captain Hazy", color: "#2B5FDC" },
   { name: "FV04", bbl: 30, px: 299, py: 78 },
-  { name: "FV03", bbl: 30, px: 409, py: 80, vol: 14.12, code: "CHZY", batch: "#1303 15bbl hazy", color: "#2563EB" },
-  { name: "FV02", bbl: 30, px: 518, py: 78, vol: 17.368684, code: "PV", batch: "1298 Peachy Vibes", color: "#EF9A9A" },
-  { name: "FV01", bbl: 30, px: 629, py: 80, vol: 9.899968, code: "BDIPA", batch: "1301 BDIPA", color: "#B5D6A7" },
-  { name: "CID-1", bbl: 7, px: 760, py: 68, vol: 7, code: "BDIPA", batch: "1301 BDIPA 1", color: "#B5D6A7" },
-  { name: "CID-2", bbl: 7, px: 838, py: 68, vol: 4.5, code: "LTL", batch: "#1302 Lime 30.1", color: "#22DD22" },
-  { name: "CID-3", bbl: 7, px: 917, py: 68, vol: 6, code: "THC", batch: "CID021", color: "#00EEEE" },
+  { name: "FV03", bbl: 30, px: 409, py: 80, vol: 14.12, code: "CHZY", product: "Captain Save A Hop Hazy IPA", batch: "#1303 15bbl hazy", color: "#2563EB" },
+  { name: "FV02", bbl: 30, px: 518, py: 78, vol: 17.368684, code: "PV", product: "Peachy Vibes", batch: "1298 Peachy Vibes", color: "#EF9A9A" },
+  { name: "FV01", bbl: 30, px: 629, py: 80, vol: 9.899968, code: "BDIPA", product: "Big Daddy IPA", batch: "1301 BDIPA", color: "#B5D6A7" },
+  { name: "CID-1", bbl: 7, px: 760, py: 68, vol: 7, code: "BDIPA", product: "Big Daddy IPA", batch: "1301 BDIPA 1", color: "#B5D6A7" },
+  { name: "CID-2", bbl: 7, px: 838, py: 68, vol: 4.5, code: "LTL", product: "Lime 30 Lager", batch: "#1302 Lime 30.1", color: "#22DD22" },
+  { name: "CID-3", bbl: 7, px: 917, py: 68, vol: 6, code: "THC", product: "The Hatchet (Cider)", batch: "CID021", color: "#00EEEE" },
   { name: "FV11", bbl: 60, px: 133, py: 208 },
   { name: "FV10", bbl: 60, px: 265, py: 207 },
   { name: "FV9", bbl: 60, px: 445, py: 212 },
   { name: "FV08", bbl: 60, px: 577, py: 212 },
-  { name: "FV07", bbl: 30, px: 704, py: 205, vol: 22.548387, code: "VICTOR", batch: "#1302 Lime 30", color: "#C8F000" },
+  { name: "FV07", bbl: 30, px: 704, py: 205, vol: 22.548387, code: "VICTOR", product: "Victory Vibes", batch: "#1302 Lime 30", color: "#C8F000" },
   { name: "FV18", bbl: 30, px: 815, py: 203 },
   { name: "FV17", bbl: 60, px: 131, py: 343 },
   { name: "FV14", bbl: 60, px: 263, py: 342 },
   { name: "FV13", bbl: 60, px: 394, py: 345 },
   { name: "FV12", bbl: 60, px: 523, py: 345 },
-  { name: "FV16", bbl: 30, px: 646, py: 337, vol: 18.662471, code: "NPT", batch: "1295", color: "#FFAE6B" },
+  { name: "FV16", bbl: 30, px: 646, py: 337, vol: 18.662471, code: "NPT", product: "Nectarine Pie of the Tiger", batch: "1295", color: "#FFAE6B" },
   { name: "FV15", bbl: 60, px: 767, py: 340 },
 ];
 // Map px → feet. 0.135 = the spacing Chad approved (≈11 ft between tanks).
@@ -95,6 +96,7 @@ interface TankInfo {
   volume: number;
   status: Status;
   code: string;
+  product: string;
   batch: string;
   color: string;
 }
@@ -478,7 +480,7 @@ export default function TanksClient() {
       const t: TankRuntime = {
         spec, name: spec.name, capacity: spec.bbl, volume,
         status: volume > 0.05 ? "Fermenting" : "Empty",
-        code: spec.code ?? "", batch: spec.batch ?? "", color: spec.color ?? "#888888",
+        code: spec.code ?? "", product: spec.product ?? spec.code ?? "", batch: spec.batch ?? "", color: spec.color ?? "#888888",
         Rft, TIP, group, hover: 0, shownFrac: volume / spec.bbl, foamLevel: 0, liquidLevel: 0,
         heightFor, radiusAt, buildLiquid: () => {},
         liquid, liquidMat, surface, surfMat, foam, foamTop, foamTopGeo, foamBase, pops,
@@ -526,12 +528,16 @@ export default function TanksClient() {
         g.fill();
       }
       g.fillStyle = full ? "#1d2621" : "#7a857f";
-      g.font = `600 40px ${plateFont}`;
-      const label = full ? `${t.code} · ${t.batch}` : "Empty";
-      let bn = label;
-      while (g.measureText(bn).width > W - 140 && bn.length > 4) bn = bn.slice(0, -2);
-      if (bn !== label) bn = bn.trim() + "…";
-      g.fillText(bn, full ? 88 : 40, 174);
+      // Full product name (never cut off): shrink the text to fit the plate.
+      const label = full ? t.product : "Empty";
+      const maxW = W - (full ? 128 : 80);
+      let size = 40;
+      g.font = `600 ${size}px ${plateFont}`;
+      while (g.measureText(label).width > maxW && size > 20) {
+        size -= 1;
+        g.font = `600 ${size}px ${plateFont}`;
+      }
+      g.fillText(label, full ? 88 : 40, 174);
       g.fillStyle = "#4a5650";
       g.font = '500 38px ui-monospace, "SFMono-Regular", Consolas, monospace';
       g.fillText(`${t.volume.toFixed(1)} / ${t.capacity} bbl`, 40, 248);
@@ -618,7 +624,7 @@ export default function TanksClient() {
       if (t) {
         ring.position.set(t.group.position.x, 0.04, t.group.position.z);
         ring.scale.setScalar(t.Rft);
-        setSelected({ name: t.name, capacity: t.capacity, volume: t.volume, status: t.status, code: t.code, batch: t.batch, color: t.color });
+        setSelected({ name: t.name, capacity: t.capacity, volume: t.volume, status: t.status, code: t.code, product: t.product, batch: t.batch, color: t.color });
       } else {
         setSelected(null);
       }
@@ -788,7 +794,7 @@ export default function TanksClient() {
                 className="h-3 w-3 flex-none rounded"
                 style={{ background: full ? selected.color : "transparent", boxShadow: "0 0 0 1px rgba(255,255,255,0.15)" }}
               />
-              {full ? selected.code : "Empty"}
+              {full ? selected.product : "Empty"}
             </div>
             <div className="h-2 overflow-hidden rounded-full bg-white/[0.06]">
               <i className="block h-full rounded-full" style={{ width: `${pct}%`, background: selected.color }} />
