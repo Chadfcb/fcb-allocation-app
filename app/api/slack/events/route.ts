@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getErnieTools, buildErnieSystemPrompt, runErnieTool } from "@/lib/ernie/tools";
 import { danglingServerToolUseIds, withoutDanglingServerToolUse } from "@/lib/ernie/replyBudget";
+import { getSlackUserClient } from "@/lib/ernie/slackUserSession";
 import { hasSection, getUserSections, ERNIE_SECTION, type AnySectionKey } from "@/lib/permissions";
 import type { Role } from "@/lib/types/db";
 
@@ -144,6 +145,24 @@ const SLACK_ALLOWED_TOOL_NAMES = new Set([
   "update_chain_calendar_event",
   "propose_actions",
   "confirm_pending_action",
+]);
+
+// Added 2026-10-03: when Ernie is running AS the person who @-mentioned him
+// (lib/ernie/slackUserSession.ts -- a real signed-in session for that
+// person, so the database applies their own access rules), the RLS-bypass
+// reason above no longer applies, so he also gets the tools that depend on a
+// real session: his general read-only search (run_read_only_query -- "he
+// needs access to everything", Chad), searching that person's own past Ernie
+// chats, and reading the app's own code/reference files. Still nothing that
+// needs the Ernie page itself (files, images, sandbox, browser) and still no
+// delete tools. If signing the person in fails, Slack falls back to the list
+// above on the master key, exactly as before.
+const SLACK_SIGNED_IN_EXTRA_TOOL_NAMES = new Set([
+  "run_read_only_query",
+  "search_past_conversations",
+  "list_app_files",
+  "read_app_file",
+  "read_library_file",
 ]);
 
 // Slack event_ids we've already handled -- Slack retries delivery on slow
@@ -342,7 +361,11 @@ async function askErnie(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Anthropic message content shape varies (string vs. tool blocks) across the tool-use loop
   history: any[],
   appUser: AppUser | null,
-  supabase: ReturnType<typeof createAdminClient>,
+  // The client Ernie's tools use: the person's own signed-in client when
+  // signing them in worked (runsAsUser), otherwise the master-key client.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- user-scoped and admin clients are both plain SupabaseClients
+  supabase: any,
+  runsAsUser = false,
 ): Promise<string> {
   const slackNote =
     // Added 2026-09-23: the shared system prompt describes the app's code
@@ -373,9 +396,12 @@ async function askErnie(
   if (appUser && hasSection(appUser.role, appUser.sections, ERNIE_SECTION, appUser.isSuperAdmin)) {
     systemPrompt =
       buildErnieSystemPrompt(appUser.role, appUser.sections, appUser.isSuperAdmin, appUser.personNotes) + slackNote;
-    const allowedDataTools = getErnieTools(appUser.role, appUser.sections, appUser.isSuperAdmin).filter((t) =>
-      SLACK_ALLOWED_TOOL_NAMES.has(t.name),
+    const allowedDataTools = getErnieTools(appUser.role, appUser.sections, appUser.isSuperAdmin).filter(
+      (t) => SLACK_ALLOWED_TOOL_NAMES.has(t.name) || (runsAsUser && SLACK_SIGNED_IN_EXTRA_TOOL_NAMES.has(t.name)),
     );
+    systemPrompt += runsAsUser
+      ? " In Slack you are signed in AS this person, so your data tools -- including run_read_only_query, your general read-only search -- see exactly what their FCB-Data account can see. Use run_read_only_query for anything your specific tools don't cover (for example the Packaging Inventory panel: packaging_inventory + packaging_consumed_for_week), the same as on the Ernie page."
+      : " Right now in Slack you do NOT have run_read_only_query (your general search) -- only the specific tools listed. If a question needs data none of them return, say plainly you couldn't look that up from Slack this time and suggest asking on the Ernie page; never claim a tool is erroring unless a tool result actually returned an error.";
     tools = [...allowedDataTools, WEB_SEARCH_TOOL, WEB_FETCH_TOOL];
   } else {
     systemPrompt =
@@ -630,8 +656,12 @@ export async function POST(req: NextRequest) {
       }
 
       const appUser = event.user ? await resolveAppUser(supabase, event.user) : null;
+      // Run as the person who asked (their own access rules) -- see
+      // lib/ernie/slackUserSession.ts. null = couldn't sign them in; keep the
+      // old master-key behavior and limited tool list for this message.
+      const userClient = appUser ? await getSlackUserClient(supabase, appUser.userId) : null;
       const anthropicMessages = history.map((h) => ({ role: h.role, content: h.text }));
-      const reply = await askErnie(anthropicMessages, appUser, supabase);
+      const reply = await askErnie(anthropicMessages, appUser, userClient ?? supabase, userClient !== null);
 
       // Chad's preference (2026-09-14): always post as a fresh top-level
       // message in the channel, never as a threaded reply.

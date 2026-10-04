@@ -559,6 +559,25 @@ The message that was just posted, from ${senderName}${
             .join("\n")
             .trim();
 
+          // No words and no tool call this round: one more round with a plain
+          // nudge instead of falling through to "I wasn't able to put
+          // together a reply" (added 2026-10-03 — the Ernie page has had this
+          // since 2026-09-17, and Slack got it 2026-10-03 after it failed live
+          // there; Project chats were the last of the three without it).
+          if (!finalText && !isLastRound) {
+            const kept = withoutDanglingServerToolUse(content);
+            anthropicMessages.push({
+              role: "assistant",
+              content: kept.length ? kept : [{ type: "text", text: "(No reply that round.)" }],
+            });
+            anthropicMessages.push({
+              role: "user",
+              content:
+                "That round didn't produce a text reply or a tool call. Either call the right tool or give a plain-text answer now, using what you've already looked up.",
+            });
+            continue;
+          }
+
           // Said "here's your Word doc / ready to download" but nothing was
           // actually made this reply — the exact bug seen live here on
           // 2026-10-02 ("Prohibition Recipe 10/2/26"). One more round to

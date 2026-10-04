@@ -108,7 +108,7 @@ export const ERNIE_TOOLS = [
   {
     name: "get_inventory_and_allocations",
     description:
-      "Per-product inventory (on hand, unlabeled, to be packaged, total, remaining) and per-distributor allocations for one delivery week, including each distributor's PO number/status and price (so order value can be computed as quantity x price). Defaults to the current open week if week_label is omitted.",
+      "Per-product inventory (on hand, unlabeled, to be packaged, total, remaining) and per-distributor allocations for one delivery week, including each distributor's PO number/status and price (so order value can be computed as quantity x price). Defaults to the current open week if week_label is omitted. UNITS: every quantity here (on hand, allocations, remaining) is in that product's own selling unit -- CASES for canned products, KEGS for kegs -- never cans. If someone asks for cans, convert: a 12x 19.2oz case = 12 cans, a 4x6 12oz case = 24 cans, a 6x4 16oz case = 24 cans; say which you did. This tool does NOT include the page's Packaging Inventory panel (cans/lids/trays/Pakteks/kegs on hand, used, remaining) -- for that use run_read_only_query on packaging_inventory with packaging_consumed_for_week(week_id) (remaining = on_hand_qty - consumed; negative = short).",
     input_schema: {
       type: "object" as const,
       properties: {
