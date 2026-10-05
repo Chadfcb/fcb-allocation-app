@@ -29,6 +29,11 @@ interface TankInfo {
   color: string;
 }
 
+// Tanks beta build number: v1.xx, xx = main Tanks changes pushed to the site so far
+// (01 first build, 02 full product names, 03 stage visuals/temps/hover, 04 smaller
+// panel + FV leg tag, 05 this build label). Bump on each main change.
+const TANKS_BUILD = "1.05";
+
 const STATUS_PILL: Record<string, { bg: string; fg: string }> = {
   Fermenting: { bg: "rgba(255,153,0,0.18)", fg: "#FFC266" },
   "Dry Hopping": { bg: "rgba(200,230,80,0.18)", fg: "#DCEB7A" },
@@ -106,6 +111,9 @@ export default function TanksClient() {
     <div className="flex flex-col gap-5">
       <style>{SNAP_CSS}</style>
       <div>
+        {/* Beta build label (Chad, 2026-10-05): same look as the active sidebar link.
+            Bump the number with each main Tanks change pushed to the site. */}
+        <span className="fcb-nav-item is-active mb-3" style={{ display: "inline-flex", width: "auto" }}>Beta Test Build v{TANKS_BUILD}</span>
         <h1 className="text-3xl font-semibold tracking-tight">Tanks</h1>
         <p className="mt-1 text-sm text-neutral-400">
           21 unitanks at true size, in the cellar layout. Levels from the Ekos tank map (Oct 3); status, temps and tasks
