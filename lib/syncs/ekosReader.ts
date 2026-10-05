@@ -30,7 +30,6 @@ const OPEN_PO_LIST_URL = `${EKOS_ORIGIN}/03.00/Purchase_Order?filter=b3a0331c-1e
 const PO_DETAIL_URL = (guid: string) => `${EKOS_ORIGIN}/03.00/Purchase_Order/${guid}`;
 const DISTRIBUTOR_INVENTORY_URL = `${EKOS_ORIGIN}/03.00/distributor_inventory`;
 const FACILITY_VIEW_URL = `${EKOS_ORIGIN}/03.00/?tab=Facility%20View`;
-const BATCH_LIST_URL = `${EKOS_ORIGIN}/03.00/Product_Batch`;
 const NAV_TIMEOUT_MS = 45_000;
 
 interface EkosSession {
@@ -53,11 +52,6 @@ const USER_AGENT =
 
 let current: Promise<EkosSession> | null = null;
 
-// Lets one reader change what an Ekos LIST lookup asks for (e.g. "In-Progress
-// batches" instead of the saved "Completed" filter) — only ever applied to
-// read lookups that isAllowedRequest already lets through. Never saved in
-// Ekos: it changes this one request, not the person's filter settings.
-let rewriteListLookup: ((url: URL, body: string) => string | null) | null = null;
 
 // One signed-in browser shared by both Ekos sources in a run.
 export function getEkosSession(): Promise<EkosSession> {
@@ -129,17 +123,6 @@ async function openSession(): Promise<EkosSession> {
         }
         req.abort("blockedbyclient").catch(() => {});
         return;
-      }
-      if (rewriteListLookup && req.method().toUpperCase() === "POST") {
-        try {
-          const changed = rewriteListLookup(new URL(req.url()), req.postData() ?? "");
-          if (changed !== null) {
-            req.continue({ postData: changed }).catch(() => {});
-            return;
-          }
-        } catch {
-          // fall through to the unchanged request
-        }
       }
       req.continue().catch(() => {});
     });
@@ -529,8 +512,8 @@ export async function readEkosDistributorInventory(): Promise<EkosInventoryRow[]
 
 export async function readEkosTanks(): Promise<EkosTanksRead> {
   const { page } = await getEkosSession();
-  const map = await readTankMap(page);
-  const batches = await readInProgressBatches(page, map);
+  const { map, frame } = await readTankMap(page);
+  const batches = await readInProgressBatches(frame, map);
   return { map, batches };
 }
 
@@ -538,7 +521,7 @@ export async function readEkosTanks(): Promise<EkosTanksRead> {
 // Each spot: title (FV16), then lines like "18.662471 bbl", "NPT", "1295".
 // (Its red dashed border is read too, but the Tanks page works out overdue
 // from task due dates instead — Chad, 2026-10-05.)
-async function readTankMap(page: Page): Promise<EkosTankMapItem[]> {
+async function readTankMap(page: Page): Promise<{ map: EkosTankMapItem[]; frame: Frame }> {
   await page.goto(FACILITY_VIEW_URL, { waitUntil: "networkidle2" });
   await snap(page, "Tank map — just opened");
   let frame: Frame | undefined;
@@ -596,7 +579,7 @@ async function readTankMap(page: Page): Promise<EkosTankMapItem[]> {
   if (!items.some((i) => /^FV/i.test(i.name))) {
     throw new Error("Ekos's tank map didn't show any FV tanks — the reader needs an update. Nothing was changed.");
   }
-  return items;
+  return { map: items, frame: frame! };
 }
 
 interface ProjectListRecord {
@@ -611,68 +594,69 @@ interface ProjectListRecord {
   units?: number;
 }
 
-// Production → Production Batches. The list's data comes from Ekos's own
-// lookup (POST _processors/projectdashboard.ashx?action=projectListGet). Its
-// saved filter shows "Completed" batches, so for this one lookup the reader
-// asks for In-Progress (Non-Aging + Aging) instead — the saved filter in
-// Ekos is not touched.
-async function readInProgressBatches(page: Page, map: EkosTankMapItem[]): Promise<EkosBatch[]> {
-  let replied: { totalCount: number; records: ProjectListRecord[] } | null = null;
-  const onResponse = async (res: import("puppeteer-core").HTTPResponse) => {
+// Production → Production Batches data, looked up straight from Ekos's
+// older-screen frame (the tank map's), the same lookup Ekos's batch screen
+// makes: POST _processors/projectdashboard.ashx?action=projectListGet.
+// (The batch screen itself doesn't draw in the hidden browser — Ekos fails
+// to send it one of its script files — found from Run now 2026-10-05.)
+//   1. Sent "{}" → Ekos answers with Chad's saved filter (it shows Completed).
+//   2. Same filter with only In-Progress (Non-Aging + Aging) ticked, up to 500
+//      rows, sent the way Ekos's own screen sends it (form content type —
+//      Ekos ignores the filter otherwise). Chad's saved filter isn't changed
+//      (checked 2026-10-05).
+async function readInProgressBatches(frame: Frame, map: EkosTankMapItem[]): Promise<EkosBatch[]> {
+  const base = new URL(frame.url()).pathname.replace(/\/default\.aspx$/i, "");
+  const call = async (method: "GET" | "POST", path: string, body?: string, form = false): Promise<unknown> => {
+    const text = await frame.evaluate(
+      async (url: string, m: string, b: string | null, f: boolean) => {
+        const r = await fetch(url, {
+          method: m,
+          credentials: "include",
+          ...(b !== null ? { body: b } : {}),
+          ...(f ? { headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" } } : {}),
+        });
+        return r.ok ? r.text() : `__HTTP_${r.status}`;
+      },
+      `${base}/_processors/${path}${path.includes("?") ? "&" : "?"}${Math.floor(Math.random() * 1e5)}`,
+      method,
+      body ?? null,
+      form,
+    );
+    if (text.startsWith("__HTTP_")) throw new Error(`Ekos refused a batch lookup (${text.slice(7)}) — nothing was changed.`);
     try {
-      const u = new URL(res.url());
-      if (!/projectdashboard\.ashx$/i.test(u.pathname) || u.searchParams.get("action") !== "projectListGet") return;
-      if (res.status() !== 200 || res.request().method().toUpperCase() !== "POST") return;
-      const body = (await res.json()) as { projectList?: ProjectListRecord[]; projectTotalCount?: number };
-      if (Array.isArray(body?.projectList)) {
-        replied = { totalCount: Number(body.projectTotalCount ?? body.projectList.length), records: body.projectList };
-      }
+      return JSON.parse(text);
     } catch {
-      // not JSON / body unavailable — ignore
+      throw new Error(`Ekos answered a batch lookup with something other than data — the reader needs an update. Nothing was changed.`);
     }
   };
-  rewriteListLookup = (url, body) => {
-    if (!/projectdashboard\.ashx$/i.test(url.pathname) || url.searchParams.get("action") !== "projectListGet") return null;
-    const filter = JSON.parse(body) as { batchStatus?: { title?: string; isChecked?: boolean }[]; rowIndex?: number; rowsReturned?: number; searchString?: string };
-    if (!Array.isArray(filter.batchStatus) || !filter.batchStatus.some((s) => /^In-Progress/i.test(s.title ?? ""))) return null;
-    for (const s of filter.batchStatus) s.isChecked = /^In-Progress/i.test(s.title ?? "");
-    filter.rowIndex = 0;
-    filter.rowsReturned = 500;
-    filter.searchString = "";
-    return JSON.stringify(filter);
-  };
-  page.on("response", onResponse);
-  try {
-    await page.goto(BATCH_LIST_URL, { waitUntil: "networkidle2" });
-    await snap(page, "Batch list — just opened");
-    await waitFor(async () => replied !== null, "the In-Progress batch list");
-    await snap(page, "Batch list — ready");
-  } finally {
-    page.off("response", onResponse);
-    rewriteListLookup = null;
-  }
+  const getJson = (path: string) => call("GET", path);
 
-  const list = replied as unknown as { totalCount: number; records: ProjectListRecord[] };
-  if (list.records.length !== list.totalCount) {
-    throw new Error(`Ekos has ${list.totalCount} In-Progress batches but only ${list.records.length} came through — nothing was changed.`);
+  const LIST = "projectdashboard.ashx?action=projectListGet&sortKey=date&direction=desc";
+  const saved = (await call("POST", LIST, "{}")) as { projectFilter?: { batchStatus?: { title?: string; isChecked?: boolean }[] } & Record<string, unknown> };
+  const filter = saved?.projectFilter;
+  if (!filter || !Array.isArray(filter.batchStatus) || !filter.batchStatus.some((s) => /^In-Progress/i.test(s.title ?? ""))) {
+    throw new Error("Ekos's batch-list filter looks different than expected — the reader needs an update. Nothing was changed.");
   }
-  if (list.records.some((r) => !/^In-Progress/i.test(r.statusTitle ?? ""))) {
+  for (const s of filter.batchStatus) s.isChecked = /^In-Progress/i.test(s.title ?? "");
+  filter.rowIndex = 0;
+  filter.rowsReturned = 500;
+  filter.searchString = "";
+  const reply = (await call("POST", LIST, JSON.stringify(filter), true)) as {
+    projectList?: ProjectListRecord[];
+    projectTotalCount?: { totalCount?: number } | number;
+  };
+  if (!Array.isArray(reply?.projectList)) {
+    throw new Error("Ekos's In-Progress batch list came back in a shape the reader doesn't know — nothing was changed.");
+  }
+  const records = reply.projectList;
+  const total = typeof reply.projectTotalCount === "number" ? reply.projectTotalCount : Number(reply.projectTotalCount?.totalCount ?? records.length);
+  if (records.length !== total) {
+    throw new Error(`Ekos has ${total} In-Progress batches but only ${records.length} came through — nothing was changed.`);
+  }
+  if (records.some((r) => !/^In-Progress/i.test(r.statusTitle ?? ""))) {
     throw new Error("Ekos's batch list didn't switch to In-Progress batches — the reader needs an update. Nothing was changed.");
   }
-
-  // Ekos's older-screen frame on this page, to look up each batch's details
-  // the same way Ekos's own batch screen does (read-only lookups).
-  const frame = page.frames().find((f) => /\/\d+\.\d+\.\d+\/default\.aspx/i.test(f.url()));
-  if (!frame) throw new Error("Couldn't find Ekos's batch screen — the reader needs an update. Nothing was changed.");
-  const base = new URL(frame.url()).pathname.replace(/\/default\.aspx$/i, "");
-  const getJson = async (path: string): Promise<unknown> => {
-    const text = await frame.evaluate(async (url: string) => {
-      const r = await fetch(url, { credentials: "include" });
-      return r.ok ? r.text() : `__HTTP_${r.status}`;
-    }, `${base}/_processors/${path}&${Math.floor(Math.random() * 1e5)}`);
-    if (text.startsWith("__HTTP_")) throw new Error(`Ekos refused a batch lookup (${text.slice(7)}) — nothing was changed.`);
-    return JSON.parse(text);
-  };
+  const list = { records };
 
   const onMap = new Set(map.map((m) => m.name.toUpperCase()));
   const out: EkosBatch[] = [];
