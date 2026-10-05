@@ -15,11 +15,15 @@
 // "Take control" → first person (mouse look, W A S D, left Shift run, Space
 // jump, Esc exits). This file mounts it and draws the click details card.
 //
+// "See Batch Details" (2026-10-05): popup in components/tanks/BatchDetails.tsx,
+// data from ekos_tanks.batch_details (claude/batch-details-plan.md).
+//
 // DATA: until the Ekos tank sync is built, levels are the Ekos tank map
 // snapshot (Oct 3); statuses, temps, days and tasks are samples.
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createTankScene, type TankScene } from "./tanks/tankScene.js";
+import BatchDetails, { type BatchDetailsData } from "./tanks/BatchDetails";
 
 // One tank from the Ekos tank sync (table ekos_tanks, sql/ekos_tanks.sql).
 export interface LiveTank {
@@ -37,6 +41,7 @@ export interface LiveTank {
   temp_at: string | null;
   overdue: boolean;
   tasks_left: { title: string; date: string | null; overdue: boolean }[];
+  batch_details: BatchDetailsData | null; // "See Batch Details" (2026-10-05)
   synced_at: string;
 }
 
@@ -53,7 +58,7 @@ interface TankInfo {
 // Tanks beta build number: v1.xx, xx = main Tanks changes so far, preview + site
 // (Chad, 2026-10-05: count every main change, not just pushes). Full list of the
 // first 25 in the project doc claude/tank-view-direction.md. Add 1 per main change.
-const TANKS_BUILD = "1.29";   // 26 walking guy + take control, 27 Shift run + Space jump, 28 overdue warning signs, 29 Ekos tank sync
+const TANKS_BUILD = "1.30";   // 26 walking guy + take control, 27 Shift run + Space jump, 28 overdue warning signs, 29 Ekos tank sync, 30 See Batch Details popup
 
 const STATUS_PILL: Record<string, { bg: string; fg: string }> = {
   Fermenting: { bg: "rgba(255,153,0,0.18)", fg: "#FFC266" },
@@ -119,6 +124,7 @@ export default function TanksClient({ live = [], syncedLabel = null }: { live?: 
   const sceneRef = useRef<TankScene | null>(null);
   const [selected, setSelected] = useState<TankInfo | null>(null);
   const [failed, setFailed] = useState(false);
+  const [showBatch, setShowBatch] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -128,7 +134,10 @@ export default function TanksClient({ live = [], syncedLabel = null }: { live?: 
       sceneRef.current = createTankScene({
         canvas,
         snapEl,
-        onSelect: (info: TankInfo | null) => setSelected(info),
+        onSelect: (info: TankInfo | null) => {
+          setSelected(info);
+          setShowBatch(false);
+        },
         font: getComputedStyle(canvas).fontFamily || "system-ui, sans-serif",
         live,
       });
@@ -143,6 +152,7 @@ export default function TanksClient({ live = [], syncedLabel = null }: { live?: 
     };
   }, [live]);
 
+  const closeBatch = useCallback(() => setShowBatch(false), []);
   const full = !!selected && selected.volume > 0.05;
   const pct = selected ? Math.round((selected.volume / selected.capacity) * 100) : 0;
   const pill = (selected && STATUS_PILL[selected.status]) || STATUS_PILL.Empty;
@@ -245,13 +255,22 @@ export default function TanksClient({ live = [], syncedLabel = null }: { live?: 
                   background: "linear-gradient(90deg, var(--hl-strong, rgba(106,188,70,0.20)), var(--hl-soft, rgba(106,188,70,0.06)))",
                   boxShadow: "inset 0 0 0 1px var(--hl-line, rgba(106,188,70,0.30)), 0 0 24px var(--hl-glow, rgba(106,188,70,0.12))",
                 }}
-                // Placeholder (Chad, 2026-10-03): will open a popup with all
-                // the batch's tasks. Does nothing yet.
+                // Opens the batch details popup (Chad, 2026-10-05).
+                onClick={() => setShowBatch(true)}
               >
                 See Batch Details
               </button>
             )}
           </aside>
+        )}
+        {selected && full && showBatch && (
+          <BatchDetails
+            tank={selected.name}
+            product={selected.product}
+            color={selected.color}
+            details={live.find((l) => l.tank_name === selected.name)?.batch_details ?? null}
+            onClose={closeBatch}
+          />
         )}
       </section>
     </div>

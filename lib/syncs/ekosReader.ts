@@ -2,7 +2,7 @@ import type { Browser, Frame, HTTPRequest, Page } from "puppeteer-core";
 import { launchBrowser } from "@/lib/ernie/browser";
 import type { EkosPurchaseOrder, EkosPoItem } from "@/lib/syncs/ekosPurchaseOrders";
 import type { EkosInventoryRow } from "@/lib/syncs/ekosNameMap";
-import type { EkosBatch, EkosBatchTask, EkosTankMapItem, EkosTanksRead } from "@/lib/syncs/ekosTanks";
+import type { EkosBatch, EkosBatchTask, EkosBomRow, EkosTankMapItem, EkosTaskInputs, EkosTanksRead } from "@/lib/syncs/ekosTanks";
 import { snap, watchPage } from "@/lib/syncs/snapshots";
 
 // Ekos reader for the Automatic Syncs (Admin → Ekos Sync) — added
@@ -658,6 +658,10 @@ async function readInProgressBatches(frame: Frame, map: EkosTankMapItem[]): Prom
   }
   const list = { records };
 
+  // "See Batch Details" costs (2026-10-05): Ekos's "Batch - Bill of
+  // Materials" report (Chad's choice), read once for every batch.
+  const bom = await readBillOfMaterials(frame, base);
+
   const onMap = new Set(map.map((m) => m.name.toUpperCase()));
   const out: EkosBatch[] = [];
   for (const r of list.records) {
@@ -667,12 +671,14 @@ async function readInProgressBatches(frame: Frame, map: EkosTankMapItem[]): Prom
     const g = encodeURIComponent(r.rowguid);
     const project = (await getJson(
       `project.ashx?action=project_get&projectguid=${g}&relatedobject=${encodeURIComponent(r.relatedObject ?? "")}&record=${encodeURIComponent(r.relatedRecord ?? "")}&task=null&filter=null`,
-    )) as { tasks?: { title?: string; status_title?: string; start_date?: string; end_date?: string; is_overdue?: boolean; parent_task?: string }[] };
+    )) as {
+      tasks?: { rowguid?: string; title?: string; status_title?: string; start_date?: string; end_date?: string; is_overdue?: boolean; parent_task?: string }[];
+    };
     if (!Array.isArray(project?.tasks)) {
       throw new Error(`Batch ${r.title}'s tasks came back in a shape the reader doesn't know — nothing was changed.`);
     }
     const logs = (await getJson(`projectOverview.ashx?action=fermentation_log_entries_get&project=${g}`)) as
-      | { date?: string; temperature?: number | null }[]
+      | { date?: string; temperature?: number | null; abv?: number | null }[]
       | null;
     const tasks: EkosBatchTask[] = project.tasks
       .filter((t) => !t.parent_task)
@@ -687,6 +693,50 @@ async function readInProgressBatches(frame: Frame, map: EkosTankMapItem[]): Prom
     const fermLogs = (Array.isArray(logs) ? logs : [])
       .map((l) => ({ at: usDateTime(l.date), tempF: typeof l.temperature === "number" ? l.temperature : null }))
       .sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""));
+
+    // Yield = every turn's Produced (bbl brewed). ABV = newest Fermentation
+    // Log that has one (Ekos stores 0.0735 for 7.35 %).
+    const turns = (await getJson(`projectOverview.ashx?action=turn_entries_get&project=${g}`)) as
+      | { produced_units?: { value?: number | null } | null }[]
+      | null;
+    const produced = (Array.isArray(turns) ? turns : [])
+      .map((t) => t?.produced_units?.value)
+      .filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+    const abvLog = (Array.isArray(logs) ? logs : [])
+      .filter((l) => typeof l.abv === "number" && l.abv > 0)
+      .sort((a, b) => (usDateTime(b.date) ?? "").localeCompare(usDateTime(a.date) ?? ""))[0];
+
+    // What each task used — only to tell kettle/whirlpool hops (a Turn's
+    // steps) from dry hops (later tasks). Log / package / close tasks skipped.
+    const batchBom = bom.get(bomKey(r.title ?? "")) ?? null;
+    const taskInputs: EkosTaskInputs[] = [];
+    if (batchBom && batchBom.some((row) => /hop|pellet|cryo/i.test(row.item))) {
+      const byId = new Map(project.tasks.map((t) => [t.rowguid ?? "", t]));
+      const isTurn = (t?: { title?: string }) => /^\s*turn\b/i.test(t?.title ?? "");
+      const wanted = project.tasks.filter(
+        (t) => t.rowguid && !/\blog\b|^\s*package\s*:|^\s*close\s+batch|^\s*dump\b|^\s*transition\b|ready\s+(to|for)\s+packag/i.test(t.title ?? ""),
+      );
+      for (let i = 0; i < wanted.length; i += 8) {
+        const chunk = wanted.slice(i, i + 8);
+        const replies = await Promise.all(
+          chunk.map(
+            (t) =>
+              getJson(`project.ashx?action=requirements_get&task=${encodeURIComponent(t.rowguid!)}`).catch(() => null) as Promise<{
+                input_requirements?: { item_title?: string; units?: number; is_wip?: boolean }[];
+              } | null>,
+          ),
+        );
+        chunk.forEach((t, k) => {
+          const inputs = (replies[k]?.input_requirements ?? [])
+            .filter((x) => !x.is_wip && x.item_title && typeof x.units === "number")
+            .map((x) => ({ item: x.item_title!.trim(), units: x.units! }));
+          if (!inputs.length) return;
+          const parent = t.parent_task ? byId.get(t.parent_task) : undefined;
+          taskInputs.push({ kettle: isTurn(t) || isTurn(parent) || /kettle|whirlpool|boil/i.test(t.title ?? ""), inputs });
+        });
+      }
+    }
+
     out.push({
       title: r.title ?? "",
       productName: r.productTitle ?? "",
@@ -695,9 +745,83 @@ async function readInProgressBatches(frame: Frame, map: EkosTankMapItem[]): Prom
       volumeBbl: typeof r.units === "number" ? r.units : 0,
       tasks,
       fermLogs,
+      yieldBbl: produced.length ? produced.reduce((a, v) => a + v, 0) : null,
+      abv: abvLog ? Math.round((abvLog.abv as number) * 10000) / 100 : null,
+      bom: batchBom,
+      taskInputs,
     });
   }
   return out;
+}
+
+// Reports → All Reports → "Batch - Bill of Materials" (Chad's choice for the
+// "See Batch Details" costs, 2026-10-05 — real costs per batch, even when a
+// vendor changes). Ekos draws the report on its server, so a plain page load
+// of the older screen returns the whole table (read-only). Rows: a
+// "Batch : <name>" group row, then Item | Quantity | UOM | Unit Cost | Total
+// Cost (used = negative), then a Totals row. The report's own saved filter
+// (Ingredients + Packaging, Completion Date = This Year) is used as is.
+// Ekos prints a batch named only with a number with a comma ("1,295").
+const BOM_REPORT_ID = "e8aa8d67-5cca-e311-a60a-d4ae5266e0c4";
+const BOM_REPORT_OBJECT = "634";
+
+function bomKey(title: string): string {
+  let t = title.replace(/\s+/g, " ").trim();
+  if (/^[\d,]+(\.\d+)?$/.test(t)) t = t.replace(/,/g, "");
+  return t.toUpperCase();
+}
+
+const UOM_SHORT: Record<string, string> = {
+  "pound(s)": "lb",
+  "gallon(s)": "gal",
+  "gram(s)": "g",
+  "kilogram(s)": "kg",
+  "ounce(s)": "oz",
+  "each": "each",
+  "milliliter(s)": "ml",
+  "liter(s)": "L",
+  "barrel(s)": "bbl",
+};
+
+async function readBillOfMaterials(frame: Frame, base: string): Promise<Map<string, EkosBomRow[]>> {
+  const url = `${base}/default.aspx?objectid=${BOM_REPORT_OBJECT}&id=${BOM_REPORT_ID}&readonly=true&action=view&isHybrid=true`;
+  const raw = await frame.evaluate(async (u: string) => {
+    const r = await fetch(u, { credentials: "include" });
+    if (!r.ok) return { error: `HTTP ${r.status}` };
+    const doc = new DOMParser().parseFromString(await r.text(), "text/html");
+    const out: { batch: string; cells: string[] }[] = [];
+    let batch = "";
+    let groups = 0;
+    for (const tr of doc.querySelectorAll("tr")) {
+      const text = (tr.textContent || "").replace(/\s+/g, " ").trim();
+      if (tr.classList.contains("grouprow")) {
+        groups++;
+        const m = text.match(/^Batch\s*:\s*(.+)$/i);
+        if (m) batch = m[1].trim();
+        else if (/^Product\s*:/i.test(text)) batch = "";
+        continue;
+      }
+      if (!batch || tr.classList.contains("totals_row")) continue;
+      const cells = [...tr.children].map((c) => (c.textContent || "").replace(/\s+/g, " ").trim());
+      if (cells.length !== 5 || /^item$/i.test(cells[0])) continue;
+      out.push({ batch, cells });
+    }
+    return { rows: out, groups };
+  }, url);
+  if ("error" in raw) throw new Error(`Ekos's Bill of Materials report didn't load (${raw.error}) — nothing was changed.`);
+  if (raw.groups === 0) throw new Error("Ekos's Bill of Materials report came back in a shape the reader doesn't know — nothing was changed.");
+  const money = (t: string) => Number(t.replace(/[$,\s]/g, ""));
+  const byBatch = new Map<string, EkosBomRow[]>();
+  for (const { batch, cells } of raw.rows) {
+    const qty = Math.abs(num(cells[1].replace(/,/g, "")));
+    const cost = Math.abs(money(cells[4]));
+    if (!cells[0] || !Number.isFinite(qty) || !Number.isFinite(cost)) continue;
+    const key = bomKey(batch);
+    const list = byBatch.get(key) ?? [];
+    list.push({ item: cells[0], qty, uom: UOM_SHORT[cells[2].toLowerCase()] ?? cells[2], cost });
+    byBatch.set(key, list);
+  }
+  return byBatch;
 }
 
 // "08/13/2026" → "2026-08-13"

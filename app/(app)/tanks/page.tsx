@@ -23,7 +23,7 @@ export default async function TanksPage() {
   const { data } = await createAdminClient()
     .from("ekos_tanks")
     .select(
-      "tank_name, volume_bbl, product_code, batch_title, product_name, color, start_date, stage, yeast_in_cone, dry_hop, temp_f, temp_at, overdue, tasks_left, synced_at",
+      "tank_name, volume_bbl, product_code, batch_title, product_name, color, start_date, stage, yeast_in_cone, dry_hop, temp_f, temp_at, overdue, tasks_left, batch_details, synced_at",
     );
   const live = ((data ?? []) as LiveTank[]).map((t) => ({
     ...t,

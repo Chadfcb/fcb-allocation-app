@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import EkosNameLists from "@/components/EkosNameLists";
 import EkosTaskStages from "@/components/EkosTaskStages";
+import EkosBatchItems from "@/components/EkosBatchItems";
 
 // Admin → Ekos Sync (added 2026-10-03): the Automatic Syncs status page —
 // each source's on/off switch, a "Run now" button, and the run history
@@ -227,6 +228,7 @@ export default function EkosSyncClient({ sources }: { sources: SourceMeta[] }) {
       <EkosNameLists />
 
       <EkosTaskStages />
+      <EkosBatchItems />
 
       <section className="flex flex-col gap-2">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-neutral-500">Sync history</h2>
