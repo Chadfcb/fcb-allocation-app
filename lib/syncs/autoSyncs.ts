@@ -5,10 +5,12 @@ import { startSnapshots, stopSnapshots } from "@/lib/syncs/snapshots";
 import { syncEkosPurchaseOrders } from "@/lib/syncs/ekosPurchaseOrders";
 import { syncEkosDistributorInventory } from "@/lib/syncs/ekosDistributorInventory";
 import { translateEkosInventory } from "@/lib/syncs/ekosNameMap";
+import { syncEkosTanks } from "@/lib/syncs/ekosTanks";
 import {
   closeEkosSession,
   readEkosDistributorInventory,
   readEkosOpenPurchaseOrders,
+  readEkosTanks,
 } from "@/lib/syncs/ekosReader";
 
 // Automatic Syncs (Admin → Ekos Sync) — added 2026-10-03.
@@ -69,6 +71,16 @@ export const SYNC_SOURCES: SyncSourceDef[] = [
         issues: [...issues, ...result.errors],
         summary: `${rows.length} Ekos rows read, ${result.syncedCount} inventory rows synced`,
       };
+    },
+  },
+  {
+    // Added 2026-10-05 (claude/tank-sync-plan.md).
+    key: "ekos_tanks",
+    label: "Ekos — Tanks",
+    description: "What's in each tank, its stage, tasks left, latest temperature and overdue warnings → Tanks.",
+    run: async () => {
+      const read = await readEkosTanks();
+      return syncEkosTanks(createAdminClient(), read);
     },
   },
 ];

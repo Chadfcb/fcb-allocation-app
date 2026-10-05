@@ -21,6 +21,25 @@
 import { useEffect, useRef, useState } from "react";
 import { createTankScene, type TankScene } from "./tanks/tankScene.js";
 
+// One tank from the Ekos tank sync (table ekos_tanks, sql/ekos_tanks.sql).
+export interface LiveTank {
+  tank_name: string;
+  volume_bbl: number;
+  product_code: string | null;
+  batch_title: string | null;
+  product_name: string | null;
+  color: string | null;
+  start_date: string | null;
+  stage: string | null;
+  yeast_in_cone: boolean;
+  dry_hop: boolean;
+  temp_f: number | null;
+  temp_at: string | null;
+  overdue: boolean;
+  tasks_left: { title: string; date: string | null; overdue: boolean }[];
+  synced_at: string;
+}
+
 interface TankInfo {
   name: string;
   capacity: number;
@@ -34,7 +53,7 @@ interface TankInfo {
 // Tanks beta build number: v1.xx, xx = main Tanks changes so far, preview + site
 // (Chad, 2026-10-05: count every main change, not just pushes). Full list of the
 // first 25 in the project doc claude/tank-view-direction.md. Add 1 per main change.
-const TANKS_BUILD = "1.27";   // 26 walking guy + take control (first person), 27 Shift run + Space jump
+const TANKS_BUILD = "1.29";   // 26 walking guy + take control, 27 Shift run + Space jump, 28 overdue warning signs, 29 Ekos tank sync
 
 const STATUS_PILL: Record<string, { bg: string; fg: string }> = {
   Fermenting: { bg: "rgba(255,153,0,0.18)", fg: "#FFC266" },
@@ -72,6 +91,8 @@ const SNAP_CSS = `
 .tk-task .d{font-family:ui-monospace,"SFMono-Regular",Consolas,monospace;font-size:11px;color:#8FD16E;padding-top:1px;white-space:nowrap}
 .tk-task .n{font-size:13px;line-height:1.35}
 .tk-task.next{border-color:rgba(143,209,110,0.35);background:rgba(106,188,70,0.10)}
+.tk-task.late{border-color:rgba(255,120,90,0.45);background:rgba(255,90,60,0.10)}
+.tk-task .late-tag{margin-left:6px;padding:1px 6px;border-radius:999px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:#FFB4A3;background:rgba(255,90,60,0.22)}
 .tk-all-done{display:flex;align-items:center;gap:10px;margin-top:10px;padding:12px;border-radius:12px;background:rgba(106,188,70,0.14);border:1px solid rgba(106,188,70,0.35);font-weight:600;font-size:14px;color:#CDEFBD}
 @media (prefers-reduced-motion: reduce){.tk-snap,.tk-snap.show{transition:none}}
 .tk-guy-card{position:absolute;left:0;top:0;width:230px;z-index:4;padding:14px;border-radius:16px;color:#E8EDEA;
@@ -92,7 +113,7 @@ const SNAP_CSS = `
 .tk-fp-hud .note b{color:#8FD16E}
 `;
 
-export default function TanksClient() {
+export default function TanksClient({ live = [], syncedLabel = null }: { live?: LiveTank[]; syncedLabel?: string | null }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const snapRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<TankScene | null>(null);
@@ -109,6 +130,7 @@ export default function TanksClient() {
         snapEl,
         onSelect: (info: TankInfo | null) => setSelected(info),
         font: getComputedStyle(canvas).fontFamily || "system-ui, sans-serif",
+        live,
       });
     } catch {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time fallback when the browser can't start WebGL
@@ -119,7 +141,7 @@ export default function TanksClient() {
       sceneRef.current?.dispose();
       sceneRef.current = null;
     };
-  }, []);
+  }, [live]);
 
   const full = !!selected && selected.volume > 0.05;
   const pct = selected ? Math.round((selected.volume / selected.capacity) * 100) : 0;
@@ -134,8 +156,9 @@ export default function TanksClient() {
         <span className="fcb-nav-item is-active mb-3" style={{ display: "inline-flex", width: "auto" }}>Beta Test Build v{TANKS_BUILD}</span>
         <h1 className="text-3xl font-semibold tracking-tight">Tanks</h1>
         <p className="mt-1 text-sm text-neutral-400">
-          21 unitanks at true size, in the cellar layout. Levels from the Ekos tank map (Oct 3); status, temps and tasks
-          are samples until the tank sync is built.
+          {syncedLabel
+            ? `21 unitanks at true size, in the cellar layout. Synced from Ekos ${syncedLabel}. Temperatures are each batch's latest Fermentation Log.`
+            : "21 unitanks at true size, in the cellar layout. Levels from the Ekos tank map (Oct 3); status, temps and tasks are samples until the first Ekos tank sync runs."}
         </p>
       </div>
 

@@ -10,10 +10,15 @@
 // the Ekos tank map Chad shared on 2026-10-03. Full tanks show "Fermenting"; FV16 shows
 // a sample batch at the "Carbonating" stage (with sample tasks, days and temps) so the
 // hover snapshot and stage visuals can be seen. Temps on every tank are samples.
+//
+// LIVE DATA (2026-10-05, claude/tank-sync-plan.md): once the Ekos tank sync has
+// run, `live` (rows of table ekos_tanks) replaces all of the above — levels,
+// products, batches, stage, yeast/dry hop, temps, overdue signs and each
+// tank's tasks left for the hover snapshot.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-export function createTankScene({ canvas, snapEl, onSelect, font, mono }){
+export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
   const FONT = font || 'system-ui, sans-serif';
   const MONO = mono || 'ui-monospace, "SFMono-Regular", Consolas, monospace';
   let disposed = false;
@@ -489,7 +494,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono }){
     return '#ff4d4d';
   }
   function drawTemp(t){
-    const g = t.tempCanvas.getContext('2d'), W = 160, H = 900, cur = t.tempF, curCol = tempColor(cur);
+    const g = t.tempCanvas.getContext('2d'), W = 160, H = 900, hasTemp = typeof t.tempF === 'number', cur = hasTemp ? t.tempF : -100, curCol = tempColor(cur);
     g.clearRect(0,0,W,H);
     // no background (Chad, 2026-10-05): just the scale, straight on the tank
     g.fillStyle = '#A3ADA8'; g.font = `600 30px ${FONT}`; g.textAlign = 'center'; g.fillText('°F', W/2, 50);
@@ -498,8 +503,9 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono }){
     const grad = g.createLinearGradient(0, y0, 0, y1);
     for (const [f,c] of TEMP_STOPS) grad.addColorStop((f-30)/70, c);
     g.globalAlpha = 0.25; g.fillStyle = grad; roundRect(g, 24, y1, 22, y0-y1, 11); g.fill(); g.globalAlpha = 1;
-    // filled up to the current temperature, in its color
-    g.fillStyle = curCol; roundRect(g, 24, yOf(cur), 22, y0 - yOf(cur), 11); g.fill();
+    // filled up to the current temperature, in its color (no reading from Ekos → empty scale, no pill)
+    if (hasTemp){ g.fillStyle = curCol; roundRect(g, 24, yOf(cur), 22, y0 - yOf(cur), 11); g.fill(); }
+    g.fillStyle = hasTemp ? curCol : 'rgba(255,255,255,0.18)';
     g.beginPath(); g.arc(35, y0 + 22, 20, 0, Math.PI*2); g.fill();                 // thermometer bulb
     // readings every 10 °F, colored along the scale
     g.textAlign = 'left'; g.font = `600 34px ${MONO}`;
@@ -508,7 +514,8 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono }){
       g.fillStyle = 'rgba(255,255,255,0.18)'; g.fillRect(52, y-1, 14, 3);
       g.fillStyle = tempColor(f); g.globalAlpha = Math.abs(f - cur) < 5 ? 0.25 : 0.85; g.fillText(String(f), 74, y + 12); g.globalAlpha = 1;
     }
-    drawTempWindow(t, cur, curCol);
+    if (t.tempWin) t.tempWin.visible = hasTemp;
+    if (hasTemp) drawTempWindow(t, cur, curCol);
     t.tempTex.needsUpdate = true;
   }
   function drawTempWindow(t, cur, curCol){
@@ -739,8 +746,76 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono }){
     t.pops.instanceMatrix.needsUpdate = true;
   }
 
-  const tanks = TANKS.map(makeTank);
+  // Live tank map from Ekos (when the tank sync has run) — keeps the layout and
+  // sizes above, takes everything else from Ekos.
+  const LIVE = new Map((Array.isArray(live) ? live : []).map(r => [String(r.tank_name).toUpperCase(), r]));
+  const SPECS = LIVE.size === 0 ? TANKS : TANKS.map(s => {
+    const r = LIVE.get(s.name.toUpperCase());
+    const vol = r && Number(r.volume_bbl) > 0.05 ? Number(r.volume_bbl) : 0;
+    return { name: s.name, bbl: s.bbl, px: s.px, py: s.py,
+      vol: vol || undefined,
+      code: vol ? (r.product_code || undefined) : undefined,
+      product: vol ? (r.product_name || r.product_code || 'Unknown product') : undefined,
+      batch: vol ? (r.batch_title || undefined) : undefined,
+      color: vol ? (r.color || '#9AA39E') : undefined };
+  });
+  const tanks = SPECS.map(makeTank);
   tanks.forEach(t => { t.crashIcon = makeCrashIcon(); t.crash = false; });
+  // ---------- Overdue task warning (Chad, 2026-10-05): a 3D yellow warning sign with "!"
+  // floating above the tank when any task for its batch is past its date and not Completed
+  // (what Ekos's red dashed border means). Fixed in place, facing front. Sample tanks for now:
+  // the ones Ekos showed dashed on Oct 5 — with live data, Ekos's red dashed border.
+  const warnMat = new THREE.MeshStandardMaterial({ color:new THREE.Color(0xffc21a).convertSRGBToLinear(), emissive:new THREE.Color(0xff9d00).convertSRGBToLinear(), emissiveIntensity:0.45, roughness:0.35, metalness:0.1 });
+  const warnEdge = new THREE.MeshStandardMaterial({ color:new THREE.Color(0x1a1a1a).convertSRGBToLinear(), roughness:0.5 });
+  function triShape(r, rr){            // rounded triangle, point up
+    const pts = [0, 1, 2].map(k => { const a = Math.PI/2 + k*Math.PI*2/3; return new THREE.Vector2(Math.cos(a)*r, Math.sin(a)*r); });
+    const sh = new THREE.Shape();
+    for (let k=0;k<3;k++){
+      const p = pts[k], prev = pts[(k+2)%3], next = pts[(k+1)%3];
+      const a = p.clone().lerp(prev, rr), b = p.clone().lerp(next, rr);
+      if (k === 0) sh.moveTo(a.x, a.y); else sh.lineTo(a.x, a.y);
+      sh.quadraticCurveTo(p.x, p.y, b.x, b.y);
+    }
+    sh.closePath(); return sh;
+  }
+  function makeWarnIcon(){
+    const g = new THREE.Group(), sign = new THREE.Group(); g.add(sign);
+    const back = new THREE.Mesh(new THREE.ExtrudeGeometry(triShape(1.25, 0.16), { depth:0.18, bevelEnabled:true, bevelThickness:0.05, bevelSize:0.05, bevelSegments:3 }), warnEdge);
+    back.position.z = -0.12; sign.add(back);                                              // dark rim
+    const face = new THREE.Mesh(new THREE.ExtrudeGeometry(triShape(1.02, 0.16), { depth:0.2, bevelEnabled:true, bevelThickness:0.04, bevelSize:0.04, bevelSegments:3 }), warnMat);
+    face.position.z = -0.06; sign.add(face);                                              // yellow face
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.62, 0.08), warnEdge); bar.position.set(0, 0.06, 0.2); sign.add(bar);
+    const dot = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.08, 20).rotateX(Math.PI/2), warnEdge); dot.position.set(0, -0.4, 0.2); sign.add(dot);
+    sign.scale.setScalar(0.8);   // half of the first try (Chad: "too big, make them half the size")
+    g.userData.sign = sign; g.visible = false; scene.add(g);
+    return g;
+  }
+  const OVERDUE_SAMPLE = ['FV01', 'FV03', 'FV04', 'FV07', 'CID-1'];
+  tanks.forEach(t => { t.warnIcon = makeWarnIcon(); t.overdue = LIVE.size ? !!(LIVE.get(t.name.toUpperCase()) || {}).overdue : OVERDUE_SAMPLE.includes(t.name); });
+  function updateWarnIcon(t, tm){
+    const g = t.warnIcon; g.visible = !!t.overdue; if (!g.visible) return;
+    const ph = t.spec.px*0.013;
+    g.position.set(t.group.position.x, t.Hft + 2.0 + (reduce ? 0 : 0.18*Math.sin(tm*1.6 + ph)), t.group.position.z);   // floats just above the lid
+    g.rotation.set(0, 0, 0);                                                                                      // always faces front
+    warnMat.emissiveIntensity = reduce ? 0.45 : 0.35 + 0.25*(0.5 + 0.5*Math.sin(tm*3.2));                          // gentle glow pulse
+  }
+
+
+  // Live stage / temps / tasks from the Ekos tank sync.
+  const STAGES = ['Fermenting', 'Dry Hopping', 'Cold Crashing', 'Carbonating', 'Ready For Packaging'];
+  if (LIVE.size) tanks.forEach(t => {
+    const r = LIVE.get(t.name.toUpperCase()); if (!r) { t.tempF = null; return; }
+    t.live = r;
+    t.tempF = typeof r.temp_f === 'number' ? r.temp_f : null;
+    if (t.volume <= 0.05) return;
+    const stage = STAGES.includes(r.stage) ? r.stage : 'Fermenting';
+    t.stageName = stage;
+    t.crash = stage === 'Cold Crashing';
+    t.carb = stage === 'Carbonating';
+    t.status = stage === 'Ready For Packaging' ? 'Ready' : t.crash ? 'Cold Crashing' : t.carb ? 'Carbonating' : 'Fermenting';
+    t.yeastOn = !!r.yeast_in_cone;
+    t.dryHop = !!r.dry_hop && stage === 'Dry Hopping';
+  });
   tanks.forEach(t => { applyLook(t); drawPlate(t); drawTemp(t); });
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(()=>{ if (!disposed) tanks.forEach(t => { drawPlate(t); drawTemp(t); }); });
 
@@ -810,13 +885,36 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono }){
     t.stageName = d.phase === 'done' ? 'Ready For Packaging' : PHASE[d.phase].stage;
     applyLook(t); drawTemp(t); drawPlate(t);
   }
-  applyStage(byName('FV16'));
+  if (!LIVE.size) applyStage(byName('FV16'));
 
   const viewerEl = canvas.parentElement;
   let snapTank = null, hoverSince = 0, overSnap = false, hideTimer = null;
   let lastPointer = { x: 0, y: 0 }, snapAt = null;
   const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const DAY = 86400000;
+  const dayNum = iso => { const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number); return Date.UTC(y, m - 1, d) / DAY; };
+  const todayNum = () => { const n = new Date(); return Date.UTC(n.getFullYear(), n.getMonth(), n.getDate()) / DAY; };
+  const shortDate = iso => { const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number); return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); };
+  const DONE_HTML = '<div class="tk-all-done"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A6DC8B" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16 9.5"/></svg>All tasks completed</div>';
+  function fillSnapLive(t){
+    const r = t.live, stage = t.stageName || 'Fermenting', st = STAGE[stage] || STAGE.Fermenting;
+    const start = r.start_date ? dayNum(r.start_date) : null;
+    const days = start === null ? null : Math.max(0, todayNum() - start);
+    const left = Array.isArray(r.tasks_left) ? r.tasks_left : [];
+    const when = k => k.date ? (start !== null ? 'Day ' + (dayNum(k.date) - start + 1) : shortDate(k.date)) : '—';
+    const tasks = !left.length ? DONE_HTML
+      : '<div class="tk-tasks-h"><span>Tasks left</span><span>' + left.length + '</span></div><div class="tk-tasks">' +
+        left.map((k,i) => '<div class="tk-task' + (i===0?' next':'') + (k.overdue?' late':'') + '"><span class="d">' + esc(when(k)) + '</span><span class="n">' + esc(k.title) + (k.overdue ? ' <b class="late-tag">Overdue</b>' : '') + '</span></div>').join('') + '</div>';
+    snapEl.innerHTML =
+      '<div class="tk-snap-prod"><span class="tk-swatch" style="background:' + esc(t.color) + '"></span><span>' + esc(t.spec.product) + '</span></div>' +
+      '<div class="tk-snap-tank">' + esc(t.name) + ' · ' + t.capacity + ' bbl unitank' + (r.batch_title ? ' · ' + esc(r.batch_title) : '') + '</div>' +
+      '<div class="tk-snap-row"><span>Days in tank</span><span class="tk-num">' + (days === null ? '—' : days + (days === 1 ? ' day' : ' days')) + '</span></div>' +
+      '<div class="tk-snap-row"><span>Left in tank</span><span class="tk-num">' + t.volume.toFixed(2) + ' bbl</span></div>' +
+      '<div class="tk-snap-row"><span>Status</span><span class="tk-snap-pill" style="background:' + st.bg + ';color:' + st.fg + '">' + esc(stage) + '</span></div>' +
+      tasks;
+  }
   function fillSnap(t){
+    if (t.live) return fillSnapLive(t);
     const d = SNAP[t.name], ph = PHASE[d.phase], done = d.phase === 'done', st = STAGE[ph.stage];
     const left = tasksLeft(d);
     const tasks = (done || !left.length)
@@ -853,7 +951,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono }){
     snapEl.style.transform = 'translate(' + x + 'px,' + y + 'px)';
   }
   function updateSnapHover(now){
-    const t = hovered && SNAP[hovered.name] && hovered.volume > 0.05 ? hovered : null;
+    const t = hovered && hovered.volume > 0.05 && (LIVE.size ? !!hovered.live : !!SNAP[hovered.name]) ? hovered : null;
     if (t){
       if (hideTimer){ clearTimeout(hideTimer); hideTimer = null; }
       if (snapTank !== t){
@@ -1246,7 +1344,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono }){
         if (Math.abs(t.winTarget - t.winY) < 1e-3) t.winY = t.winTarget;
         t.tempWin.position.y = t.winY;
       }
-      updateCrashIcon(t, tm);
+      updateCrashIcon(t, tm); updateWarnIcon(t, tm);
       if (t.carbBubbles.visible && !reduce) animateCarb(t, dt, tm);
     }
     ring.material.opacity += ((selected ? 0.6 : 0) - ring.material.opacity) * Math.min(1, dt*8);

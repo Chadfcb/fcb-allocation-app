@@ -2,6 +2,7 @@ import type { Browser, Frame, HTTPRequest, Page } from "puppeteer-core";
 import { launchBrowser } from "@/lib/ernie/browser";
 import type { EkosPurchaseOrder, EkosPoItem } from "@/lib/syncs/ekosPurchaseOrders";
 import type { EkosInventoryRow } from "@/lib/syncs/ekosNameMap";
+import type { EkosBatch, EkosBatchTask, EkosTankMapItem, EkosTanksRead } from "@/lib/syncs/ekosTanks";
 import { snap, watchPage } from "@/lib/syncs/snapshots";
 
 // Ekos reader for the Automatic Syncs (Admin → Ekos Sync) — added
@@ -12,6 +13,8 @@ import { snap, watchPage } from "@/lib/syncs/snapshots";
 // Vercel — never stored anywhere else), and READS two things:
 //   1. Open Purchase Orders (+ each PO's comments and line items)
 //   2. Distributor Inventory (every page of the report)
+//   3. Tanks (added 2026-10-05): the tank map, the In-Progress batch list,
+//      and each in-tank batch's tasks + Fermentation Log readings
 // Page layout was read from Ekos on 2026-10-03 (with Chad signed in, read
 // only) and is written down in claude/ekos-sync-reference.md. If Ekos
 // changes its pages, this stops with a clear error and Chad gets an email —
@@ -26,6 +29,8 @@ const EKOS_ORIGIN = "https://app.goekos.com";
 const OPEN_PO_LIST_URL = `${EKOS_ORIGIN}/03.00/Purchase_Order?filter=b3a0331c-1e9d-4304-93c0-e2950d2e362b`;
 const PO_DETAIL_URL = (guid: string) => `${EKOS_ORIGIN}/03.00/Purchase_Order/${guid}`;
 const DISTRIBUTOR_INVENTORY_URL = `${EKOS_ORIGIN}/03.00/distributor_inventory`;
+const FACILITY_VIEW_URL = `${EKOS_ORIGIN}/03.00/?tab=Facility%20View`;
+const BATCH_LIST_URL = `${EKOS_ORIGIN}/03.00/Product_Batch`;
 const NAV_TIMEOUT_MS = 45_000;
 
 interface EkosSession {
@@ -47,6 +52,12 @@ const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36";
 
 let current: Promise<EkosSession> | null = null;
+
+// Lets one reader change what an Ekos LIST lookup asks for (e.g. "In-Progress
+// batches" instead of the saved "Completed" filter) — only ever applied to
+// read lookups that isAllowedRequest already lets through. Never saved in
+// Ekos: it changes this one request, not the person's filter settings.
+let rewriteListLookup: ((url: URL, body: string) => string | null) | null = null;
 
 // One signed-in browser shared by both Ekos sources in a run.
 export function getEkosSession(): Promise<EkosSession> {
@@ -118,6 +129,17 @@ async function openSession(): Promise<EkosSession> {
         }
         req.abort("blockedbyclient").catch(() => {});
         return;
+      }
+      if (rewriteListLookup && req.method().toUpperCase() === "POST") {
+        try {
+          const changed = rewriteListLookup(new URL(req.url()), req.postData() ?? "");
+          if (changed !== null) {
+            req.continue({ postData: changed }).catch(() => {});
+            return;
+          }
+        } catch {
+          // fall through to the unchanged request
+        }
       }
       req.continue().catch(() => {});
     });
@@ -205,6 +227,15 @@ function isAllowedRequest(req: HTTPRequest, signedIn: boolean): boolean {
   }
   // Data lookups some Ekos screens make with POST.
   if (signedIn && /(get|search|list|query|layout|report|filter)/i.test(url.pathname)) return true;
+  // Ekos's older screens look data up through "_processors/*.ashx?action=…Get"
+  // (e.g. the batch list's projectListGet) — only actions that end in "get".
+  if (
+    signedIn &&
+    /\/_processors\/[a-z_]+\.ashx$/i.test(url.pathname) &&
+    /get$/i.test(url.searchParams.get("action") ?? "")
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -477,6 +508,216 @@ export async function readEkosDistributorInventory(): Promise<EkosInventoryRow[]
     onHand: num(r[iOnHand]),
     rateOfSale: num(r[iRate]),
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Tanks (added 2026-10-05) — claude/tank-sync-plan.md
+// ---------------------------------------------------------------------------
+
+export async function readEkosTanks(): Promise<EkosTanksRead> {
+  const { page } = await getEkosSession();
+  const map = await readTankMap(page);
+  const batches = await readInProgressBatches(page, map);
+  return { map, batches };
+}
+
+// Home → Facility View: Ekos's tank map, drawn in its older screen (a frame).
+// Each spot: title (FV16), then lines like "18.662471 bbl", "NPT", "1295".
+// (Its red dashed border is read too, but the Tanks page works out overdue
+// from task due dates instead — Chad, 2026-10-05.)
+async function readTankMap(page: Page): Promise<EkosTankMapItem[]> {
+  await page.goto(FACILITY_VIEW_URL, { waitUntil: "networkidle2" });
+  await snap(page, "Tank map — just opened");
+  let frame: Frame | undefined;
+  await waitFor(async () => {
+    for (const f of page.frames()) {
+      const n = await f.evaluate(() => document.querySelectorAll(".floorplanItemOuter").length).catch(() => 0);
+      if (n >= 5) {
+        frame = f;
+        return true;
+      }
+    }
+    return false;
+  }, "the tank map (Facility View)");
+  await snap(page, "Tank map — ready");
+
+  const raw = await frame!.evaluate(() =>
+    [...document.querySelectorAll(".floorplanItemOuter")].map((el) => {
+      const titleEl = el.querySelector("div.floorplanItemTitle") ?? el.querySelector(".floorplanItemTitle");
+      const lines = [...el.querySelectorAll("p")].map((p) => (p.textContent || "").replace(/\s+/g, " ").trim()).filter(Boolean);
+      const border = el.querySelector(".floorplanItemBorder") as HTMLElement | null;
+      const bs = border ? getComputedStyle(border) : null;
+      return {
+        title: (titleEl?.textContent || "").replace(/\s+/g, " ").trim(),
+        lines,
+        borderStyle: bs ? bs.borderTopStyle : "",
+        borderColor: bs ? bs.borderTopColor : "",
+        fill: bs ? bs.backgroundColor : "", // the circle's fill color lives on the border element
+      };
+    }),
+  );
+
+  const toHex = (rgb: string): string | null => {
+    const m = rgb.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+    if (!m || (m[4] !== undefined && Number(m[4]) === 0)) return null;
+    return "#" + [m[1], m[2], m[3]].map((n) => Number(n).toString(16).padStart(2, "0")).join("").toUpperCase();
+  };
+
+  const items: EkosTankMapItem[] = [];
+  for (const r of raw) {
+    // The title line can repeat inside the <p> list — drop it.
+    const name = r.title || r.lines[0] || "";
+    if (!name) continue;
+    const rest = r.lines.filter((l) => l !== name && !/^empty$/i.test(l));
+    const volLine = rest.find((l) => /^[\d.]+\s*bbl$/i.test(l));
+    const after = volLine ? rest.slice(rest.indexOf(volLine) + 1) : [];
+    items.push({
+      name,
+      volumeBbl: volLine ? num(volLine.replace(/bbl/i, "")) : 0,
+      productCode: after[0] ?? null,
+      batchTitle: after.slice(1).join(" ") || null,
+      color: volLine ? toHex(r.fill) : null,
+      overdue: r.borderStyle === "dashed" && /rgb\(255,\s*0,\s*0\)/.test(r.borderColor),
+    });
+  }
+  if (!items.some((i) => /^FV/i.test(i.name))) {
+    throw new Error("Ekos's tank map didn't show any FV tanks — the reader needs an update. Nothing was changed.");
+  }
+  return items;
+}
+
+interface ProjectListRecord {
+  rowguid?: string;
+  relatedObject?: string;
+  relatedRecord?: string;
+  title?: string;
+  statusTitle?: string;
+  productTitle?: string;
+  startDate?: string;
+  locations?: string;
+  units?: number;
+}
+
+// Production → Production Batches. The list's data comes from Ekos's own
+// lookup (POST _processors/projectdashboard.ashx?action=projectListGet). Its
+// saved filter shows "Completed" batches, so for this one lookup the reader
+// asks for In-Progress (Non-Aging + Aging) instead — the saved filter in
+// Ekos is not touched.
+async function readInProgressBatches(page: Page, map: EkosTankMapItem[]): Promise<EkosBatch[]> {
+  let replied: { totalCount: number; records: ProjectListRecord[] } | null = null;
+  const onResponse = async (res: import("puppeteer-core").HTTPResponse) => {
+    try {
+      const u = new URL(res.url());
+      if (!/projectdashboard\.ashx$/i.test(u.pathname) || u.searchParams.get("action") !== "projectListGet") return;
+      if (res.status() !== 200 || res.request().method().toUpperCase() !== "POST") return;
+      const body = (await res.json()) as { projectList?: ProjectListRecord[]; projectTotalCount?: number };
+      if (Array.isArray(body?.projectList)) {
+        replied = { totalCount: Number(body.projectTotalCount ?? body.projectList.length), records: body.projectList };
+      }
+    } catch {
+      // not JSON / body unavailable — ignore
+    }
+  };
+  rewriteListLookup = (url, body) => {
+    if (!/projectdashboard\.ashx$/i.test(url.pathname) || url.searchParams.get("action") !== "projectListGet") return null;
+    const filter = JSON.parse(body) as { batchStatus?: { title?: string; isChecked?: boolean }[]; rowIndex?: number; rowsReturned?: number; searchString?: string };
+    if (!Array.isArray(filter.batchStatus) || !filter.batchStatus.some((s) => /^In-Progress/i.test(s.title ?? ""))) return null;
+    for (const s of filter.batchStatus) s.isChecked = /^In-Progress/i.test(s.title ?? "");
+    filter.rowIndex = 0;
+    filter.rowsReturned = 500;
+    filter.searchString = "";
+    return JSON.stringify(filter);
+  };
+  page.on("response", onResponse);
+  try {
+    await page.goto(BATCH_LIST_URL, { waitUntil: "networkidle2" });
+    await snap(page, "Batch list — just opened");
+    await waitFor(async () => replied !== null, "the In-Progress batch list");
+    await snap(page, "Batch list — ready");
+  } finally {
+    page.off("response", onResponse);
+    rewriteListLookup = null;
+  }
+
+  const list = replied as unknown as { totalCount: number; records: ProjectListRecord[] };
+  if (list.records.length !== list.totalCount) {
+    throw new Error(`Ekos has ${list.totalCount} In-Progress batches but only ${list.records.length} came through — nothing was changed.`);
+  }
+  if (list.records.some((r) => !/^In-Progress/i.test(r.statusTitle ?? ""))) {
+    throw new Error("Ekos's batch list didn't switch to In-Progress batches — the reader needs an update. Nothing was changed.");
+  }
+
+  // Ekos's older-screen frame on this page, to look up each batch's details
+  // the same way Ekos's own batch screen does (read-only lookups).
+  const frame = page.frames().find((f) => /\/\d+\.\d+\.\d+\/default\.aspx/i.test(f.url()));
+  if (!frame) throw new Error("Couldn't find Ekos's batch screen — the reader needs an update. Nothing was changed.");
+  const base = new URL(frame.url()).pathname.replace(/\/default\.aspx$/i, "");
+  const getJson = async (path: string): Promise<unknown> => {
+    const text = await frame.evaluate(async (url: string) => {
+      const r = await fetch(url, { credentials: "include" });
+      return r.ok ? r.text() : `__HTTP_${r.status}`;
+    }, `${base}/_processors/${path}&${Math.floor(Math.random() * 1e5)}`);
+    if (text.startsWith("__HTTP_")) throw new Error(`Ekos refused a batch lookup (${text.slice(7)}) — nothing was changed.`);
+    return JSON.parse(text);
+  };
+
+  const onMap = new Set(map.map((m) => m.name.toUpperCase()));
+  const out: EkosBatch[] = [];
+  for (const r of list.records) {
+    const locations = (r.locations ?? "").split(",").map((l) => l.trim()).filter(Boolean);
+    const inTank = locations.filter((l) => onMap.has(l.toUpperCase()));
+    if (!inTank.length || !r.rowguid) continue; // not sitting in a tank (old/finished batches Ekos still lists)
+    const g = encodeURIComponent(r.rowguid);
+    const project = (await getJson(
+      `project.ashx?action=project_get&projectguid=${g}&relatedobject=${encodeURIComponent(r.relatedObject ?? "")}&record=${encodeURIComponent(r.relatedRecord ?? "")}&task=null&filter=null`,
+    )) as { tasks?: { title?: string; status_title?: string; start_date?: string; end_date?: string; is_overdue?: boolean; parent_task?: string }[] };
+    if (!Array.isArray(project?.tasks)) {
+      throw new Error(`Batch ${r.title}'s tasks came back in a shape the reader doesn't know — nothing was changed.`);
+    }
+    const logs = (await getJson(`projectOverview.ashx?action=fermentation_log_entries_get&project=${g}`)) as
+      | { date?: string; temperature?: number | null }[]
+      | null;
+    const tasks: EkosBatchTask[] = project.tasks
+      .filter((t) => !t.parent_task)
+      .map((t) => ({
+        title: (t.title ?? "").trim(),
+        status: t.status_title ?? "",
+        date: usDate(t.start_date) ?? usDate(t.end_date),
+        due: usDate(t.end_date) ?? usDate(t.start_date),
+        overdue: !!t.is_overdue,
+      }))
+      .filter((t) => t.title);
+    const fermLogs = (Array.isArray(logs) ? logs : [])
+      .map((l) => ({ at: usDateTime(l.date), tempF: typeof l.temperature === "number" ? l.temperature : null }))
+      .sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""));
+    out.push({
+      title: r.title ?? "",
+      productName: r.productTitle ?? "",
+      startDate: datePart(r.startDate),
+      locations: inTank,
+      volumeBbl: typeof r.units === "number" ? r.units : 0,
+      tasks,
+      fermLogs,
+    });
+  }
+  return out;
+}
+
+// "08/13/2026" → "2026-08-13"
+function usDate(v: string | undefined | null): string | null {
+  const m = (v ?? "").match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  return m ? `${m[3]}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}` : null;
+}
+
+// "6/26/2026 5:00:00 AM" → ISO time (Ekos shows these in Pacific time; the
+// date is what matters for "as of").
+function usDateTime(v: string | undefined | null): string | null {
+  const m = (v ?? "").match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?)?/i);
+  if (!m) return null;
+  let h = Number(m[4] ?? 0);
+  if (m[7]) h = (h % 12) + (/pm/i.test(m[7]) ? 12 : 0);
+  const pad = (n: number | string) => String(n).padStart(2, "0");
+  return `${m[3]}-${pad(m[1])}-${pad(m[2])}T${pad(h)}:${pad(m[5] ?? 0)}:${pad(m[6] ?? 0)}`;
 }
 
 // Runs in the page: clicks the report's previous/next arrow (the first /

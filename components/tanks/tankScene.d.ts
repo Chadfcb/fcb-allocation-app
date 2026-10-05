@@ -21,4 +21,6 @@ export function createTankScene(opts: {
   onSelect?: (info: TankSceneInfo | null) => void;
   font?: string;
   mono?: string;
+  /** Rows of table ekos_tanks from the Ekos tank sync (empty = sample data). */
+  live?: unknown[];
 }): TankScene;
