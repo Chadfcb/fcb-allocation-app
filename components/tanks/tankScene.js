@@ -889,20 +889,24 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono }){
 
   // ---------- Hover + click ----------
   const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
-  let hovered = null, downAt = null;
+  let hovered = null, downAt = null, lastHitGuy = false;
   function hitTest(e){
     const r = canvas.getBoundingClientRect();
     mouse.set(((e.clientX-r.left)/r.width)*2-1, -((e.clientY-r.top)/r.height)*2+1);
     ray.setFromCamera(mouse, camera);
-    const hit = ray.intersectObjects(pickables, false).find(h => h.object.visible);
-    return hit ? hit.object.userData.tank : null;
+    const hit = ray.intersectObjects(pickables, false).find(h => h.object.visible && (!h.object.userData.guy || guy.visible));
+    lastHitGuy = !!(hit && hit.object.userData.guy);
+    return hit ? (hit.object.userData.tank || null) : null;
   }
-  const onMove = e => { const vr = canvas.getBoundingClientRect(); lastPointer = { x: e.clientX - vr.left, y: e.clientY - vr.top }; hovered = hitTest(e); canvas.style.cursor = hovered ? 'pointer' : 'grab'; };
+  const onMove = e => { if (fp.active){ canvas.style.cursor = 'none'; return; } const vr = canvas.getBoundingClientRect(); lastPointer = { x: e.clientX - vr.left, y: e.clientY - vr.top }; hovered = hitTest(e); canvas.style.cursor = (hovered || lastHitGuy) ? 'pointer' : 'grab'; };
   const onLeave = () => { hovered = null; };
   const onDown = e => { downAt = [e.clientX, e.clientY]; };
   const onUp = e => {
     if (!downAt) return; const moved = Math.hypot(e.clientX-downAt[0], e.clientY-downAt[1]); downAt = null;
-    if (moved > 6) return; select(hitTest(e));
+    if (moved > 6 || fp.active) return;
+    const t = hitTest(e);
+    if (lastHitGuy){ const vr = canvas.getBoundingClientRect(); showGuyCard(e.clientX - vr.left, e.clientY - vr.top); return; }
+    hideGuyCard(); select(t);
   };
   const onKey = e => { if (e.key === 'Escape') select(null); };
   canvas.addEventListener('pointermove', onMove);
@@ -910,6 +914,312 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono }){
   canvas.addEventListener('pointerdown', onDown);
   canvas.addEventListener('pointerup', onUp);
   canvas.addEventListener('keydown', onKey);
+
+  // ---------- The guy (Chad, 2026-10-05): a video-game style character built to match the
+  // photo Chad shared — messy wavy bleached-blond hair with darker roots on the sides, dark
+  // brows, stubble + thin mustache, black hoop earring in his left ear, red leopard-print
+  // shirt with an open collar, thin gold chain. Lower half not in the photo: dark jeans +
+  // white sneakers. Real height ≈ 5'10". He wanders and looks at random tanks. Click him →
+  // "Take control" → first person: mouse looks, W A S D walks, Esc exits.
+  const EYE_H = 5.45;   // he is ≈ 5'10"
+  const lin = h => new THREE.Color(h).convertSRGBToLinear();
+  function leopardTex(){
+    const N = 256, c = document.createElement('canvas'); c.width = c.height = N; const g = c.getContext('2d');
+    g.fillStyle = '#9b2214'; g.fillRect(0,0,N,N);
+    let seed = 5; const rnd = () => (seed = (seed*16807) % 2147483647) / 2147483647;
+    for (let i=0;i<70;i++){
+      const x = rnd()*N, y = rnd()*N, r = 7 + rnd()*9;
+      for (const [dx,dy] of [[0,0],[N,0],[-N,0],[0,N],[0,-N]]){
+        g.fillStyle = '#c4452c'; g.beginPath(); g.ellipse(x+dx, y+dy, r*0.75, r*0.6, rnd()*3, 0, Math.PI*2); g.fill();   // lighter center
+        g.strokeStyle = '#2a0805'; g.lineWidth = 3.2; g.setLineDash([r*0.9, r*0.45]);                                     // broken dark rosette ring
+        g.beginPath(); g.ellipse(x+dx, y+dy, r, r*0.8, rnd()*3, 0, Math.PI*2); g.stroke(); g.setLineDash([]);
+      }
+    }
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.encoding = THREE.sRGBEncoding; t.repeat.set(3.5, 3.5);
+    return t;
+  }
+  function stubbleTex(){
+    const W = 256, H = 256, c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d');
+    let seed = 9; const rnd = () => (seed = (seed*16807) % 2147483647) / 2147483647;
+    // u = around the head (0.5 = front), v = up. Stubble on the jaw/chin/cheeks + a thin mustache.
+    for (let i=0;i<9000;i++){
+      const u = rnd(), v = rnd();
+      const du = Math.abs(u - 0.5);
+      const jaw = v < 0.42 && v > 0.12 && du < 0.27 && !(v > 0.25 && v < 0.33 && du < 0.06);   // leave the lips clear
+      const stache = v > 0.33 && v < 0.37 && du < 0.075;
+      if (!jaw && !stache) continue;
+      const a = stache ? 0.55 : 0.32 * Math.min(1, (0.27 - du)*12) * Math.min(1, (0.42 - v)*14);
+      g.fillStyle = 'rgba(52,34,22,' + a.toFixed(3) + ')'; g.fillRect(u*W, (1-v)*H, 1.4, 1.4);
+    }
+    const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; return t;
+  }
+  const skinMat  = new THREE.MeshStandardMaterial({ color: lin(0xd9a582), roughness: 0.72 });
+  const shirtMat = new THREE.MeshStandardMaterial({ map: leopardTex(), roughness: 0.55, metalness: 0.05 });   // satin-ish shirt
+  const jeansMat = new THREE.MeshStandardMaterial({ color: lin(0x23262c), roughness: 0.9 });
+  const shoeMat  = new THREE.MeshStandardMaterial({ color: lin(0xf1f1ee), roughness: 0.6 });
+  const soleMat  = new THREE.MeshStandardMaterial({ color: lin(0x3a3a3a), roughness: 0.8 });
+  const browMat  = new THREE.MeshStandardMaterial({ color: lin(0x2b1d14), roughness: 0.9 });
+  const eyeWhite = new THREE.MeshStandardMaterial({ color: lin(0xf2eee8), roughness: 0.3 });
+  const irisMat  = new THREE.MeshStandardMaterial({ color: lin(0x3b2618), roughness: 0.3 });
+  const lipMat   = new THREE.MeshStandardMaterial({ color: lin(0xc07d66), roughness: 0.6 });
+  const goldMat  = new THREE.MeshStandardMaterial({ color: lin(0xd9b45a), metalness: 1, roughness: 0.25, envMap: steelEnv });
+  const hoopMat  = new THREE.MeshStandardMaterial({ color: lin(0x151515), metalness: 0.6, roughness: 0.35 });
+  const stubMat  = new THREE.MeshStandardMaterial({ map: stubbleTex(), transparent: true, roughness: 0.9, depthWrite: false });
+  const guyMeshes = [];
+  const part = (geo, mat, parent, x, y, z) => { const m = new THREE.Mesh(geo, mat); m.position.set(x||0, y||0, z||0); parent.add(m); m.userData.guy = true; guyMeshes.push(m); return m; };
+  const pivot = (parent, x, y, z) => { const g = new THREE.Group(); g.position.set(x, y, z); parent.add(g); return g; };
+
+  const guy = new THREE.Group(); scene.add(guy);
+  const body = new THREE.Group(); guy.add(body);        // bobs while walking
+  // legs: hip → thigh → knee → shin → sneaker
+  const legs = [];
+  for (const sx of [-1, 1]){
+    const hip = pivot(body, sx*0.29, 2.95, 0);
+    part(new THREE.CylinderGeometry(0.24, 0.2, 1.45, 14), jeansMat, hip, 0, -0.72, 0);
+    const knee = pivot(hip, 0, -1.45, 0);
+    part(new THREE.CylinderGeometry(0.19, 0.16, 1.3, 14), jeansMat, knee, 0, -0.65, 0);
+    const shoe = new THREE.Group(); shoe.position.set(0, -1.38, 0.12); knee.add(shoe);
+    part(new THREE.BoxGeometry(0.36, 0.2, 0.82), shoeMat, shoe, 0, 0.02, 0);
+    part(new THREE.SphereGeometry(0.18, 12, 8), shoeMat, shoe, 0, 0.04, 0.38).scale.set(1, 0.6, 0.9);
+    part(new THREE.BoxGeometry(0.38, 0.07, 0.9), soleMat, shoe, 0, -0.09, 0.02);
+    legs.push({ hip, knee, sx });
+  }
+  // torso: leopard shirt, slightly tapered, flattened front-to-back
+  const torso = part(new THREE.CylinderGeometry(0.66, 0.52, 2.05, 20), shirtMat, body, 0, 3.98, 0); torso.scale.z = 0.62;
+  part(new THREE.SphereGeometry(0.66, 20, 10, 0, Math.PI*2, 0, Math.PI/2), shirtMat, body, 0, 5.0, 0).scale.set(1, 0.32, 0.62);   // shoulders
+  part(new THREE.CylinderGeometry(0.53, 0.53, 0.25, 18), jeansMat, body, 0, 2.95, 0).scale.z = 0.66;                                  // waist
+  // open collar: skin V on the chest, two collar points, gold chain
+  const vneck = part(new THREE.CircleGeometry(0.34, 3), skinMat, body, 0, 4.82, 0.405); vneck.rotation.z = -Math.PI/2; vneck.scale.set(1.1, 0.62, 1);
+  for (const sx of [-1, 1]){
+    const flap = part(new THREE.BoxGeometry(0.3, 0.42, 0.04), shirtMat, body, sx*0.2, 5.0, 0.41);
+    flap.rotation.set(-0.3, 0, sx*0.6);
+  }
+  const chain = part(new THREE.TorusGeometry(0.24, 0.012, 6, 32, Math.PI), goldMat, body, 0, 4.98, 0.33);
+  chain.rotation.set(-1.2, 0, Math.PI);
+  part(new THREE.SphereGeometry(0.03, 8, 6), goldMat, body, 0, 4.76, 0.41);                                                           // little pendant
+  // arms: long leopard sleeves, skin hands
+  const arms = [];
+  for (const sx of [-1, 1]){
+    const sh = pivot(body, sx*0.72, 4.86, 0);
+    part(new THREE.CylinderGeometry(0.18, 0.16, 1.2, 12), shirtMat, sh, 0, -0.6, 0);
+    const el = pivot(sh, 0, -1.2, 0);
+    part(new THREE.CylinderGeometry(0.155, 0.13, 1.05, 12), shirtMat, el, 0, -0.52, 0);
+    part(new THREE.SphereGeometry(0.15, 12, 10), skinMat, el, 0, -1.15, 0).scale.set(0.8, 1.15, 0.6);
+    sh.rotation.z = sx*0.08;
+    arms.push({ sh, el, sx });
+  }
+  // neck + head
+  part(new THREE.CylinderGeometry(0.19, 0.21, 0.42, 14), skinMat, body, 0, 5.22, 0.02);
+  const head = pivot(body, 0, 5.62, 0.04);
+  part(new THREE.SphereGeometry(0.42, 28, 22), skinMat, head, 0, 0, 0).scale.set(0.92, 1.12, 0.98);
+  part(new THREE.SphereGeometry(0.43, 28, 22), stubMat, head, 0, 0, 0).scale.set(0.93, 1.13, 0.99);   // stubble + mustache layer
+  for (const sx of [-1, 1]){
+    part(new THREE.SphereGeometry(0.075, 12, 10), eyeWhite, head, sx*0.15, 0.07, 0.375).scale.set(1.2, 0.6, 0.6);
+    part(new THREE.SphereGeometry(0.04, 10, 8), irisMat, head, sx*0.15, 0.065, 0.413).scale.set(1, 0.85, 0.45);
+    const brow = part(new THREE.BoxGeometry(0.2, 0.05, 0.05), browMat, head, sx*0.155, 0.17, 0.405); brow.rotation.z = -sx*0.12;   // dark, slightly lowered
+    part(new THREE.SphereGeometry(0.09, 12, 10), skinMat, head, sx*0.39, 0.02, 0.0).scale.set(0.45, 1, 0.7);                       // ears
+  }
+  part(new THREE.ConeGeometry(0.07, 0.24, 10), skinMat, head, 0, -0.02, 0.44).rotation.x = Math.PI*0.5 + 0.35;                       // nose
+  part(new THREE.SphereGeometry(0.075, 12, 8), skinMat, head, 0, -0.1, 0.45).scale.set(1.15, 0.65, 0.65);                             // nose tip
+  part(new THREE.CapsuleGeometry ? new THREE.CapsuleGeometry(0.022, 0.15, 4, 8) : new THREE.CylinderGeometry(0.022, 0.022, 0.18, 8), lipMat, head, 0, -0.25, 0.405).rotation.z = Math.PI/2;
+  const hoop = part(new THREE.TorusGeometry(0.1, 0.009, 8, 28), hoopMat, head, 0.405, -0.13, 0.0);                                    // his left ear
+  hoop.rotation.y = Math.PI/2;
+  // hair: messy, wavy, bleached blond, swept over the forehead to one side; darker roots on the sides
+  {
+    const blond = new THREE.MeshStandardMaterial({ color: lin(0xe3b766), roughness: 0.7 });
+    const roots = new THREE.MeshStandardMaterial({ color: lin(0x3a2b20), roughness: 0.85 });
+    // base cap so no scalp shows, and a darker band low on the sides/back (the roots)
+    part(new THREE.SphereGeometry(0.455, 28, 14, 0, Math.PI*2, 0, 1.15), blond, head, 0, 0.05, -0.01).scale.set(0.95, 1.1, 1.0);
+    const band = part(new THREE.SphereGeometry(0.445, 28, 8, Math.PI/2 + 0.75, Math.PI*2 - 1.5, 0.95, 0.6), roots, head, 0, 0.02, -0.01);
+    band.scale.set(0.95, 1.1, 1.0);
+    // wavy clumps lying along the head, flowing down/back, plus a swoop of fringe over the forehead
+    const HN = 120, clump = new THREE.SphereGeometry(1, 10, 8);
+    const hair = new THREE.InstancedMesh(clump, new THREE.MeshStandardMaterial({ roughness: 0.68 }), HN);
+    hair.userData.guy = true; guyMeshes.push(hair); head.add(hair);
+    const m4 = new THREE.Matrix4(), n = new THREE.Vector3(), tg = new THREE.Vector3(), bt = new THREE.Vector3(), pos = new THREE.Vector3(), c = new THREE.Color();
+    let seed = 3; const rnd = () => (seed = (seed*16807) % 2147483647) / 2147483647;
+    for (let i=0;i<HN;i++){
+      const fringe = i >= 92;
+      // th: angle around the head (0 = face), ph: from the top down
+      const th = fringe ? -0.75 + rnd()*1.35 : rnd()*Math.PI*2;
+      const ph = fringe ? 0.55 + rnd()*0.42 : Math.acos(1 - rnd()*0.62);
+      const rad = 0.475 + rnd()*0.03;
+      n.set(Math.sin(th)*Math.sin(ph), Math.cos(ph), Math.cos(th)*Math.sin(ph)).normalize();
+      pos.set(n.x*rad*0.95, n.y*rad*1.1 + 0.05, n.z*rad);
+      // flow direction: down the head; the fringe sweeps across to his right
+      tg.set(Math.sin(th)*Math.cos(ph), -Math.sin(ph), Math.cos(th)*Math.cos(ph)).normalize();
+      if (fringe) tg.add(new THREE.Vector3(-0.9, -0.2, 0)).normalize();
+      tg.applyAxisAngle(n, (rnd() - 0.5)*0.9);                          // wavy, messy
+      bt.crossVectors(tg, n).normalize(); tg.crossVectors(n, bt).normalize();
+      const len = fringe ? 0.16 + rnd()*0.07 : 0.15 + rnd()*0.1, wid = 0.075 + rnd()*0.04, thk = 0.045 + rnd()*0.03;
+      m4.makeBasis(tg.clone().multiplyScalar(len), n.clone().multiplyScalar(thk), bt.clone().multiplyScalar(wid));
+      m4.setPosition(pos);
+      hair.setMatrixAt(i, m4);
+      hair.setColorAt(i, c.setHSL(0.105 + rnd()*0.02, 0.55 + rnd()*0.12, 0.6 + rnd()*0.13).convertSRGBToLinear());
+    }
+  }
+  // soft shadow under him
+  const guyShadow = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 3.2), new THREE.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false, opacity: 0.8 }));
+  guyShadow.rotation.x = -Math.PI/2; guyShadow.position.y = 0.03; guy.add(guyShadow);
+  guyMeshes.forEach(m => pickables.push(m));
+
+  // ---------- Walking around on his own ----------
+  const PERSON_R = 0.9;
+  const blockers = tanks.map(t => ({ x: t.group.position.x, z: t.group.position.z, r: t.Rft*1.12 + PERSON_R }));
+  function freeSpot(x, z){ return blockers.every(b => Math.hypot(x - b.x, z - b.z) > b.r); }
+  function pushOut(p){        // never inside a tank (or its legs)
+    for (const b of blockers){ const dx = p.x - b.x, dz = p.z - b.z, d = Math.hypot(dx, dz); if (d < b.r){ const k = b.r/(d || 1e-3); p.x = b.x + dx*k; p.z = b.z + dz*k; } }
+    p.x = Math.max(-75, Math.min(75, p.x)); p.z = Math.max(-48, Math.min(48, p.z));
+  }
+  const ai = { mode: 'walk', target: null, tank: null, wait: 0, look: 0 };
+  function pickTank(){
+    const t = tanks[(Math.random()*tanks.length)|0];
+    // stand in front-ish of the tank, a couple of feet back, at a random angle
+    for (let k=0;k<12;k++){
+      const a = (Math.random() - 0.5)*Math.PI*1.4, d = t.Rft*1.12 + 3 + Math.random()*2.5;
+      const x = t.group.position.x + Math.sin(a)*d, z = t.group.position.z + Math.cos(a)*d;
+      if (freeSpot(x, z)){ ai.tank = t; ai.target = { x, z }; ai.mode = 'walk'; return; }
+    }
+    ai.tank = t; ai.target = { x: t.group.position.x, z: t.group.position.z + t.Rft + 4 }; ai.mode = 'walk';
+  }
+  { const s = { x: 2, z: 8 }; pushOut(s); guy.position.set(s.x, 0, s.z); }
+  pickTank();
+  let walkPhase = 0, guyYaw = 0;
+  function poseGuy(speed, dt, lookUp){
+    walkPhase += speed*dt*1.15;
+    const k = Math.min(1, speed/3.2), sw = Math.sin(walkPhase);
+    for (const L of legs){ const s = L.sx < 0 ? sw : -sw; L.hip.rotation.x = s*0.55*k; L.knee.rotation.x = Math.max(0, -Math.cos(walkPhase + (L.sx < 0 ? 0 : Math.PI)))*0.75*k; }
+    for (const A of arms){ const s = A.sx < 0 ? -sw : sw; A.sh.rotation.x = s*0.45*k; A.el.rotation.x = -0.25 - 0.2*k; }
+    body.position.y = Math.abs(Math.cos(walkPhase))*0.09*k;
+    head.rotation.x += ((-lookUp) - head.rotation.x)*Math.min(1, dt*3);
+  }
+  function turnTo(yaw, dt){
+    let d = yaw - guyYaw; d = Math.atan2(Math.sin(d), Math.cos(d));
+    guyYaw += d*Math.min(1, dt*5); guy.rotation.y = guyYaw;
+    return Math.abs(d);
+  }
+  function updateGuyAI(dt, tm){
+    const p = guy.position;
+    if (ai.mode === 'walk'){
+      const dx = ai.target.x - p.x, dz = ai.target.z - p.z, d = Math.hypot(dx, dz);
+      if (d < 0.4){ ai.mode = 'look'; ai.wait = 3 + Math.random()*4; poseGuy(0, dt, 0); return; }
+      // steer toward the spot, sliding around any tank in the way
+      let vx = dx/d, vz = dz/d;
+      for (const b of blockers){
+        const ox = p.x - b.x, oz = p.z - b.z, od = Math.hypot(ox, oz), near = b.r + 2.5;
+        if (od < near){ const w = (near - od)/near; vx += (ox/od)*w*1.6 + (-oz/od)*w*0.8; vz += (oz/od)*w*1.6 + (ox/od)*w*0.8; }
+      }
+      const vl = Math.hypot(vx, vz) || 1; vx /= vl; vz /= vl;
+      const speed = 3.2;                                            // ≈ 2.2 mph stroll
+      turnTo(Math.atan2(vx, vz), dt);
+      p.x += Math.sin(guyYaw)*speed*dt; p.z += Math.cos(guyYaw)*speed*dt; pushOut(p);
+      poseGuy(speed, dt, 0);
+    } else {
+      const t = ai.tank;
+      turnTo(Math.atan2(t.group.position.x - p.x, t.group.position.z - p.z), dt);
+      ai.wait -= dt;
+      // looks up the tank and slowly back down
+      const look = 0.15 + 0.35*(0.5 + 0.5*Math.sin(tm*0.7));
+      poseGuy(0, dt, look);
+      walkPhase = 0;
+      if (ai.wait <= 0) pickTank();
+    }
+  }
+
+  // ---------- Click him → "Take control" → first person ----------
+  // the click card + first-person HUD are made here and live inside the 3D view box
+  const guyCard = document.createElement('div'); guyCard.className = 'tk-guy-card'; guyCard.hidden = true;
+  guyCard.innerHTML = '<div class="gh"><span>Walk around as him</span><button class="tk-x" type="button" aria-label="Close">✕</button></div>' +
+    '<p>First person view. Mouse looks around, W A S D walks, left Shift runs, Space jumps. Press Esc to exit.</p>' +
+    '<button class="take" type="button">Take control</button>';
+  const fpHud = document.createElement('div'); fpHud.className = 'tk-fp-hud'; fpHud.hidden = true;
+  fpHud.innerHTML = '<div class="xh"></div><div class="note">W A S D walk · Shift run · Space jump · mouse look · <b>Esc</b> to exit</div>';
+  viewerEl.appendChild(guyCard); viewerEl.appendChild(fpHud);
+  const fp = { active: false, yaw: 0, pitch: 0, keys: {}, saved: null, locked: false, dragging: false, walk: 0, run: false, y: 0, vy: 0 };
+  function showGuyCard(x, y){
+    const w = viewerEl.clientWidth, cw = 230;
+    guyCard.style.transform = 'translate(' + Math.min(Math.max(x - cw/2, 8), w - cw - 8) + 'px,' + Math.max(8, y - 150) + 'px)';
+    guyCard.hidden = false;
+  }
+  function hideGuyCard(){ guyCard.hidden = true; }
+  function enterFP(){
+    hideGuyCard(); select(null); hideSnap(); hovered = null;
+    fp.active = true; fp.saved = { pos: camera.position.clone(), target: controls.target.clone(), near: camera.near };
+    fp.yaw = guyYaw + Math.PI; fp.pitch = 0;       // camera looks down -z; his yaw faces +z
+    controls.enabled = false; guy.visible = false;
+    camera.near = 0.1; camera.updateProjectionMatrix();
+    camera.position.set(guy.position.x, EYE_H, guy.position.z);
+    fpHud.hidden = false; canvas.focus();
+    try { const r = canvas.requestPointerLock && canvas.requestPointerLock(); if (r && r.catch) r.catch(()=>{}); } catch { /* drag to look instead */ }
+  }
+  function exitFP(){
+    if (!fp.active) return;
+    fp.active = false; fp.keys = {}; fp.run = false; fp.y = 0; fp.vy = 0; fpHud.hidden = true;
+    if (document.pointerLockElement === canvas && document.exitPointerLock) document.exitPointerLock();
+    // he stays where you left him, facing the way you were looking
+    guy.position.set(camera.position.x, 0, camera.position.z); guyYaw = fp.yaw - Math.PI; guy.rotation.y = guyYaw; guy.visible = true;
+    camera.near = fp.saved.near; camera.updateProjectionMatrix();
+    camera.position.copy(fp.saved.pos); controls.target.copy(fp.saved.target); controls.enabled = true;
+    pickTank();
+  }
+  guyCard.querySelector('.take').addEventListener('click', enterFP);
+  guyCard.querySelector('.tk-x').addEventListener('click', hideGuyCard);
+  const onLockChange = ()=>{
+    fp.locked = document.pointerLockElement === canvas;
+    if (!fp.locked && fp.active) exitFP();          // browser releases the mouse on Esc → back out of him
+  };
+  document.addEventListener('pointerlockchange', onLockChange);
+  const onFpKeyDown = e=>{
+    if (!fp.active) return;
+    if (e.key === 'Escape'){ exitFP(); e.preventDefault(); return; }
+    if (e.code === 'ShiftLeft'){ fp.run = true; e.preventDefault(); return; }                 // left Shift = run (Chad)
+    if (e.code === 'Space'){ if (fp.y <= 0 && !e.repeat) fp.vy = 10; e.preventDefault(); return; }   // Space = jump (Chad)
+    const k = e.key.toLowerCase(); if ('wasd'.includes(k) && k.length === 1){ fp.keys[k] = true; e.preventDefault(); }
+  };
+  const onFpKeyUp = e=>{ if (e.code === 'ShiftLeft') fp.run = false; const k = e.key.toLowerCase(); if (k.length === 1) fp.keys[k] = false; };
+  const onFpBlur = ()=>{ fp.keys = {}; fp.run = false; };
+  window.addEventListener('keydown', onFpKeyDown);
+  window.addEventListener('keyup', onFpKeyUp);
+  window.addEventListener('blur', onFpBlur);
+  // mouse look: with the pointer locked, just move the mouse; if the browser won't lock it, hold a button and drag
+  const onFpDown = ()=>{ if (fp.active){ fp.dragging = true; if (!fp.locked && canvas.requestPointerLock){ try { const r = canvas.requestPointerLock(); if (r && r.catch) r.catch(()=>{}); } catch { /* browser said no: drag to look instead */ } } } };
+  const onFpUp = ()=>{ fp.dragging = false; };
+  const onFpLook = e=>{
+    if (!fp.active || !(fp.locked || fp.dragging)) return;
+    fp.yaw -= e.movementX*0.0022; fp.pitch -= e.movementY*0.0022;
+    fp.pitch = Math.max(-1.45, Math.min(1.45, fp.pitch));
+  };
+  canvas.addEventListener('mousedown', onFpDown);
+  window.addEventListener('mouseup', onFpUp);
+  window.addEventListener('mousemove', onFpLook);
+  function disposeGuy(){
+    if (fp.active && document.pointerLockElement === canvas && document.exitPointerLock) document.exitPointerLock();
+    document.removeEventListener('pointerlockchange', onLockChange);
+    window.removeEventListener('keydown', onFpKeyDown); window.removeEventListener('keyup', onFpKeyUp); window.removeEventListener('blur', onFpBlur);
+    canvas.removeEventListener('mousedown', onFpDown); window.removeEventListener('mouseup', onFpUp); window.removeEventListener('mousemove', onFpLook);
+    guyCard.remove(); fpHud.remove();
+  }
+  function updateFP(dt){
+    const f = (fp.keys.w ? 1 : 0) - (fp.keys.s ? 1 : 0), r = (fp.keys.d ? 1 : 0) - (fp.keys.a ? 1 : 0);
+    const p = { x: camera.position.x, z: camera.position.z };
+    if (f || r){
+      const speed = fp.run ? 12 : 5.5, len = Math.hypot(f, r);     // walk ≈ 3.7 mph, run ≈ 8 mph
+      // forward = where you're looking (flat on the floor)
+      const fx = -Math.sin(fp.yaw), fz = -Math.cos(fp.yaw), rx = Math.cos(fp.yaw), rz = -Math.sin(fp.yaw);
+      p.x += (fx*f + rx*r)/len*speed*dt; p.z += (fz*f + rz*r)/len*speed*dt;
+      pushOut(p); fp.walk += dt*speed*1.15;
+    }
+    // jump: up and back down with gravity (about a 1.5 ft hop)
+    if (fp.y > 0 || fp.vy > 0){ fp.vy -= 32*dt; fp.y += fp.vy*dt; if (fp.y <= 0){ fp.y = 0; fp.vy = 0; } }
+    const bob = (f || r) && fp.y === 0 ? Math.abs(Math.sin(fp.walk))*(fp.run ? 0.1 : 0.06) : 0;
+    camera.position.set(p.x, EYE_H + fp.y + bob, p.z);
+    camera.rotation.set(fp.pitch, fp.yaw, 0, 'YXZ');
+  }
+  function updateGuy(dt, tm){
+    if (fp.active) updateFP(dt);
+    else if (!reduce) updateGuyAI(dt, tm);
+  }
+
 
   // ---------- Resize + loop ----------
   function resize(){
@@ -941,7 +1251,8 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono }){
     }
     ring.material.opacity += ((selected ? 0.6 : 0) - ring.material.opacity) * Math.min(1, dt*8);
     updateSnapHover(performance.now());
-    controls.update();
+    updateGuy(dt, tm);
+    if (!fp.active) controls.update();
     renderer.render(scene, camera);
     positionSnap();
     raf = requestAnimationFrame(frame);
@@ -953,6 +1264,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono }){
     cancelAnimationFrame(raf);
     if (hideTimer) clearTimeout(hideTimer);
     ro.disconnect();
+    disposeGuy();
     canvas.removeEventListener('pointermove', onMove);
     canvas.removeEventListener('pointerleave', onLeave);
     canvas.removeEventListener('pointerdown', onDown);

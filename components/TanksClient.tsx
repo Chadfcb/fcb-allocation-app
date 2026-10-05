@@ -11,7 +11,9 @@
 // Prohibition), label plate with status at the cone seam, temperature scale +
 // 45° current-temp pill, stage visuals (yeast in cone, dry hop, cold crash,
 // carbonating) and the 1.5 s hover snapshot (FV16 sample batch for now).
-// This file mounts it and draws the click details card.
+// Also the walking guy (2026-10-05): wanders and looks at tanks; click him →
+// "Take control" → first person (mouse look, W A S D, left Shift run, Space
+// jump, Esc exits). This file mounts it and draws the click details card.
 //
 // DATA: until the Ekos tank sync is built, levels are the Ekos tank map
 // snapshot (Oct 3); statuses, temps, days and tasks are samples.
@@ -32,7 +34,7 @@ interface TankInfo {
 // Tanks beta build number: v1.xx, xx = main Tanks changes so far, preview + site
 // (Chad, 2026-10-05: count every main change, not just pushes). Full list of the
 // first 25 in the project doc claude/tank-view-direction.md. Add 1 per main change.
-const TANKS_BUILD = "1.25";
+const TANKS_BUILD = "1.27";   // 26 walking guy + take control (first person), 27 Shift run + Space jump
 
 const STATUS_PILL: Record<string, { bg: string; fg: string }> = {
   Fermenting: { bg: "rgba(255,153,0,0.18)", fg: "#FFC266" },
@@ -72,6 +74,22 @@ const SNAP_CSS = `
 .tk-task.next{border-color:rgba(143,209,110,0.35);background:rgba(106,188,70,0.10)}
 .tk-all-done{display:flex;align-items:center;gap:10px;margin-top:10px;padding:12px;border-radius:12px;background:rgba(106,188,70,0.14);border:1px solid rgba(106,188,70,0.35);font-weight:600;font-size:14px;color:#CDEFBD}
 @media (prefers-reduced-motion: reduce){.tk-snap,.tk-snap.show{transition:none}}
+.tk-guy-card{position:absolute;left:0;top:0;width:230px;z-index:4;padding:14px;border-radius:16px;color:#E8EDEA;
+  background:linear-gradient(155deg,rgba(106,188,70,0.16),rgba(106,188,70,0.04) 45%,rgba(255,255,255,0.03)),rgba(10,15,13,0.82);
+  border:1px solid rgba(143,209,110,0.35);backdrop-filter:blur(10px);box-shadow:0 18px 50px rgba(0,0,0,0.45)}
+.tk-guy-card[hidden],.tk-fp-hud[hidden]{display:none}
+.tk-guy-card .gh{display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:15px}
+.tk-guy-card p{margin:6px 0 12px;font-size:12.5px;color:#A3ADA8;line-height:1.4}
+.tk-x{width:28px;height:28px;border-radius:9px;border:1px solid rgba(255,255,255,0.08);background:rgba(255,255,255,0.03);color:#A3ADA8;cursor:pointer;font-size:14px}
+.tk-guy-card .take{width:100%;height:38px;border-radius:999px;border:0;cursor:pointer;font-weight:600;font-size:13.5px;color:#F2F7F0;
+  background:linear-gradient(90deg,rgba(106,188,70,0.32),rgba(106,188,70,0.10));box-shadow:inset 0 0 0 1px rgba(106,188,70,0.45),0 0 24px rgba(106,188,70,0.18)}
+.tk-guy-card .take:hover{background:linear-gradient(90deg,rgba(106,188,70,0.42),rgba(106,188,70,0.16))}
+.tk-fp-hud .xh{position:absolute;left:50%;top:50%;width:14px;height:14px;transform:translate(-50%,-50%);pointer-events:none}
+.tk-fp-hud .xh::before,.tk-fp-hud .xh::after{content:"";position:absolute;background:rgba(255,255,255,0.75);border-radius:2px}
+.tk-fp-hud .xh::before{left:6px;top:0;width:2px;height:14px}.tk-fp-hud .xh::after{top:6px;left:0;height:2px;width:14px}
+.tk-fp-hud .note{position:absolute;top:14px;left:50%;transform:translateX(-50%);padding:8px 16px;border-radius:999px;font-size:13px;font-weight:600;
+  color:#F2F7F0;background:rgba(8,11,10,0.72);border:1px solid rgba(143,209,110,0.35);pointer-events:none;white-space:nowrap}
+.tk-fp-hud .note b{color:#8FD16E}
 `;
 
 export default function TanksClient() {
