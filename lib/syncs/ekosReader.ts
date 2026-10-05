@@ -236,6 +236,19 @@ function isAllowedRequest(req: HTTPRequest, signedIn: boolean): boolean {
   ) {
     return true;
   }
+  // The tank map (Facility View) loads its drawing with an EMPTY POST to
+  // "_processors/custom/floorplan.ashx?floorplan=<id>" (and "?action=floorplans"
+  // for the list) — found from the first Run now, 2026-10-05, which blocked it
+  // and timed out. Only those two, and only with nothing sent.
+  if (
+    signedIn &&
+    /\/_processors\/custom\/floorplan\.ashx$/i.test(url.pathname) &&
+    !(req.postData() ?? "").trim() &&
+    ([...url.searchParams.keys()].every((k) => k === "floorplan" || /^\d+$/.test(k)) ||
+      url.searchParams.get("action") === "floorplans")
+  ) {
+    return true;
+  }
   return false;
 }
 
