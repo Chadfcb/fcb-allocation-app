@@ -29,10 +29,10 @@ interface TankInfo {
   color: string;
 }
 
-// Tanks beta build number: v1.xx, xx = main Tanks changes pushed to the site so far
-// (01 first build, 02 full product names, 03 stage visuals/temps/hover, 04 smaller
-// panel + FV leg tag, 05 this build label). Bump on each main change.
-const TANKS_BUILD = "1.05";
+// Tanks beta build number: v1.xx, xx = main Tanks changes so far, preview + site
+// (Chad, 2026-10-05: count every main change, not just pushes). Full list of the
+// first 25 in the project doc claude/tank-view-direction.md. Add 1 per main change.
+const TANKS_BUILD = "1.25";
 
 const STATUS_PILL: Record<string, { bg: string; fg: string }> = {
   Fermenting: { bg: "rgba(255,153,0,0.18)", fg: "#FFC266" },
