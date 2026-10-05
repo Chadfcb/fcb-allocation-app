@@ -375,6 +375,29 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono }){
       const pad = new THREE.Mesh(new THREE.BoxGeometry(0.14,0.32,0.05), steel);
       pad.position.set(x*0.985, legTop-0.12, z*0.985); pad.lookAt(0, legTop-0.12, 0); group.add(pad);
     }
+    // FV number tag on a steel bracket, off the right side of the front-left leg, 1/4 of the way up, facing the front (Chad, 2026-10-05)
+    {
+      const a = Math.PI/4 + 3*Math.PI/2, lx = Math.sin(a)*R*1.03, lz = Math.cos(a)*R*1.03;
+      t.tagCanvas = document.createElement('canvas'); t.tagCanvas.width = 256; t.tagCanvas.height = 120;
+      t.tagTex = new THREE.CanvasTexture(t.tagCanvas); t.tagTex.encoding = THREE.sRGBEncoding; t.tagTex.anisotropy = 4;
+      const tagMat = new THREE.MeshBasicMaterial({ map:t.tagTex, transparent:true });
+      const tagW = 0.56, tagH = tagW*120/256;
+      // Tag sits off the right side of the leg (as you face the tank), held by a steel bracket (Chad, 2026-10-05)
+      const legR = 0.045, armL = 0.09, tx = lx + legR + armL + tagW/2, ty = legTop/4;   // a quarter of the way up the leg (Chad, 2026-10-05)
+      for (const flip of [0, Math.PI]){
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(tagW, tagH), tagMat);
+        m.rotation.y = flip; m.position.set(tx, ty, lz + (flip ? -0.002 : 0.002)); m.renderOrder = 5; m.userData.tank = t; group.add(m); pickables.push(m);
+      }
+      // bracket: clamp band around the leg + two short flat arms out to a backing plate behind the tag
+      const strap = new THREE.Mesh(new THREE.CylinderGeometry(legR + 0.012, legR + 0.012, 0.16, 16), steelDark);
+      strap.position.set(lx, ty, lz); group.add(strap);
+      for (const dy of [-0.05, 0.05]){
+        const arm = new THREE.Mesh(new THREE.BoxGeometry(armL + 0.04, 0.025, 0.02), steelDark);
+        arm.position.set(lx + legR + armL/2 - 0.01, ty + dy, lz); group.add(arm);
+      }
+      const back = new THREE.Mesh(new THREE.BoxGeometry(tagW + 0.02, tagH + 0.02, 0.012), steelDark);
+      back.position.set(tx, ty, lz - 0.01); group.add(back);
+    }
     const add = (geo, mat, x, y, z, rx, rz) => { const m = new THREE.Mesh(geo, mat); m.position.set(x,y,z); if (rx) m.rotation.x = rx; if (rz) m.rotation.z = rz; group.add(m); return m; };
     add(new THREE.CylinderGeometry(0.06,0.06,0.42,16), steel, 0, TIP-0.22, 0);
     add(new THREE.CylinderGeometry(0.11,0.11,0.06,20), steelDark, 0, TIP-0.3, 0);
@@ -418,11 +441,11 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono }){
     add(new THREE.CylinderGeometry(0.03,0.03,0.18,10), steelDark, -R-0.07, Y_CONE+CYL*0.45, 0, 0, Math.PI/2);
 
     // Label plate
-    t.plateCanvas = document.createElement('canvas'); t.plateCanvas.width = 640; t.plateCanvas.height = 380;
+    t.plateCanvas = document.createElement('canvas'); t.plateCanvas.width = 640; t.plateCanvas.height = 270;
     t.plateTex = new THREE.CanvasTexture(t.plateCanvas); t.plateTex.encoding = THREE.sRGBEncoding; t.plateTex.anisotropy = 4;
-    const plate = new THREE.Mesh(new THREE.CylinderGeometry(R*1.03,R*1.03,0.836,48,1,true,-0.5,1.0), new THREE.MeshBasicMaterial({ map:t.plateTex, transparent:true }));
+    const plate = new THREE.Mesh(new THREE.CylinderGeometry(R*1.03,R*1.03,0.446,48,1,true,-0.375,0.75), new THREE.MeshBasicMaterial({ map:t.plateTex, transparent:true }));
     // Label plate: its bottom edge sits where the cone ends (Chad, 2026-10-04)
-    plate.position.y = Y_CONE + 0.418 + 0.04;   /* taller now that it shows the status */ plate.renderOrder = 5; plate.userData.tank = t; group.add(plate); pickables.push(plate);
+    plate.position.y = Y_CONE + 0.223 + 0.04;   /* 25% smaller, FV number moved to the leg tag (Chad, 2026-10-05) */ plate.renderOrder = 5; plate.userData.tank = t; group.add(plate); pickables.push(plate);
     // Temperature strip stuck on the tank's right side (as you face the front) — like the
     // stick-on LCD strips in the brewery, 30–100 °F (Chad, 2026-10-05). Sample temps for now.
     t.tempCanvas = document.createElement('canvas'); t.tempCanvas.width = 160; t.tempCanvas.height = 900;
@@ -504,30 +527,40 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono }){
   const PLATE_STATUS = { 'Fermenting':'#D98200', 'Dry Hopping':'#7FA61C', 'Cold Crashing':'#2F86E0',
     'Carbonating':'#7D55D9', 'Ready For Packaging':'#3F8F22', 'Conditioning':'#2F86E0', 'Empty':'#8a948f' };
   function drawPlate(t){
-    const g = t.plateCanvas.getContext('2d'), W=640, H=380, full = t.volume > 0.05;
+    const g = t.plateCanvas.getContext('2d'), W=640, H=270, full = t.volume > 0.05;
     g.clearRect(0,0,W,H);
     g.fillStyle = 'rgba(236,242,238,0.94)'; roundRect(g, 6, 6, W-12, H-12, 30); g.fill();
     g.fillStyle = '#0D1210'; g.font = `700 92px ${FONT}`; g.textBaseline = 'alphabetic';
-    g.fillText(t.name, 40, 112);
+    // FV number now lives on the leg tag (Chad, 2026-10-05)
     // tank status under the FV number (Chad, 2026-10-05)
     const st = full ? (t.stageName || t.status) : 'Empty';
     const stLabel = st === 'Ready' ? 'Ready For Packaging' : st;
     g.font = `700 34px ${FONT}`;
     const stW = g.measureText(stLabel).width + 44;
-    g.fillStyle = PLATE_STATUS[stLabel] || '#8a948f'; roundRect(g, 40, 134, stW, 52, 26); g.fill();
-    g.fillStyle = '#FFFFFF'; g.fillText(stLabel, 62, 172);
-    if (full){ g.fillStyle = t.color; roundRect(g, 42, 226, 30, 30, 8); g.fill(); }
+    g.fillStyle = PLATE_STATUS[stLabel] || '#8a948f'; roundRect(g, 40, 30, stW, 52, 26); g.fill();
+    g.fillStyle = '#FFFFFF'; g.fillText(stLabel, 62, 68);
+    if (full){ g.fillStyle = t.color; roundRect(g, 42, 118, 30, 30, 8); g.fill(); }
     if (full){   // full product name, never cut off: shrink the text to fit (Chad, 2026-10-04)
       g.fillStyle = '#1d2621';
       let size = 40; g.font = `600 ${size}px ${FONT}`;
       while (g.measureText(t.spec.product).width > W - 128 && size > 20){ size -= 1; g.font = `600 ${size}px ${FONT}`; }
-      g.fillText(t.spec.product, 88, 254);
+      g.fillText(t.spec.product, 88, 146);
     }   // empty tanks: the status pill already says Empty
     g.fillStyle = '#4a5650'; g.font = `500 38px ${MONO}`;
-    g.fillText(t.volume.toFixed(1) + ' / ' + t.capacity + ' bbl', 40, 330);
+    g.fillText(t.volume.toFixed(1) + ' / ' + t.capacity + ' bbl', 40, 226);
     g.textAlign = 'right'; g.fillStyle = '#2f6f19'; g.font = `700 46px ${MONO}`;
-    g.fillText(Math.round(t.volume / t.capacity * 100) + '%', W-40, 332); g.textAlign = 'left';
+    g.fillText(Math.round(t.volume / t.capacity * 100) + '%', W-40, 228); g.textAlign = 'left';
     t.plateTex.needsUpdate = true;
+    if (t.tagCanvas){   // FV number on the leg tag
+      const k = t.tagCanvas.getContext('2d');
+      k.clearRect(0,0,256,120);
+      k.fillStyle = 'rgba(236,242,238,0.96)'; roundRect(k, 4, 4, 248, 112, 22); k.fill();
+      k.fillStyle = '#0D1210'; k.textAlign = 'center'; k.textBaseline = 'alphabetic';
+      let size = 76; k.font = `800 ${size}px ${FONT}`;
+      while (k.measureText(t.name).width > 220 && size > 30){ size -= 2; k.font = `800 ${size}px ${FONT}`; }
+      k.fillText(t.name, 128, 60 + size*0.36); k.textAlign = 'left';
+      t.tagTex.needsUpdate = true;
+    }
   }
   function applyLook(t){
     const look = LOOKS[lookFor(t.spec.product)], full = t.volume > 0.05;
