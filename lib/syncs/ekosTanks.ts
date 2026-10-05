@@ -106,7 +106,9 @@ export async function syncEkosTanks(
   // Overdue = a task in the tank's batch that isn't Completed and whose due
   // date is before today (brewery time) — Chad, 2026-10-05.
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date()); // YYYY-MM-DD
-  const isLate = (t: EkosBatchTask) => t.status !== "Completed" && !!t.due && t.due < today;
+  // "Close Batch" is never overdue — it's only done when the tank is finished (Chad, 2026-10-05).
+  const isLate = (t: EkosBatchTask) =>
+    t.status !== "Completed" && !!t.due && t.due < today && !/^close\s+batch$/i.test(norm(t.title));
   const rows = read.map.map((m) => {
     const b = batchFor.get(norm(m.name).toUpperCase()) ?? null;
     const full = m.volumeBbl > 0.05;
