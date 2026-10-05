@@ -14,7 +14,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 //
 // Stage = the furthest stage whose task is marked Completed in Ekos. Which
 // task names count is the task-stage list (ekos_task_stage_map, Admin →
-// Ekos Sync). A task name the list doesn't know yet is matched with the
+// Ekos Sync). Temperature = newest Fermentation Log, except a tank past cold
+// crash / ready / packaged is shown at 32 °F (Chad). A task name the list doesn't know yet is matched with the
 // rules Chad confirmed on 2026-10-05 (STAGE_RULES below); if none match it
 // is saved as "Not a stage" (Chad, 2026-10-05: none of the other 83 task
 // names were stages — "go do it"). Any name can still be changed on that list.
@@ -114,8 +115,10 @@ export async function syncEkosTanks(
     }
     let furthest = 0;
     let dumped = false;
+    let packaged = false;
     for (const t of b?.tasks ?? []) {
       if (t.status !== "Completed") continue;
+      if (/^\s*package\s*:/i.test(t.title)) packaged = true;
       const s = resolve(t.title);
       if (!s) continue;
       furthest = Math.max(furthest, STAGE_ORDER[s]);
@@ -127,6 +130,11 @@ export async function syncEkosTanks(
 
     const stage = !full ? null : (STAGE_LABEL[furthest] ?? "Fermenting");
     const latest = b?.fermLogs.find((f) => typeof f.tempF === "number" && Number.isFinite(f.tempF)) ?? null;
+    // Chad, 2026-10-05: "if we have packaged it, marked a task Ready for
+    // package, Cold crash, we should assume that tank is at 32." Nobody logs a
+    // temperature after the crash, so the newest Fermentation Log is from
+    // before it — use 32 °F instead (temp_at left empty = assumed, not logged).
+    const cold = full && (furthest >= STAGE_ORDER.cold_crash || packaged);
     const left = (b?.tasks ?? [])
       .filter((t) => t.status !== "Completed")
       .sort((x, y) => (x.date ?? "9999").localeCompare(y.date ?? "9999"))
@@ -144,8 +152,8 @@ export async function syncEkosTanks(
       stage,
       yeast_in_cone: full && !!b && !dumped,
       dry_hop: full && furthest === STAGE_ORDER.dry_hop,
-      temp_f: full && latest ? latest.tempF : null,
-      temp_at: full && latest ? latest.at : null,
+      temp_f: cold ? 32 : full && latest ? latest.tempF : null,
+      temp_at: cold ? null : full && latest ? latest.at : null,
       overdue: full && left.some((t) => t.overdue),
       tasks_left: full ? left : [],
       synced_at: now,
