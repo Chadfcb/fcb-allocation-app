@@ -16,7 +16,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // task names count is the task-stage list (ekos_task_stage_map, Admin →
 // Ekos Sync). A task name the list doesn't know yet is matched with the
 // rules Chad confirmed on 2026-10-05 (STAGE_RULES below); if none match it
-// goes to "Needs a decision" and counts as "no stage" — never guessed.
+// is saved as "Not a stage" (Chad, 2026-10-05: none of the other 83 task
+// names were stages — "go do it"). Any name can still be changed on that list.
 
 export interface EkosTankMapItem {
   name: string;
@@ -90,7 +91,7 @@ export async function syncEkosTanks(
     const key = norm(title);
     if (stageOf.has(key)) return stageOf.get(key) ?? null;
     const rule = STAGE_RULES.find((r) => r.test.test(key));
-    const stage = rule ? rule.stage : null;
+    const stage: TaskStage = rule ? rule.stage : "none";
     stageOf.set(key, stage);
     newRows.push({ task_title: key, stage });
     return stage;
@@ -155,12 +156,13 @@ export async function syncEkosTanks(
     const { error } = await admin.from("ekos_task_stage_map").upsert(newRows, { onConflict: "task_title", ignoreDuplicates: true });
     if (error) issues.push(`Couldn't save new task names to the task-stage list: ${error.message}`);
   }
-  const undecided = [...stageOf.values()].filter((s) => s === null).length;
-  if (undecided > 0) {
-    issues.push(
-      `${undecided} Ekos task name${undecided === 1 ? " needs" : "s need"} a stage picked on Admin → Ekos Sync → "Ekos task stages" (counted as no stage until then).`,
-    );
-  }
+  // Names saved before 2026-10-05's change that are still waiting on a
+  // decision → "Not a stage" too (they already counted as no stage).
+  const { error: fillErr } = await admin
+    .from("ekos_task_stage_map")
+    .update({ stage: "none", updated_at: now })
+    .is("stage", null);
+  if (fillErr) issues.push(`Couldn't mark the waiting task names as "Not a stage": ${fillErr.message}`);
 
   const { error: upErr } = await admin.from("ekos_tanks").upsert(rows, { onConflict: "tank_name" });
   if (upErr) throw new Error(`Couldn't save the tanks: ${upErr.message}`);

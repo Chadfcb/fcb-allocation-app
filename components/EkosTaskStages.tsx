@@ -10,8 +10,8 @@ import NewBadge from "@/components/NewBadge";
 // The tank sync fills this list with every task name it sees: names that
 // match the stage rules Chad confirmed (Dump Cone, DRYHOP, Hard/Cold Crash,
 // Carb/Carbonate, READY TO/FOR PACKAG…, Transition to … Brite) get their
-// stage automatically; anything else lands under "Needs a decision" and
-// counts as "no stage" until a stage (or "Not a stage") is picked here.
+// stage automatically; anything else is saved as "Not a stage" (Chad,
+// 2026-10-05). Any name can be changed here.
 
 type Stage = "dump_yeast" | "dry_hop" | "cold_crash" | "carbonating" | "ready" | "none";
 
@@ -96,8 +96,8 @@ export default function EkosTaskStages() {
       </h2>
       <p className="max-w-2xl text-xs text-neutral-500">
         Which Ekos batch tasks move a tank to its next stage on the Tanks page once they&apos;re marked Completed in
-        Ekos. The tank sync adds every task name it sees. Names it can&apos;t place are never guessed — they show up
-        under &ldquo;Needs a decision&rdquo; and count as no stage until you pick one.
+        Ekos. The tank sync adds every task name it sees. Names that don&apos;t match the stage rules are saved as
+        &ldquo;Not a stage&rdquo; — change any of them here if one should count.
       </p>
       {error && <p className="rounded-md border border-red-900 bg-red-950/40 px-3 py-2 text-sm text-red-300">{error}</p>}
 
