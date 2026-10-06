@@ -13,6 +13,14 @@ export interface TankScene {
   dispose: () => void;
   /** Select a tank by name (null closes the details card). */
   select: (name: string | null) => void;
+  /** Where the camera is (to put it back after a rebuild). */
+  getView: () => TankSceneView;
+  setView: (view: TankSceneView | null) => void;
+}
+
+export interface TankSceneView {
+  p: number[];
+  t: number[];
 }
 
 export function createTankScene(opts: {

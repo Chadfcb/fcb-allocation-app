@@ -24,6 +24,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createTankScene, type TankScene } from "./tanks/tankScene.js";
 import BatchDetails, { type BatchDetailsData } from "./tanks/BatchDetails";
+import TankPreviewControls from "./tanks/TankPreviewControls";
+import type { TankSceneView } from "./tanks/tankScene.js";
 
 // One tank from the Ekos tank sync (table ekos_tanks, sql/ekos_tanks.sql).
 export interface LiveTank {
@@ -58,7 +60,7 @@ interface TankInfo {
 // Tanks beta build number: v1.xx, xx = main Tanks changes so far, preview + site
 // (Chad, 2026-10-05: count every main change, not just pushes). Full list of the
 // first 25 in the project doc claude/tank-view-direction.md. Add 1 per main change.
-const TANKS_BUILD = "1.32";   // 26 walking guy + take control, 27 Shift run + Space jump, 28 overdue warning signs, 29 Ekos tank sync, 30 See Batch Details popup, 31 W A S D free-roam camera, 32 click tanks in first person
+const TANKS_BUILD = "1.33";   // 26 walking guy + take control, 27 Shift run + Space jump, 28 overdue warning signs, 29 Ekos tank sync, 30 See Batch Details popup, 31 W A S D free-roam camera, 32 click tanks in first person, 33 admin preview controls + demo tag
 
 const STATUS_PILL: Record<string, { bg: string; fg: string }> = {
   Fermenting: { bg: "rgba(255,153,0,0.18)", fg: "#FFC266" },
@@ -118,13 +120,28 @@ const SNAP_CSS = `
 .tk-fp-hud .note b{color:#8FD16E}
 `;
 
-export default function TanksClient({ live = [], syncedLabel = null }: { live?: LiveTank[]; syncedLabel?: string | null }) {
+export default function TanksClient({
+  live = [],
+  syncedLabel = null,
+  isAdmin = false,
+}: {
+  live?: LiveTank[];
+  syncedLabel?: string | null;
+  isAdmin?: boolean;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const snapRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<TankScene | null>(null);
   const [selected, setSelected] = useState<TankInfo | null>(null);
   const [failed, setFailed] = useState(false);
   const [showBatch, setShowBatch] = useState(false);
+  // Preview controls (admins, 2026-10-05): a working copy of the Ekos data that only
+  // this screen sees. `data === live` means nothing has been changed.
+  const [data, setData] = useState<LiveTank[]>(live);
+  const [ctlTank, setCtlTank] = useState<string>(() => live.find((r) => r.tank_name === "FV16")?.tank_name ?? "FV01");
+  const viewRef = useRef<TankSceneView | null>(null);
+  const keepSelected = useRef<string | null>(null);
+  const changed = data !== live;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -137,20 +154,54 @@ export default function TanksClient({ live = [], syncedLabel = null }: { live?: 
         onSelect: (info: TankInfo | null) => {
           setSelected(info);
           setShowBatch(false);
+          keepSelected.current = info?.name ?? null;
+          if (info && /^(FV|CID-)\d+$/i.test(info.name)) setCtlTank(info.name);
         },
         font: getComputedStyle(canvas).fontFamily || "system-ui, sans-serif",
-        live,
+        live: data,
       });
+      // rebuilt after a preview-control change: same camera, same tank picked
+      sceneRef.current.setView(viewRef.current);
+      if (keepSelected.current) sceneRef.current.select(keepSelected.current);
     } catch {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time fallback when the browser can't start WebGL
       setFailed(true);
       return;
     }
     return () => {
+      if (sceneRef.current) viewRef.current = sceneRef.current.getView();
       sceneRef.current?.dispose();
       sceneRef.current = null;
     };
-  }, [live]);
+  }, [data]);
+
+  // A preview control changed one tank (only this screen; nothing saved).
+  const changeTank = useCallback((name: string, change: (r: LiveTank) => void) => {
+    setData((prev) =>
+      prev.map((row) => {
+        if (row.tank_name !== name) return row;
+        const r: LiveTank = { ...row, tasks_left: [...row.tasks_left] };
+        change(r);
+        const full = r.volume_bbl > 0.05;
+        if (full && !r.product_name) {
+          // an empty tank filled for showing people
+          Object.assign(r, { product_name: "Demo Beer", product_code: "DEMO", batch_title: "DEMO", color: "#E8A33D", stage: "Fermenting", yeast_in_cone: true, temp_f: 68, start_date: new Date().toISOString().slice(0, 10) });
+        }
+        if (!full) Object.assign(r, { stage: null, yeast_in_cone: false, overdue: false, temp_f: null, tasks_left: [] });
+        r.dry_hop = full && r.stage === "Dry Hopping";
+        return r;
+      }),
+    );
+    keepSelected.current = name;
+  }, []);
+  const resetData = useCallback(() => {
+    keepSelected.current = ctlTank;
+    setData(live);
+  }, [live, ctlTank]);
+  const pickTank = useCallback((name: string) => {
+    setCtlTank(name);
+    sceneRef.current?.select(name);
+  }, []);
 
   const closeBatch = useCallback(() => setShowBatch(false), []);
   const full = !!selected && selected.volume > 0.05;
@@ -192,6 +243,12 @@ export default function TanksClient({ live = [], syncedLabel = null }: { live?: 
         )}
         {/* Hover snapshot: filled + positioned by the 3D scene (shows after 1.5 s on a tank) */}
         <div ref={snapRef} className="tk-snap" role="tooltip" aria-hidden="true" />
+        {changed && (
+          // Chad (2026-10-05): show it's not real while preview controls have changed anything
+          <div className="pointer-events-none absolute left-3.5 top-3 rounded-full border border-amber-500/50 bg-amber-950/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-amber-300">
+            Demo — not real data
+          </div>
+        )}
         <div className="pointer-events-none absolute bottom-3 left-3.5 rounded-full bg-black/60 px-2.5 py-1 text-xs text-neutral-300">
           Drag to turn · Right-click drag to slide · Scroll to zoom · W A S D to move · Click a tank
         </div>
@@ -268,11 +325,23 @@ export default function TanksClient({ live = [], syncedLabel = null }: { live?: 
             tank={selected.name}
             product={selected.product}
             color={selected.color}
-            details={live.find((l) => l.tank_name === selected.name)?.batch_details ?? null}
+            details={data.find((l) => l.tank_name === selected.name)?.batch_details ?? null}
             onClose={closeBatch}
           />
         )}
       </section>
+
+      {isAdmin && live.length > 0 && (
+        <TankPreviewControls
+          data={data}
+          tank={ctlTank}
+          capacity={selected && selected.name === ctlTank ? selected.capacity : /^CID/i.test(ctlTank) ? 7 : 30}
+          changed={changed}
+          onTank={pickTank}
+          onChange={changeTank}
+          onReset={resetData}
+        />
+      )}
     </div>
   );
 }

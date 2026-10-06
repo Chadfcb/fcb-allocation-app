@@ -40,5 +40,6 @@ export default async function TanksPage() {
         minute: "2-digit",
       }).format(new Date(newest))
     : null;
-  return <TanksClient live={live} syncedLabel={syncedLabel} />;
+  // Preview controls under the 3D view are for admins only (Chad, 2026-10-05).
+  return <TanksClient live={live} syncedLabel={syncedLabel} isAdmin={profile.role === "admin"} />;
 }

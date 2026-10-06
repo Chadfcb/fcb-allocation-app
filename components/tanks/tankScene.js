@@ -1458,5 +1458,9 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
     free(steelEnv); free(floorTex); free(shadowTex);
     renderer.dispose();
   }
-  return { dispose, select: t => select(t ? byName(t) : null) };
+  // getView/setView (2026-10-05): the app's preview controls rebuild the scene with changed
+  // data — they keep the camera where it was.
+  const getView = () => ({ p: camera.position.toArray(), t: controls.target.toArray() });
+  const setView = v => { if (!v) return; camera.position.fromArray(v.p); controls.target.fromArray(v.t); controls.update(); };
+  return { dispose, select: t => select(t ? byName(t) : null), getView, setView };
 }
