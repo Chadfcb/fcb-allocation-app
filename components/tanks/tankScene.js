@@ -19,10 +19,15 @@
 // KEG PALLETS (2026-10-06, claude/tanks-keg-pallets-plan.md): `kegs` = { half, sixth } —
 // 1/2 and 1/6 bbl kegs On Hand from Inventory & Allocation → Packaging Inventory (current
 // week). Drawn on wooden pallets in line with the back row, right of CID-3.
+// CAN + LID PALLETS (2026-10-06, claude/tanks-can-pallets-plan.md / tanks-lid-pallets-plan.md):
+// `cans` = { c19, c16, c12 } and `lids` = individual On Hand counts; every can and every
+// 500-lid chute is drawn, continuing the back-row line right of the kegs.
+// COUNT WINDOWS (2026-10-06, claude/tanks-count-windows-plan.md): one always-visible window
+// per item above its pallets, all on one line in the air, facing the camera.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, kegs }){
+export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, kegs, cans, lids }){
   const FONT = font || 'system-ui, sans-serif';
   const MONO = mono || 'ui-monospace, "SFMono-Regular", Consolas, monospace';
   let disposed = false;
@@ -859,7 +864,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
     new THREE.MeshStandardMaterial({ map:palletTex, color:new THREE.Color(tint).convertSRGBToLinear(), roughness:0.88, metalness:0 }));
   // One pallet = 3 stringers along the 48" side, 7 top deck boards and 5 bottom boards across them.
   const boardGeo = new THREE.BoxGeometry(1, 1, 1);
-  function makePallet(){
+  function makePallet(PAL_X = 40/12, PAL_Z = 48/12){   // wooden pallet (48" x 40" default; lid pallet passes its own size)
     const p = new THREE.Group(), T = 0.75/12, STR_H = 3.5/12;
     const add = (w, h, d, x, y, z, k) => { const m = new THREE.Mesh(boardGeo, woodMats[k % woodMats.length]); m.scale.set(w, h, d); m.position.set(x, y, z); p.add(m); };
     for (let i=0;i<5;i++) add(PAL_X, T, 3.5/12, 0, T/2, -PAL_Z/2 + 1.75/12 + i*(PAL_Z - 3.5/12)/4, i);              // bottom boards
@@ -1023,6 +1028,230 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
   const palletHi = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), new THREE.LineBasicMaterial({ color:0x8fd16e, transparent:true, opacity:0, depthWrite:false }));
   palletHi.visible = false; scene.add(palletHi);
 
+  // ---------- Can pallets (Chad, 2026-10-06 — claude/tanks-can-pallets-plan.md) ----------
+  // Empty cans as they ship: open end DOWN (dome bottoms up) on a black plastic 44" x 56" pallet,
+  // a light gray plastic tier sheet under every layer, and on a full untouched pallet a dark gray
+  // top frame + green straps (Chad's reference photo). 389 cans per layer for every size (Chad:
+  // 12oz 22 layers = 8,558 · 16oz 16 = 6,224 · 19.2oz 14 = 5,446). EVERY can on hand is drawn —
+  // full layers, then a partial top layer filled row by row. Counts = Packaging Inventory On Hand
+  // (individual cans). One pallet per size even at 0 (empty pallet). Not stacked; continues the
+  // back-row line right of the kegs; >4 pallets of one size → a new row in front.
+  const CAN_KINDS = [
+    { key:'c19', label:'19.2oz Cans', layers:14, h:7.5/12 },
+    { key:'c16', label:'16oz Cans',   layers:16, h:6.18/12 },
+    { key:'c12', label:'12oz Cans',   layers:22, h:4.83/12 },
+  ];
+  const PER_LAYER = 389, CAN_D = 2.6/12, CPAL_X = 44/12, CPAL_Z = 56/12, CPAL_H = 5.25/12, TIER = 0.09/12;
+  // 389-can layer: 19 nested rows across the 44" side, alternating 21 / 20 cans along the 56" side
+  // (= 390), last row one short → 389. Exact count; the real supplier pattern isn't known.
+  const LAYER_SPOTS = (() => {
+    const S = [], ROWS = 19, pitch = CAN_D*0.866;
+    for (let r=0;r<ROWS;r++){
+      let n = r % 2 ? 20 : 21; if (r === ROWS - 1) n = 20;
+      const x = (r - (ROWS-1)/2)*pitch, z0 = -(n - 1)/2*CAN_D + (r === ROWS - 1 ? -CAN_D/2 : 0);
+      for (let i=0;i<n;i++) S.push([x, z0 + i*CAN_D]);
+    }
+    return S;
+  })();
+  const canCounts = { c19: 0, c16: 0, c12: 0 };
+  if (cans) for (const k of Object.keys(canCounts)) canCounts[k] = Math.max(0, Math.floor(Number(cans[k]) || 0));
+  const canPlastic = new THREE.MeshStandardMaterial({ color:new THREE.Color(0x1b1d1c).convertSRGBToLinear(), roughness:0.7, metalness:0 });
+  const tierMat = new THREE.MeshStandardMaterial({ color:new THREE.Color(0x9a9d98).convertSRGBToLinear(), roughness:0.8, metalness:0 });
+  const frameMat = new THREE.MeshStandardMaterial({ color:new THREE.Color(0x45484a).convertSRGBToLinear(), roughness:0.7, metalness:0 });
+  const strapMat = new THREE.MeshStandardMaterial({ color:new THREE.Color(0x2f8a3c).convertSRGBToLinear(), roughness:0.6, metalness:0 });
+  const canMat = new THREE.MeshStandardMaterial({ color:new THREE.Color(0xb9b8ae).convertSRGBToLinear(), metalness:0.6, roughness:0.45, envMap:steelEnv, envMapIntensity:0.6 });
+  // plastic can pallet: flat top deck, 3 x 3 feet, perimeter + center runners underneath
+  function makePlasticPallet(){
+    const p = new THREE.Group(), add = (w, h, d, x, y, z) => { const m = new THREE.Mesh(boardGeo, canPlastic); m.scale.set(w, h, d); m.position.set(x, y, z); p.add(m); };
+    const deck = 1.2/12, foot = 3.0/12, run = 1.05/12;
+    add(CPAL_X, deck, CPAL_Z, 0, CPAL_H - deck/2, 0);
+    for (const fx of [-1, 0, 1]) for (const fz of [-1, 0, 1]) add(5.5/12, foot, 6/12, fx*(CPAL_X/2 - 2.75/12), run + foot/2, fz*(CPAL_Z/2 - 3/12));
+    for (const fx of [-1, 0, 1]) add(5.5/12, run, CPAL_Z, fx*(CPAL_X/2 - 2.75/12), run/2, 0);
+    return p;
+  }
+  // one empty can, standing open end down: neck + opening at the bottom, dome bottom on top
+  function makeCanGeo(h){
+    const R = CAN_D/2*0.985, prof = [
+      [0.76, 0.0], [0.80, 0.01], [0.80, 0.03], [0.88, 0.065], [0.98, 0.11], [1.0, 0.14],   // neck (open end) at the bottom
+      [1.0, 0.94], [0.97, 0.965], [0.86, 0.995], [0.80, 1.0], [0.70, 0.985], [0.40, 0.955], [0.001, 0.945],   // stand ring + dome on top
+    ].map(([r, y]) => new THREE.Vector2(r*R, y*h));
+    return new THREE.LatheGeometry(prof, 10);   // low-poly: thousands of cans
+  }
+  const canStart = (() => {
+    const right = kegStacks.length ? Math.max(...kegStacks.map(s => s.x)) + PAL_X/2 : (917 - CX)*FT_PER_PX + 8.5;
+    return right + 3.0 + CPAL_X/2;
+  })();
+  const canPallets = [];
+  {
+    const BACK = (68 - CZ)*FT_PER_PX, DX = CPAL_X + 1.0, DZ = CPAL_Z + 1.5, PER_ROW = 4;
+    let x0 = canStart;
+    for (const kind of CAN_KINDS){
+      const n = canCounts[kind.key], per = PER_LAYER*kind.layers, nPal = Math.max(1, Math.ceil(n/per));
+      const pals = [];
+      for (let i=0;i<nPal;i++) pals.push({ kind, cans: Math.max(0, Math.min(per, n - i*per)), x: x0 + (i % PER_ROW)*DX, z: BACK + Math.floor(i/PER_ROW)*DZ, no: i + 1, of: nPal });
+      x0 += Math.min(nPal, PER_ROW)*DX - 1.0 + 3.0;
+      canPallets.push(...pals);
+    }
+  }
+  for (const kind of CAN_KINDS){
+    const pals = canPallets.filter(p => p.kind === kind), total = pals.reduce((a, p) => a + p.cans, 0);
+    const layerH = kind.h + TIER, per = PER_LAYER*kind.layers;
+    let im = null, k = 0;
+    if (total){ im = new THREE.InstancedMesh(makeCanGeo(kind.h), canMat, total); im.frustumCulled = false; scene.add(im); }
+    const m4 = new THREE.Matrix4();
+    for (const p of pals){
+      const pal = makePlasticPallet(); pal.position.set(p.x, 0, p.z); scene.add(pal);
+      const sh = new THREE.Mesh(new THREE.PlaneGeometry(CPAL_X*1.8, CPAL_Z*1.6), new THREE.MeshBasicMaterial({ map:shadowTex, transparent:true, depthWrite:false, opacity:0.85 }));
+      sh.rotation.x = -Math.PI/2; sh.position.set(p.x, 0.03, p.z); scene.add(sh);
+      const full = Math.floor(p.cans/PER_LAYER), part = p.cans % PER_LAYER, layers = full + (part ? 1 : 0);
+      for (let l=0;l<layers;l++){
+        const y0 = CPAL_H + l*layerH;
+        const tier = new THREE.Mesh(boardGeo, tierMat); tier.scale.set(CPAL_X - 0.04, TIER, CPAL_Z - 0.04); tier.position.set(p.x, y0 + TIER/2, p.z); scene.add(tier);
+        const nThis = l < full ? PER_LAYER : part;
+        for (let i=0;i<nThis;i++){ const [sx, sz] = LAYER_SPOTS[i]; m4.makeTranslation(p.x + sx, y0 + TIER, p.z + sz); im.setMatrixAt(k++, m4); }
+      }
+      const topY = CPAL_H + layers*layerH;
+      if (p.cans === per){             // full, untouched pallet: top frame + green straps
+        const top = new THREE.Mesh(boardGeo, frameMat); top.scale.set(CPAL_X + 0.06, 0.12, CPAL_Z + 0.06); top.position.set(p.x, topY + 0.06, p.z); scene.add(top);
+        for (const sz of [-CPAL_Z/4, CPAL_Z/4]) for (const sx of [-1, 1]){
+          const s = new THREE.Mesh(boardGeo, strapMat); s.scale.set(0.02, topY + 0.1, 0.06); s.position.set(p.x + sx*(CPAL_X/2 + 0.04), (topY + 0.1)/2, p.z + sz); scene.add(s);
+        }
+      }
+      const hgt = Math.max(topY + 0.15, CPAL_H + 0.3);
+      const info = { isPallet:true, isCans:true, kind, onHand: canCounts[kind.key], pallets: canCounts[kind.key] ? p.of : 0, palletNo: p.no, onThis: p.cans, fullLayers: full, partLayer: part,
+        box: { x: p.x, y: hgt/2, z: p.z, w: CPAL_X + 0.2, h: hgt, d: CPAL_Z + 0.2 } };
+      const pick = new THREE.Mesh(boardGeo, pickMat); pick.scale.set(info.box.w, info.box.h, info.box.d); pick.position.set(info.box.x, info.box.y, info.box.z);
+      pick.userData.pallet = info; scene.add(pick); pickables.push(pick);
+    }
+    if (im) im.instanceMatrix.needsUpdate = true;
+  }
+
+  // ---------- Lid pallet (Chad, 2026-10-06 — claude/tanks-lid-pallets-plan.md) ----------
+  // 202 LOE ends come in paper sleeves ("chutes") of 500 (Chad). Pallet layout from the
+  // supplier listing for 500-per-sleeve 202 ends: 361 sleeves = 180,500 lids per pallet →
+  // drawn as 19 layers × 19 sleeves (assumption — confirm on a delivery). Like Chad's photo:
+  // sleeves lie on their side running front-to-back (round ends face the front — Chad, after
+  // v63: "lets have the lids running the other way"), filling from the left side, on a yellow wooden pallet with a black plastic sheet; a full untouched pallet
+  // is stretch-wrapped with a cardboard top and two green straps. Every sleeve is drawn: lids
+  // ÷ 500, the last partial sleeve shorter. Count = Packaging Inventory On Hand (individual
+  // lids); empty pallet at 0. Sits on the back-row line right of the can pallets.
+  const LID_PER_SLEEVE = 500, SLV_PER_LAYER = 19, SLV_LAYERS = 19, LIDS_FULL = LID_PER_SLEEVE*SLV_PER_LAYER*SLV_LAYERS;
+  const SLV_D = 2.35/12, SLV_L = 48/12, LPAL_X = SLV_D*SLV_PER_LAYER + 0.4/12, LPAL_Z = 48/12;   // chutes run front-to-back (Chad)
+  const lidCount = Math.max(0, Math.floor(Number(lids) || 0));
+  const kraft = new THREE.MeshStandardMaterial({ color:new THREE.Color(0xb48a5a).convertSRGBToLinear(), roughness:0.85, metalness:0 });
+  const kraftEnd = new THREE.MeshStandardMaterial({ color:new THREE.Color(0x8e6a42).convertSRGBToLinear(), roughness:0.8, metalness:0 });
+  const blackSheet = new THREE.MeshStandardMaterial({ color:new THREE.Color(0x151616).convertSRGBToLinear(), roughness:0.6, metalness:0 });
+  const wrapMat = new THREE.MeshStandardMaterial({ color:0xffffff, roughness:0.15, metalness:0, transparent:true, opacity:0.16, depthWrite:false });
+  const cardMat = new THREE.MeshStandardMaterial({ color:new THREE.Color(0xa47c4c).convertSRGBToLinear(), roughness:0.9, metalness:0 });
+  const lidPallets = [];
+  {
+    const right = canPallets.length ? Math.max(...canPallets.map(p => p.x)) + CPAL_X/2 : canStart;
+    const nPal = Math.max(1, Math.ceil(lidCount/LIDS_FULL)), DX = LPAL_X + 1.0, DZ = 6.0;
+    for (let i=0;i<nPal;i++) lidPallets.push({ lids: Math.max(0, Math.min(LIDS_FULL, lidCount - i*LIDS_FULL)), x: right + 3.0 + LPAL_X/2 + (i % 4)*DX, z: (68 - CZ)*FT_PER_PX + Math.floor(i/4)*DZ, no: i + 1, of: nPal });
+  }
+  {
+    const sleeves = lidPallets.reduce((a, p) => a + Math.ceil(p.lids/LID_PER_SLEEVE), 0);
+    let body = null, ends = null, k = 0;
+    if (sleeves){
+      const g = new THREE.CylinderGeometry(SLV_D/2*0.97, SLV_D/2*0.97, 1, 12, 1, true); g.rotateX(Math.PI/2);      // along z (front-to-back), length 1 (scaled)
+      const e = new THREE.CylinderGeometry(SLV_D/2*0.962, SLV_D/2*0.962, 1, 12, 1, false); e.rotateX(Math.PI/2);   // end caps just inside the paper tube
+      body = new THREE.InstancedMesh(g, kraft, sleeves); ends = new THREE.InstancedMesh(e, kraftEnd, sleeves);
+      body.frustumCulled = ends.frustumCulled = false; scene.add(ends); scene.add(body);
+    }
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3();
+    for (const p of lidPallets){
+      const pal = makePallet(LPAL_X, LPAL_Z); pal.position.set(p.x, 0, p.z); scene.add(pal);
+      const deckTop = (0.75*2 + 3.5)/12;
+      const sheet = new THREE.Mesh(boardGeo, blackSheet); sheet.scale.set(LPAL_X, 0.04, LPAL_Z); sheet.position.set(p.x, deckTop + 0.02, p.z); scene.add(sheet);
+      const sh = new THREE.Mesh(new THREE.PlaneGeometry(LPAL_X*1.7, LPAL_Z*1.7), new THREE.MeshBasicMaterial({ map:shadowTex, transparent:true, depthWrite:false, opacity:0.85 }));
+      sh.rotation.x = -Math.PI/2; sh.position.set(p.x, 0.03, p.z); scene.add(sh);
+      const y0 = deckTop + 0.04, n = Math.ceil(p.lids/LID_PER_SLEEVE);
+      for (let i=0;i<n;i++){
+        const layer = Math.floor(i/SLV_PER_LAYER), col = i % SLV_PER_LAYER;
+        const lidsHere = Math.min(LID_PER_SLEEVE, p.lids - i*LID_PER_SLEEVE), len = SLV_L*lidsHere/LID_PER_SLEEVE;
+        v.set(p.x - LPAL_X/2 + 0.2/12 + SLV_D/2 + col*SLV_D, y0 + SLV_D/2 + layer*SLV_D*0.995, p.z - SLV_L/2 + len/2);   // fills from the left side
+        sc.set(1, 1, len); m4.compose(v, q, sc);
+        body.setMatrixAt(k, m4); sc.set(1, 1, len*0.998); m4.compose(v, q, sc); ends.setMatrixAt(k, m4); k++;
+      }
+      const layers = Math.ceil(n/SLV_PER_LAYER), topY = y0 + layers*SLV_D*0.995;
+      if (p.lids === LIDS_FULL){         // full, untouched: stretch wrap + cardboard top + green straps
+        const card = new THREE.Mesh(boardGeo, cardMat); card.scale.set(LPAL_X + 0.04, 0.03, SLV_L + 0.04); card.position.set(p.x, topY + 0.015, p.z); scene.add(card);
+        const wrap = new THREE.Mesh(boardGeo, wrapMat); wrap.scale.set(LPAL_X + 0.08, topY - deckTop + 0.1, SLV_L + 0.08); wrap.position.set(p.x, (topY + deckTop)/2 + 0.03, p.z); wrap.renderOrder = 4; scene.add(wrap);
+        for (const sz of [-SLV_L/4, SLV_L/4]) for (const sx of [-1, 1]){   // straps on the long sides
+          const s = new THREE.Mesh(boardGeo, strapMat); s.scale.set(0.02, topY + 0.05, 0.06); s.position.set(p.x + sx*(LPAL_X/2 + 0.05), (topY + 0.05)/2, p.z + sz); scene.add(s);
+        }
+      }
+      const hgt = Math.max(topY + 0.1, deckTop + 0.4);
+      const info = { isPallet:true, isLids:true, onHand: lidCount, pallets: lidCount ? p.of : 0, palletNo: p.no, onThis: p.lids,
+        box: { x: p.x, y: hgt/2, z: p.z, w: LPAL_X + 0.2, h: hgt, d: LPAL_Z + 0.2 } };
+      const pick = new THREE.Mesh(boardGeo, pickMat); pick.scale.set(info.box.w, info.box.h, info.box.d); pick.position.set(info.box.x, info.box.y, info.box.z);
+      pick.userData.pallet = info; scene.add(pick); pickables.push(pick);
+    }
+    if (body){ body.instanceMatrix.needsUpdate = ends.instanceMatrix.needsUpdate = true; }
+  }
+
+  // ---------- Count windows over the pallets (Chad, 2026-10-06) ----------
+  // One always-visible window per item, floating above that item's pallets and always facing
+  // the camera, showing the total On Hand — so nobody has to hover/click to see it. Same
+  // see-through green glass look as the tank hover window. Drawn as page elements over the 3D
+  // view (crisp text), moved every frame to follow the pallets; click-through.
+  const fmtN = n => n.toLocaleString('en-US');
+  const escT = v => String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const tagHost = canvas.parentElement;
+  const tagSpecs = [];
+  for (const kind of KEG_KINDS){
+    const st = kegStacks.filter(s => s.kind === kind); if (!st.length) continue;
+    const n = kegCounts[kind.key], pal = n ? st.reduce((a, s) => a + s.levels.length, 0) : 0;
+    tagSpecs.push({ label: kind.label, count: n, unit: n === 1 ? 'keg' : 'kegs', sub: pal + (pal === 1 ? ' pallet' : ' pallets'),
+      x: (Math.min(...st.map(s => s.x)) + Math.max(...st.map(s => s.x)))/2, z: Math.min(...st.map(s => s.z)), top: Math.max(...st.map(s => s.levels.length))*LEVEL_H });
+  }
+  for (const kind of CAN_KINDS){
+    const ps = canPallets.filter(p => p.kind === kind); if (!ps.length) continue;
+    const n = canCounts[kind.key], layersOf = c => Math.ceil(c/PER_LAYER);
+    tagSpecs.push({ label: kind.label, count: n, unit: n === 1 ? 'can' : 'cans', sub: n ? ps.length + (ps.length === 1 ? ' pallet' : ' pallets') : 'Empty pallet',
+      x: (Math.min(...ps.map(p => p.x)) + Math.max(...ps.map(p => p.x)))/2, z: Math.min(...ps.map(p => p.z)),
+      top: CPAL_H + Math.max(...ps.map(p => layersOf(p.cans)))*(kind.h + TIER) });
+  }
+  if (lidPallets.length){
+    const n = lidCount, ch = Math.ceil(n/LID_PER_SLEEVE), layers = Math.ceil(Math.min(ch, SLV_PER_LAYER*SLV_LAYERS)/SLV_PER_LAYER);
+    tagSpecs.push({ label: '202 LOE Ends (Lids)', count: n, unit: n === 1 ? 'lid' : 'lids', sub: n ? fmtN(ch) + (ch === 1 ? ' chute' : ' chutes') : 'Empty pallet',
+      x: (Math.min(...lidPallets.map(p => p.x)) + Math.max(...lidPallets.map(p => p.x)))/2, z: Math.min(...lidPallets.map(p => p.z)), top: (5/12) + 0.04 + layers*SLV_D });
+  }
+  // all windows on one line in the air (Chad: "line them up"): just above the tallest pallet stack
+  const tagY = Math.max(0, ...tagSpecs.map(t => t.top)) + 1.2;
+  const tagZ = tagSpecs.length ? Math.min(...tagSpecs.map(t => t.z)) : 0;
+  tagSpecs.forEach(t => { t.z = tagZ; });
+  const countTags = tagSpecs.map(t => {
+    const el = document.createElement('div');
+    el.setAttribute('aria-hidden', 'true');
+    el.style.cssText = 'position:absolute;left:0;top:0;z-index:2;pointer-events:none;white-space:nowrap;text-align:center;' +
+      'padding:7px 12px 8px;border-radius:14px;color:#E8EDEA;font-family:' + FONT + ';' +
+      'background:linear-gradient(155deg,rgba(106,188,70,0.18),rgba(106,188,70,0.04) 50%,rgba(255,255,255,0.03)),rgba(10,15,13,0.55);' +
+      'border:1px solid rgba(143,209,110,0.38);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);' +
+      'box-shadow:0 10px 28px rgba(0,0,0,0.38),0 0 18px rgba(106,188,70,0.12);transform-origin:50% 100%;will-change:transform;visibility:hidden';
+    el.innerHTML =
+      '<div style="font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#A3ADA8">' + escT(t.label) + '</div>' +
+      '<div style="font-family:' + MONO + ';font-size:20px;font-weight:600;line-height:1.15;color:' + (t.count ? '#F2F7F0' : '#8A948F') + '">' + fmtN(t.count) + ' ' +
+        '<span style="font-family:' + FONT + ';font-size:12px;font-weight:500;color:#A3ADA8">' + t.unit + '</span></div>' +
+      '<div style="font-size:11px;color:#8FD16E">' + escT(t.sub) + '</div>';
+    tagHost.appendChild(el);
+    return { el, pos: new THREE.Vector3(t.x, tagY, t.z) };
+  });
+  const tagV = new THREE.Vector3();
+  function updateCountTags(){
+    const w = tagHost.clientWidth, h = tagHost.clientHeight;
+    for (const t of countTags){
+      tagV.copy(t.pos).project(camera);
+      const dist = camera.position.distanceTo(t.pos);
+      if (tagV.z > 1 || tagV.z < -1 || Math.abs(tagV.x) > 1.2 || Math.abs(tagV.y) > 1.2 || dist > 260){ t.el.style.visibility = 'hidden'; continue; }
+      const s = Math.max(0.55, Math.min(1.0, 70/dist));        // a bit smaller far away, never tiny
+      const x = (tagV.x + 1)/2*w, y = (1 - tagV.y)/2*h;
+      t.el.style.visibility = 'visible';
+      t.el.style.opacity = dist > 200 ? String(Math.max(0, (260 - dist)/60)) : '1';
+      t.el.style.transform = 'translate(' + (x - t.el.offsetWidth/2) + 'px,' + (y - t.el.offsetHeight) + 'px) scale(' + s.toFixed(3) + ')';
+    }
+  }
+
   // ---------- Selection (the details card itself is drawn by React in TanksClient) ----------
   const byName = n => tanks.find(t => t.name === n);
   let selected = null;
@@ -1118,7 +1347,34 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
       tasks;
   }
   // Keg pallet hover window (Chad, 2026-10-06): how many of that keg size are on hand.
+  const fmt = n => n.toLocaleString('en-US');
+  function fillSnapCans(p){
+    const n = p.onHand, per = PER_LAYER*p.kind.layers;
+    const thisTxt = !p.onThis ? 'Empty pallet' : p.onThis === per ? 'Full · ' + fmt(per) + ' cans'
+      : fmt(p.onThis) + ' cans' + ' <span style="color:#76807B">(' + p.fullLayers + ' full layer' + (p.fullLayers === 1 ? '' : 's') + (p.partLayer ? ' + ' + p.partLayer : '') + ')</span>';
+    snapEl.innerHTML =
+      '<div class="tk-snap-prod"><span class="tk-swatch" style="background:#D4D5CF"></span><span>' + esc(p.kind.label) + '</span></div>' +
+      '<div class="tk-snap-tank">Packaging Inventory · On Hand</div>' +
+      '<div class="tk-snap-row"><span>In inventory</span><span class="tk-num">' + fmt(n) + (n === 1 ? ' can' : ' cans') + '</span></div>' +
+      '<div class="tk-snap-row"><span>Full pallet</span><span class="tk-num">' + fmt(per) + ' <span style="color:#76807B">(' + p.kind.layers + ' × ' + PER_LAYER + ')</span></span></div>' +
+      (p.pallets > 1 ? '<div class="tk-snap-row"><span>Pallets</span><span class="tk-num">' + p.palletNo + ' of ' + p.pallets + '</span></div>' : '') +
+      '<div class="tk-snap-row"><span>This pallet</span><span class="tk-num">' + thisTxt + '</span></div>';
+  }
+  function fillSnapLids(p){
+    const n = p.onHand, chutes = Math.ceil(n/LID_PER_SLEEVE), here = Math.ceil(p.onThis/LID_PER_SLEEVE);
+    const thisTxt = !p.onThis ? 'Empty pallet' : p.onThis === LIDS_FULL ? 'Full · ' + fmt(LIDS_FULL) + ' lids' : fmt(p.onThis) + ' lids <span style="color:#76807B">(' + here + (here === 1 ? ' chute' : ' chutes') + ')</span>';
+    snapEl.innerHTML =
+      '<div class="tk-snap-prod"><span class="tk-swatch" style="background:#B48A5A"></span><span>202 LOE Ends (Lids)</span></div>' +
+      '<div class="tk-snap-tank">Packaging Inventory · On Hand</div>' +
+      '<div class="tk-snap-row"><span>In inventory</span><span class="tk-num">' + fmt(n) + (n === 1 ? ' lid' : ' lids') + '</span></div>' +
+      '<div class="tk-snap-row"><span>Chutes</span><span class="tk-num">' + fmt(chutes) + ' <span style="color:#76807B">(' + LID_PER_SLEEVE + ' per chute)</span></span></div>' +
+      '<div class="tk-snap-row"><span>Full pallet</span><span class="tk-num">' + fmt(LIDS_FULL) + ' <span style="color:#76807B">(' + SLV_PER_LAYER*SLV_LAYERS + ' chutes)</span></span></div>' +
+      (p.pallets > 1 ? '<div class="tk-snap-row"><span>Pallets</span><span class="tk-num">' + p.palletNo + ' of ' + p.pallets + '</span></div>' : '') +
+      '<div class="tk-snap-row"><span>This pallet</span><span class="tk-num">' + thisTxt + '</span></div>';
+  }
   function fillSnapPallet(p){
+    if (p.isLids) return fillSnapLids(p);
+    if (p.isCans) return fillSnapCans(p);
     const n = p.onHand, word = c => c === 1 ? ' keg' : ' kegs';
     snapEl.innerHTML =
       '<div class="tk-snap-prod"><span class="tk-swatch" style="background:#C8CECB"></span><span>' + esc(p.kind.label) + '</span></div>' +
@@ -1196,7 +1452,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
   controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
   // (top raised from 16 to 120 ft on 2026-10-05 so W A S D free roam can keep its look-at point up
   // where the camera is looking — see updateRoam)
-  const PAN_MIN = new THREE.Vector3(-75, 0.5, -48), PAN_MAX = new THREE.Vector3(100, 120, 48);   // right edge 75 → 100 ft for the keg pallets (2026-10-06)
+  const PAN_MIN = new THREE.Vector3(-75, 0.5, -48), PAN_MAX = new THREE.Vector3(130, 120, 48);   // right edge 75 → 130 ft for the keg + can pallets (2026-10-06)
   controls.addEventListener('change', ()=>{
     const tg = controls.target, before = tg.clone(); tg.clamp(PAN_MIN, PAN_MAX);
     if (!tg.equals(before)) camera.position.add(tg.clone().sub(before));
@@ -1383,11 +1639,13 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
   // ---------- Walking around on his own ----------
   const PERSON_R = 0.9;
   const blockers = tanks.map(t => ({ x: t.group.position.x, z: t.group.position.z, r: t.Rft*1.12 + PERSON_R }))
-    .concat(kegStacks.map(st => ({ x: st.x, z: st.z, r: Math.hypot(PAL_X/2 + 0.2, PAL_Z/2) + PERSON_R })));   // keg pallets too
+    .concat(kegStacks.map(st => ({ x: st.x, z: st.z, r: Math.hypot(PAL_X/2 + 0.2, PAL_Z/2) + PERSON_R })))    // keg pallets too
+    .concat(canPallets.map(p => ({ x: p.x, z: p.z, r: Math.hypot(CPAL_X/2, CPAL_Z/2) + PERSON_R })))          // can pallets
+    .concat(lidPallets.map(p => ({ x: p.x, z: p.z, r: Math.hypot(LPAL_X/2, LPAL_Z/2) + PERSON_R })));         // lid pallets
   function freeSpot(x, z){ return blockers.every(b => Math.hypot(x - b.x, z - b.z) > b.r); }
   function pushOut(p){        // never inside a tank (or its legs)
     for (const b of blockers){ const dx = p.x - b.x, dz = p.z - b.z, d = Math.hypot(dx, dz); if (d < b.r){ const k = b.r/(d || 1e-3); p.x = b.x + dx*k; p.z = b.z + dz*k; } }
-    p.x = Math.max(-75, Math.min(100, p.x)); p.z = Math.max(-48, Math.min(48, p.z));
+    p.x = Math.max(-75, Math.min(130, p.x)); p.z = Math.max(-48, Math.min(48, p.z));
   }
   const ai = { mode: 'walk', target: null, tank: null, wait: 0, look: 0 };
   function pickTank(){
@@ -1649,6 +1907,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
     if (!fp.active) controls.update();
     renderer.render(scene, camera);
     positionSnap();
+    updateCountTags();
     raf = requestAnimationFrame(frame);
   }
   frame();
@@ -1670,6 +1929,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
     snapEl.removeEventListener('wheel', onSnapWheel);
     controls.dispose();
     disposeRoam();
+    countTags.forEach(t => t.el.remove());
     const seen = new Set();
     const free = x => { if (x && !seen.has(x)){ seen.add(x); x.dispose(); } };
     scene.traverse(o => {

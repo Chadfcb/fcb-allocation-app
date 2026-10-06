@@ -30,18 +30,23 @@ export default async function TanksPage() {
     // current week = the newest one, same as Inventory & Allocation opens to
     admin.from("weeks").select("id").order("week_start", { ascending: false }).limit(1).maybeSingle(),
   ]);
-  // Keg pallets (Chad, 2026-10-06 — claude/tanks-keg-pallets-plan.md): 1/2 and 1/6 bbl kegs
-  // On Hand from Inventory & Allocation → Packaging Inventory for the current week, read
-  // fresh every time this page opens (no sync needed — it's the app's own data).
+  // Keg, can and lid pallets (Chad, 2026-10-06 — claude/tanks-keg-pallets-plan.md,
+  // tanks-can-pallets-plan.md, tanks-lid-pallets-plan.md): On Hand from Inventory &
+  // Allocation → Packaging Inventory for the current week, read fresh every time this page
+  // opens (no sync needed — it's the app's own data).
   let kegs: { half: number; sixth: number } | null = null;
+  let cans: { c19: number; c16: number; c12: number } | null = null;
+  let lids: number | null = null;
   if (week) {
     const { data: rows } = await admin
       .from("packaging_inventory")
       .select("item_key, on_hand_qty")
       .eq("week_id", week.id)
-      .in("item_key", ["kegs_1_2bbl", "kegs_1_6bbl"]);
+      .in("item_key", ["kegs_1_2bbl", "kegs_1_6bbl", "cans_19_2oz", "cans_16oz", "cans_12oz", "lids_202"]);
     const onHand = (key: string) => Math.max(0, Number((rows ?? []).find((r) => r.item_key === key)?.on_hand_qty) || 0);
     kegs = { half: onHand("kegs_1_2bbl"), sixth: onHand("kegs_1_6bbl") };
+    cans = { c19: onHand("cans_19_2oz"), c16: onHand("cans_16oz"), c12: onHand("cans_12oz") };
+    lids = onHand("lids_202");
   }
   const live = ((data ?? []) as LiveTank[]).map((t) => ({
     ...t,
@@ -59,5 +64,5 @@ export default async function TanksPage() {
       }).format(new Date(newest))
     : null;
   // Preview controls under the 3D view are for admins only (Chad, 2026-10-05).
-  return <TanksClient live={live} kegs={kegs} syncedLabel={syncedLabel} isAdmin={profile.role === "admin"} />;
+  return <TanksClient live={live} kegs={kegs} cans={cans} lids={lids} syncedLabel={syncedLabel} isAdmin={profile.role === "admin"} />;
 }

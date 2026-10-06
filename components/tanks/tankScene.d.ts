@@ -33,4 +33,8 @@ export function createTankScene(opts: {
   live?: unknown[];
   /** 1/2 and 1/6 bbl kegs On Hand (Packaging Inventory, current week) — drawn as keg pallets. */
   kegs?: { half: number; sixth: number } | null;
+  /** Cans On Hand (19.2oz / 16oz / 12oz, individual cans) — drawn as can pallets. */
+  cans?: { c19: number; c16: number; c12: number } | null;
+  /** 202 LOE ends (lids) On Hand, individual lids — drawn as a lid pallet (500 per chute). */
+  lids?: number | null;
 }): TankScene;
