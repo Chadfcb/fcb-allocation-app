@@ -58,7 +58,7 @@ interface TankInfo {
 // Tanks beta build number: v1.xx, xx = main Tanks changes so far, preview + site
 // (Chad, 2026-10-05: count every main change, not just pushes). Full list of the
 // first 25 in the project doc claude/tank-view-direction.md. Add 1 per main change.
-const TANKS_BUILD = "1.30";   // 26 walking guy + take control, 27 Shift run + Space jump, 28 overdue warning signs, 29 Ekos tank sync, 30 See Batch Details popup
+const TANKS_BUILD = "1.32";   // 26 walking guy + take control, 27 Shift run + Space jump, 28 overdue warning signs, 29 Ekos tank sync, 30 See Batch Details popup, 31 W A S D free-roam camera, 32 click tanks in first person
 
 const STATUS_PILL: Record<string, { bg: string; fg: string }> = {
   Fermenting: { bg: "rgba(255,153,0,0.18)", fg: "#FFC266" },
@@ -193,7 +193,7 @@ export default function TanksClient({ live = [], syncedLabel = null }: { live?: 
         {/* Hover snapshot: filled + positioned by the 3D scene (shows after 1.5 s on a tank) */}
         <div ref={snapRef} className="tk-snap" role="tooltip" aria-hidden="true" />
         <div className="pointer-events-none absolute bottom-3 left-3.5 rounded-full bg-black/60 px-2.5 py-1 text-xs text-neutral-300">
-          Drag to turn · Right-click drag to slide · Scroll to zoom · Click a tank
+          Drag to turn · Right-click drag to slide · Scroll to zoom · W A S D to move · Click a tank
         </div>
 
         {selected && (

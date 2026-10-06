@@ -979,7 +979,9 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
   controls.enablePan = true; controls.screenSpacePanning = true; controls.panSpeed = 0.8;
   controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
   controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
-  const PAN_MIN = new THREE.Vector3(-75, 0.5, -48), PAN_MAX = new THREE.Vector3(75, 16, 48);
+  // (top raised from 16 to 120 ft on 2026-10-05 so W A S D free roam can keep its look-at point up
+  // where the camera is looking — see updateRoam)
+  const PAN_MIN = new THREE.Vector3(-75, 0.5, -48), PAN_MAX = new THREE.Vector3(75, 120, 48);
   controls.addEventListener('change', ()=>{
     const tg = controls.target, before = tg.clone(); tg.clamp(PAN_MIN, PAN_MAX);
     if (!tg.equals(before)) camera.position.add(tg.clone().sub(before));
@@ -1001,7 +1003,8 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
   const onDown = e => { downAt = [e.clientX, e.clientY]; };
   const onUp = e => {
     if (!downAt) return; const moved = Math.hypot(e.clientX-downAt[0], e.clientY-downAt[1]); downAt = null;
-    if (moved > 6 || fp.active) return;
+    if (fp.active){ if (moved <= 6) fpClick(); return; }
+    if (moved > 6) return;
     const t = hitTest(e);
     if (lastHitGuy){ const vr = canvas.getBoundingClientRect(); showGuyCard(e.clientX - vr.left, e.clientY - vr.top); return; }
     hideGuyCard(); select(t);
@@ -1228,12 +1231,35 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
   // the click card + first-person HUD are made here and live inside the 3D view box
   const guyCard = document.createElement('div'); guyCard.className = 'tk-guy-card'; guyCard.hidden = true;
   guyCard.innerHTML = '<div class="gh"><span>Walk around as him</span><button class="tk-x" type="button" aria-label="Close">✕</button></div>' +
-    '<p>First person view. Mouse looks around, W A S D walks, left Shift runs, Space jumps. Press Esc to exit.</p>' +
+    '<p>First person view. Mouse looks around, W A S D walks, left Shift runs, Space jumps. Aim the dot at a tank and click to see it. Press Esc to exit.</p>' +
     '<button class="take" type="button">Take control</button>';
   const fpHud = document.createElement('div'); fpHud.className = 'tk-fp-hud'; fpHud.hidden = true;
-  fpHud.innerHTML = '<div class="xh"></div><div class="note">W A S D walk · Shift run · Space jump · mouse look · <b>Esc</b> to exit</div>';
+  const FP_NOTE = 'W A S D walk · Shift run · Space jump · mouse look · click a tank · <b>Esc</b> to exit';
+  const FP_NOTE_PAUSED = 'Mouse free — use the tank card · click the view to look around again · <b>Esc</b> to exit';
+  fpHud.innerHTML = '<div class="xh"></div><div class="note">' + FP_NOTE + '</div>';
   viewerEl.appendChild(guyCard); viewerEl.appendChild(fpHud);
-  const fp = { active: false, yaw: 0, pitch: 0, keys: {}, saved: null, locked: false, dragging: false, walk: 0, run: false, y: 0, vy: 0 };
+  const fp = { active: false, yaw: 0, pitch: 0, keys: {}, saved: null, locked: false, dragging: false, walk: 0, run: false, y: 0, vy: 0, paused: false, resumeClick: false };
+  // Clicking a tank as him (Chad, 2026-10-05: "i also want to be able to click on tanks as the
+  // person"): aim the center dot at a tank and click → its details card opens, and the mouse is
+  // let go so the card (and See Batch Details) can be used. You stay in first person (W A S D
+  // still walks); click the 3D view again to go back to looking around, Esc leaves him.
+  function fpClick(){
+    if (fp.resumeClick){ fp.resumeClick = false; return; }
+    if (fp.paused) return;
+    mouse.set(0, 0); ray.setFromCamera(mouse, camera);
+    const hit = ray.intersectObjects(pickables, false).find(h => h.object.visible && !h.object.userData.guy);
+    const t = hit ? (hit.object.userData.tank || null) : null;
+    if (!t) return;
+    select(t);
+    fp.paused = true; fp.dragging = false;
+    const note = fpHud.querySelector('.note'); note.innerHTML = FP_NOTE_PAUSED;
+    note.style.top = 'auto'; note.style.bottom = '48px';   // out from under the tank card
+    if (document.pointerLockElement === canvas && document.exitPointerLock) document.exitPointerLock();
+  }
+  function resumeFP(){
+    fp.paused = false;
+    const note = fpHud.querySelector('.note'); note.innerHTML = FP_NOTE; note.style.top = ''; note.style.bottom = '';
+  }
   function showGuyCard(x, y){
     const w = viewerEl.clientWidth, cw = 230;
     guyCard.style.transform = 'translate(' + Math.min(Math.max(x - cw/2, 8), w - cw - 8) + 'px,' + Math.max(8, y - 150) + 'px)';
@@ -1253,6 +1279,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
   function exitFP(){
     if (!fp.active) return;
     fp.active = false; fp.keys = {}; fp.run = false; fp.y = 0; fp.vy = 0; fpHud.hidden = true;
+    fp.resumeClick = false; resumeFP();
     if (document.pointerLockElement === canvas && document.exitPointerLock) document.exitPointerLock();
     // he stays where you left him, facing the way you were looking
     guy.position.set(camera.position.x, 0, camera.position.z); guyYaw = fp.yaw - Math.PI; guy.rotation.y = guyYaw; guy.visible = true;
@@ -1264,7 +1291,8 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
   guyCard.querySelector('.tk-x').addEventListener('click', hideGuyCard);
   const onLockChange = ()=>{
     fp.locked = document.pointerLockElement === canvas;
-    if (!fp.locked && fp.active) exitFP();          // browser releases the mouse on Esc → back out of him
+    if (fp.locked && fp.paused) resumeFP();          // clicked back into the view after using a tank card
+    else if (!fp.locked && fp.active && !fp.paused) exitFP();   // browser releases the mouse on Esc → back out of him
   };
   document.addEventListener('pointerlockchange', onLockChange);
   const onFpKeyDown = e=>{
@@ -1280,10 +1308,10 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
   window.addEventListener('keyup', onFpKeyUp);
   window.addEventListener('blur', onFpBlur);
   // mouse look: with the pointer locked, just move the mouse; if the browser won't lock it, hold a button and drag
-  const onFpDown = ()=>{ if (fp.active){ fp.dragging = true; if (!fp.locked && canvas.requestPointerLock){ try { const r = canvas.requestPointerLock(); if (r && r.catch) r.catch(()=>{}); } catch { /* browser said no: drag to look instead */ } } } };
+  const onFpDown = ()=>{ if (fp.active){ if (fp.paused){ fp.resumeClick = true; setTimeout(()=>{ if (fp.paused && !fp.locked) resumeFP(); }, 400); /* no mouse lock from the browser → drag to look */ } fp.dragging = true; if (!fp.locked && canvas.requestPointerLock){ try { const r = canvas.requestPointerLock(); if (r && r.catch) r.catch(()=>{}); } catch { /* browser said no: drag to look instead */ } } } };
   const onFpUp = ()=>{ fp.dragging = false; };
   const onFpLook = e=>{
-    if (!fp.active || !(fp.locked || fp.dragging)) return;
+    if (!fp.active || fp.paused || !(fp.locked || fp.dragging)) return;
     fp.yaw -= e.movementX*0.0022; fp.pitch -= e.movementY*0.0022;
     fp.pitch = Math.max(-1.45, Math.min(1.45, fp.pitch));
   };
@@ -1313,6 +1341,53 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
     camera.position.set(p.x, EYE_H + fp.y + bob, p.z);
     camera.rotation.set(fp.pitch, fp.yaw, 0, 'YXZ');
   }
+  // ---------- Free roam with the keyboard (Chad, 2026-10-05): W A S D slides the view
+  // around the cellar when you're NOT in first person (mouse controls still work).
+  // W/S = fly forward/back the way the camera is looking (look down at the tanks and W takes
+  // you down in among them), A/D = slide left/right.
+  // Hold Shift to go faster. Ignored while typing in a box on the page.
+  const roam = { keys: {}, fast: false };
+  const typing = el => !!el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+  const onRoamKeyDown = e=>{
+    if (fp.active || typing(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === 'Shift'){ roam.fast = true; return; }
+    const k = e.key.toLowerCase(); if (k.length === 1 && 'wasd'.includes(k)){ roam.keys[k] = true; e.preventDefault(); }
+  };
+  const onRoamKeyUp = e=>{ if (e.key === 'Shift') roam.fast = false; const k = e.key.toLowerCase(); if (k.length === 1) roam.keys[k] = false; };
+  const onRoamBlur = ()=>{ roam.keys = {}; roam.fast = false; };
+  window.addEventListener('keydown', onRoamKeyDown);
+  window.addEventListener('keyup', onRoamKeyUp);
+  window.addEventListener('blur', onRoamBlur);
+  const roamFwd = new THREE.Vector3(), roamMove = new THREE.Vector3(), ROAM_REACH = 25, ROAM_FLOOR = 3;
+  function updateRoam(dt){
+    if (fp.active){ roam.keys = {}; return; }
+    const f = (roam.keys.w ? 1 : 0) - (roam.keys.s ? 1 : 0), r = (roam.keys.d ? 1 : 0) - (roam.keys.a ? 1 : 0);
+    if (!f && !r) return;
+    camera.getWorldDirection(roamFwd);
+    // The mouse turns the view around a look-at point; zoomed out, that point can be 100+ ft
+    // ahead and it stops at the edge of the floor long before the camera gets in among the
+    // tanks (Chad: "why does it stop, i need to be able to go into the middle of these tanks").
+    // So while roaming, keep the look-at point just ahead of the camera on the same line of
+    // sight — the view doesn't change, but the camera itself now travels into the cellar.
+    if (camera.position.distanceTo(controls.target) > ROAM_REACH) controls.target.copy(camera.position).addScaledVector(roamFwd, ROAM_REACH);
+    // speed grows with how high the camera is (down low among the tanks = slow and precise)
+    const speed = Math.max(8, camera.position.y*0.5) * (roam.fast ? 2.2 : 1);
+    const side = Math.hypot(roamFwd.x, roamFwd.z) > 1e-4 ? [-roamFwd.z, roamFwd.x] : [1, 0];
+    const sl = Math.hypot(side[0], side[1]);
+    roamMove.set(roamFwd.x*f + side[0]/sl*r, roamFwd.y*f, roamFwd.z*f + side[1]/sl*r);
+    if (roamMove.lengthSq() < 1e-8) return;
+    roamMove.setLength(speed*dt);
+    // never through the floor or up into the clouds
+    const ny = Math.min(120, Math.max(ROAM_FLOOR, camera.position.y + roamMove.y));
+    roamMove.y = ny - camera.position.y;
+    camera.position.add(roamMove); controls.target.add(roamMove);
+    const tg = controls.target, before = tg.clone(); tg.clamp(PAN_MIN, PAN_MAX);
+    if (!tg.equals(before)) camera.position.add(tg.clone().sub(before));
+  }
+  function disposeRoam(){
+    window.removeEventListener('keydown', onRoamKeyDown); window.removeEventListener('keyup', onRoamKeyUp); window.removeEventListener('blur', onRoamBlur);
+  }
+
   function updateGuy(dt, tm){
     if (fp.active) updateFP(dt);
     else if (!reduce) updateGuyAI(dt, tm);
@@ -1350,6 +1425,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
     ring.material.opacity += ((selected ? 0.6 : 0) - ring.material.opacity) * Math.min(1, dt*8);
     updateSnapHover(performance.now());
     updateGuy(dt, tm);
+    updateRoam(dt);
     if (!fp.active) controls.update();
     renderer.render(scene, camera);
     positionSnap();
@@ -1372,6 +1448,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
     snapEl.removeEventListener('pointerleave', onSnapLeave);
     snapEl.removeEventListener('wheel', onSnapWheel);
     controls.dispose();
+    disposeRoam();
     const seen = new Set();
     const free = x => { if (x && !seen.has(x)){ seen.add(x); x.dispose(); } };
     scene.traverse(o => {
