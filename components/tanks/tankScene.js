@@ -1239,18 +1239,34 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
   });
   const tagV = new THREE.Vector3();
   function updateCountTags(){
-    const w = tagHost.clientWidth, h = tagHost.clientHeight;
+    const w = tagHost.clientWidth, h = tagHost.clientHeight, vis = [];
     for (const t of countTags){
       tagV.copy(t.pos).project(camera);
       const dist = camera.position.distanceTo(t.pos);
       if (tagV.z > 1 || tagV.z < -1 || Math.abs(tagV.x) > 1.2 || Math.abs(tagV.y) > 1.2 || dist > 260){ t.el.style.visibility = 'hidden'; continue; }
-      const s = Math.max(0.55, Math.min(1.0, 70/dist));        // a bit smaller far away, never tiny
-      const x = (tagV.x + 1)/2*w, y = (1 - tagV.y)/2*h;
+      // Size follows distance (Chad: "smaller the farther you are away … normal size as you get
+      // closer", then "you shrunk them too much, maybe try half of what you did"): full size
+      // within ~60 ft, then shrinks with distance (60 ÷ distance)…
+      t.s = Math.min(1.0, 60/dist);
+      t.x = (tagV.x + 1)/2*w; t.y = (1 - tagV.y)/2*h; t.dist = dist; t.w0 = t.el.offsetWidth;
+      vis.push(t);
+    }
+    // …but never wider than the gap to its neighbours, so they can't pile up when zoomed out
+    vis.sort((a, b) => a.x - b.x);
+    for (let i=0;i<vis.length-1;i++){
+      const a = vis[i], b = vis[i+1], gap = Math.hypot(b.x - a.x, b.y - a.y);
+      const fit = (2*gap*0.94)/(a.w0 + b.w0);
+      if (fit < a.s) a.s = fit;
+      if (fit < b.s) b.s = fit;
+    }
+    for (const t of vis){
+      if (t.s < 0.12){ t.el.style.visibility = 'hidden'; continue; }
       t.el.style.visibility = 'visible';
-      t.el.style.opacity = dist > 200 ? String(Math.max(0, (260 - dist)/60)) : '1';
-      t.el.style.transform = 'translate(' + (x - t.el.offsetWidth/2) + 'px,' + (y - t.el.offsetHeight) + 'px) scale(' + s.toFixed(3) + ')';
+      t.el.style.opacity = t.dist > 200 ? String(Math.max(0, (260 - t.dist)/60)) : '1';
+      t.el.style.transform = 'translate(' + (t.x - t.w0/2) + 'px,' + (t.y - t.el.offsetHeight) + 'px) scale(' + t.s.toFixed(3) + ')';
     }
   }
+
 
   // ---------- Selection (the details card itself is drawn by React in TanksClient) ----------
   const byName = n => tanks.find(t => t.name === n);
