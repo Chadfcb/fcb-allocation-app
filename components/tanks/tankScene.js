@@ -15,10 +15,14 @@
 // run, `live` (rows of table ekos_tanks) replaces all of the above — levels,
 // products, batches, stage, yeast/dry hop, temps, overdue signs and each
 // tank's tasks left for the hover snapshot.
+//
+// KEG PALLETS (2026-10-06, claude/tanks-keg-pallets-plan.md): `kegs` = { half, sixth } —
+// 1/2 and 1/6 bbl kegs On Hand from Inventory & Allocation → Packaging Inventory (current
+// week). Drawn on wooden pallets in line with the back row, right of CID-3.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
+export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, kegs }){
   const FONT = font || 'system-ui, sans-serif';
   const MONO = mono || 'ui-monospace, "SFMono-Regular", Consolas, monospace';
   let disposed = false;
@@ -819,6 +823,206 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
   tanks.forEach(t => { applyLook(t); drawPlate(t); drawTemp(t); });
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(()=>{ if (!disposed) tanks.forEach(t => { drawPlate(t); drawTemp(t); }); });
 
+  // ---------- Keg pallets (Chad, 2026-10-06 — claude/tanks-keg-pallets-plan.md) ----------
+  // On the open floor to the right of the tanks: 1/2 bbl kegs (8 per pallet) and 1/6 bbl
+  // kegs (20 per pallet) on standard 48" x 40" wooden pallets, stacked 3 pallets high (a 4th
+  // pallet starts a new stack next to it). Counts = Inventory & Allocation → Packaging
+  // Inventory "On Hand" for the current week, read when the page opens. The top pallet
+  // holds only the kegs left over; an empty pallet stays when the count is 0. Hovering a
+  // pallet shows how many are on hand.
+  const KEG_KINDS = [
+    { key:'half',  label:'1/2 bbl Kegs', per:8,  dia:16.1/12, h:23.3/12 },
+    { key:'sixth', label:'1/6 bbl Kegs', per:20, dia:9.25/12, h:23.3/12 },
+  ];
+  const PAL_X = 40/12, PAL_Z = 48/12, PAL_H = 5.5/12, PAL_PER_STACK = 3;
+  const pallets = [];                       // one entry per pallet (hover info)
+  function woodTex(){
+    const W = 256, H = 64, c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d');
+    g.fillStyle = '#b89c74'; g.fillRect(0, 0, W, H);   // weathered pine
+    let seed = 5; const rnd = () => (seed = (seed*16807) % 2147483647) / 2147483647;
+    for (let i=0;i<46;i++){                       // grain lines along the board
+      const y = rnd()*H, a = 0.05 + rnd()*0.12;
+      g.strokeStyle = rnd() > 0.5 ? 'rgba(120,80,40,' + a + ')' : 'rgba(255,235,200,' + a*0.8 + ')';
+      g.lineWidth = 0.6 + rnd()*1.6; g.beginPath(); g.moveTo(0, y);
+      for (let x=0;x<=W;x+=16) g.lineTo(x, y + Math.sin(x*0.03 + i)*1.5);
+      g.stroke();
+    }
+    for (let i=0;i<3;i++){                         // a couple of knots
+      const x = rnd()*W, y = rnd()*H;
+      g.fillStyle = 'rgba(110,70,35,0.45)'; g.beginPath(); g.ellipse(x, y, 5 + rnd()*4, 2 + rnd()*2, 0, 0, Math.PI*2); g.fill();
+    }
+    const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    return t;
+  }
+  const palletTex = woodTex();
+  const woodMats = ['#ffffff', '#e8dcc8', '#d6c4a6'].map(tint =>
+    new THREE.MeshStandardMaterial({ map:palletTex, color:new THREE.Color(tint).convertSRGBToLinear(), roughness:0.88, metalness:0 }));
+  // One pallet = 3 stringers along the 48" side, 7 top deck boards and 5 bottom boards across them.
+  const boardGeo = new THREE.BoxGeometry(1, 1, 1);
+  function makePallet(){
+    const p = new THREE.Group(), T = 0.75/12, STR_H = 3.5/12;
+    const add = (w, h, d, x, y, z, k) => { const m = new THREE.Mesh(boardGeo, woodMats[k % woodMats.length]); m.scale.set(w, h, d); m.position.set(x, y, z); p.add(m); };
+    for (let i=0;i<5;i++) add(PAL_X, T, 3.5/12, 0, T/2, -PAL_Z/2 + 1.75/12 + i*(PAL_Z - 3.5/12)/4, i);              // bottom boards
+    for (let i=0;i<3;i++) add(1.5/12, STR_H, PAL_Z, -PAL_X/2 + 0.75/12 + i*(PAL_X - 1.5/12)/2, T + STR_H/2, 0, i+1);  // stringers
+    for (let i=0;i<7;i++) add(PAL_X, T, 3.5/12, 0, T + STR_H + T/2, -PAL_Z/2 + 1.75/12 + i*(PAL_Z - 3.5/12)/6, i+2);  // top deck
+    return p;
+  }
+  // Keg = one shape built per size, modeled on Chad's photos of FCB's real kegs (2026-10-06):
+  // dull satin stainless with scuffs and grime (not mirror-polished), a bottom skirt, raised
+  // rolling rings, a top chime with two oval handle cut-outs, a domed head and the Sankey valve
+  // neck. Both sizes: two plain blue stripes round the body (Chad: "just put the blue stripes on
+  // them then" / "both the sixtels and the halfs"). No rental-company logo or name.
+  function mergeGeos(list){
+    const pos = [], nor = [], uv = [], col = [];
+    for (const [g0, c] of list.map(x => Array.isArray(x) ? x : [x, null])){
+      const g = g0.index ? g0.toNonIndexed() : g0;
+      const P = g.attributes.position.array, N = g.attributes.normal.array, U = g.attributes.uv ? g.attributes.uv.array : null;
+      for (let i=0;i<P.length;i++){ pos.push(P[i]); nor.push(N[i]); }
+      for (let i=0;i<P.length/3;i++){ uv.push(U ? U[i*2] : 0, U ? U[i*2+1] : 0); if (c) col.push(c.r, c.g, c.b); }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    if (col.length) geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    return geo;
+  }
+  // brushed satin steel with scuffs, water spots and a bit of grime (drawn here, no image file)
+  function kegSteelTex(){
+    const W = 512, H = 256, c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d');
+    g.fillStyle = '#d4d6d3'; g.fillRect(0, 0, W, H);
+    let seed = 21; const rnd = () => (seed = (seed*16807) % 2147483647) / 2147483647;
+    for (let i=0;i<700;i++){                     // fine brushed lines around the keg
+      const y = rnd()*H; g.strokeStyle = rnd() > 0.5 ? 'rgba(255,255,255,0.10)' : 'rgba(60,62,60,0.07)';
+      g.lineWidth = 0.5 + rnd(); g.beginPath(); g.moveTo(rnd()*W, y); g.lineTo(rnd()*W, y + (rnd()-0.5)*2); g.stroke();
+    }
+    for (let i=0;i<90;i++){                      // scuffs + scratches
+      const x = rnd()*W, y = rnd()*H, l = 6 + rnd()*30, a = rnd()*Math.PI;
+      g.strokeStyle = 'rgba(70,72,70,' + (0.08 + rnd()*0.14) + ')'; g.lineWidth = 0.6 + rnd()*1.4;
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a)*l, y + Math.sin(a)*l); g.stroke();
+    }
+    for (let i=0;i<55;i++){                      // grime / water spots
+      const x = rnd()*W, y = rnd()*H, r = 4 + rnd()*26, gr = g.createRadialGradient(x, y, 0, x, y, r);
+      gr.addColorStop(0, 'rgba(70,64,52,' + (0.10 + rnd()*0.16) + ')'); gr.addColorStop(1, 'rgba(70,64,52,0)');
+      g.fillStyle = gr; g.fillRect(x - r, y - r, r*2, r*2);
+    }
+    const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    return t;
+  }
+  const kegTex = kegSteelTex();
+  const KEG_SHAPES = {
+    // [radius × R, height × H] from the bottom of the skirt to the top of the chime
+    half:  { rings:[0.30, 0.50, 0.70], bands:[[0.335, 0.465], [0.535, 0.665]] },
+    sixth: { rings:[0.20, 0.56, 0.80], bands:[[0.60, 0.70], [0.42, 0.52]] },
+  };
+  function makeKegGeos(kind){
+    const R = kind.dia/2, H = kind.h, S = KEG_SHAPES[kind.key];
+    const prof = [[0.90,0],[0.97,0.008],[0.97,0.105],[0.93,0.122],[0.985,0.14],[1.0,0.165]];
+    for (const r of S.rings) prof.push([1.0, r - 0.024], [1.045, r - 0.008], [1.045, r + 0.008], [1.0, r + 0.024]);
+    prof.push([1.0,0.835],[0.965,0.86],[0.93,0.872],[0.975,0.884],[0.985,0.892],[0.985,0.99],[0.945,1.0]);
+    const body = new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r*R, y*H)), 48);
+    const headProf = []; for (let i=0;i<=8;i++){ const f = i/8; headProf.push(new THREE.Vector2(Math.max(0.001, 0.93*R*Math.cos(f*Math.PI/2)), 0.866*H + 0.035*H*Math.sin(f*Math.PI/2))); }
+    headProf.reverse();
+    const head = new THREE.LatheGeometry(headProf, 40);                                     // domed top head
+    const topY = 0.866*H + 0.035*H;
+    const neck = new THREE.CylinderGeometry(0.092, 0.1, 0.11, 24); neck.translate(0, topY + 0.045, 0);     // Sankey valve neck
+    const collar = new THREE.TorusGeometry(0.088, 0.012, 8, 24); collar.rotateX(Math.PI/2); collar.translate(0, topY + 0.1, 0);
+    const steelGeo = mergeGeos([body, head, neck, collar]);
+    // dark parts: oval handle cut-outs in the chime + the valve opening
+    const slotW = Math.min(0.40, 0.66*R), slotH = Math.min(0.075, 0.042*H);
+    const slots = [-1, 1].map(s => { const b = new THREE.CapsuleGeometry(slotH/2, slotW - slotH, 4, 10); b.rotateZ(Math.PI/2); b.scale(1, 1, 0.12); b.translate(0, 0.945*H, s*0.982*R); return b; });
+    const hole = new THREE.CylinderGeometry(0.06, 0.06, 0.012, 20); hole.translate(0, topY + 0.1, 0);
+    const darkGeo = mergeGeos([...slots, hole]);
+    // the two blue stripes
+    const lin = h => new THREE.Color(h).convertSRGBToLinear();
+    const parts = [];
+    for (const [a, b] of S.bands){ const band = new THREE.CylinderGeometry(1.008*R, 1.008*R, (b - a)*H, 48, 1, true); band.translate(0, (a + b)/2*H, 0); parts.push([band, lin('#2b42a8')]); }
+    const labelGeo = parts.length ? mergeGeos(parts) : null;
+    [body, head, neck, collar, hole, ...slots, ...parts.map(p => p[0])].forEach(g => g.dispose());
+    return { steelGeo, darkGeo, labelGeo };
+  }
+  const kegSteel = new THREE.MeshStandardMaterial({ color:0xb9bdba, map:kegTex, metalness:0.85, roughness:0.48, envMap:steelEnv, envMapIntensity:0.75, side:THREE.DoubleSide });
+  const kegDark = new THREE.MeshStandardMaterial({ color:0x141716, roughness:0.7, metalness:0.1 });
+  const kegLabel = new THREE.MeshStandardMaterial({ vertexColors:true, roughness:0.55, metalness:0, side:THREE.DoubleSide });
+  const pickMat = new THREE.MeshBasicMaterial({ visible:false });   // invisible hover boxes (one per pallet)
+  // where each keg sits on its pallet (pallet-local feet; x = 40" side, z = 48" side)
+  function kegSpots(kind){
+    const S = [];
+    if (kind.key === 'half'){       // 3-2-3 nested rows (16.1" kegs)
+      const d = kind.dia, row = d*0.866;
+      for (const [rx, n] of [[-row, 3], [0, 2], [row, 3]]) for (let i=0;i<n;i++) S.push([rx, (i - (n-1)/2)*d]);
+    } else {                        // 4 x 5 grid (9.25" kegs)
+      for (let ix=0;ix<4;ix++) for (let iz=0;iz<5;iz++) S.push([(ix - 1.5)*(PAL_X/4), (iz - 2)*(PAL_Z/5)]);
+    }
+    return S;
+  }
+  const kegCounts = { half: kegs ? Math.max(0, Math.floor(Number(kegs.half) || 0)) : 0, sixth: kegs ? Math.max(0, Math.floor(Number(kegs.sixth) || 0)) : 0 };
+  const kegStacks = [];             // { kind, x, z, levels:[n kegs per pallet] }
+  if (kegs){
+    for (const kind of KEG_KINDS){
+      const n = kegCounts[kind.key], nPal = Math.max(1, Math.ceil(n/kind.per));
+      for (let s=0; s*PAL_PER_STACK < nPal; s++){
+        const levels = [];
+        for (let l=0; l<PAL_PER_STACK && s*PAL_PER_STACK + l < nPal; l++){ const i = s*PAL_PER_STACK + l; levels.push(Math.max(0, Math.min(kind.per, n - i*kind.per))); }
+        kegStacks.push({ kind, levels });
+      }
+    }
+    // Lined up with the back row of tanks (Chad, 2026-10-06), starting just right of CID-3:
+    // 1/2 bbl stacks left to right, then the 1/6 bbl stacks to their right. Each size fills
+    // up to 4 stacks across; more starts a new row in front of it (toward the front of the
+    // cellar), like warehouse rows (Chad picked "New row in front").
+    const BACK_Z = (68 - CZ)*FT_PER_PX;            // CID-3's line (back row)
+    const X0 = (917 - CX)*FT_PER_PX + 10.3;         // ≈ 6.5 ft clear of CID-3 (doubled — Chad: "too close")
+    const PER_ROW = 4, DX = PAL_X + 1.0, DZ = PAL_Z + 1.5, KIND_GAP = 3.0;
+    let x0 = X0;
+    for (const kind of KEG_KINDS){
+      const mine = kegStacks.filter(st => st.kind === kind); if (!mine.length) continue;
+      mine.forEach((st, i) => { st.x = x0 + (i % PER_ROW)*DX; st.z = BACK_Z + Math.floor(i/PER_ROW)*DZ; });
+      x0 += Math.min(mine.length, PER_ROW)*DX - 1.0 + KIND_GAP;
+    }
+  }
+  const LEVEL_H = PAL_H + KEG_KINDS[0].h + 0.02;
+  for (const kind of KEG_KINDS){
+    const stacks = kegStacks.filter(s => s.kind === kind); if (!stacks.length) continue;
+    const spots = kegSpots(kind), total = stacks.reduce((a, s) => a + s.levels.reduce((b, n) => b + n, 0), 0);
+    let steelIM = null, darkIM = null, labelIM = null;
+    if (total){
+      const g = makeKegGeos(kind);
+      steelIM = new THREE.InstancedMesh(g.steelGeo, kegSteel, total);
+      darkIM = new THREE.InstancedMesh(g.darkGeo, kegDark, total);
+      if (g.labelGeo){ labelIM = new THREE.InstancedMesh(g.labelGeo, kegLabel, total); labelIM.frustumCulled = false; scene.add(labelIM); }
+      scene.add(steelIM); scene.add(darkIM);
+    }
+    const nPalAll = stacks.reduce((a, s) => a + s.levels.length, 0);
+    let k = 0, palNo = 0; const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), v = new THREE.Vector3(), one = new THREE.Vector3(1, 1, 1);
+    for (const st of stacks){
+      const sh = new THREE.Mesh(new THREE.PlaneGeometry(PAL_X*1.9, PAL_Z*1.7), new THREE.MeshBasicMaterial({ map:shadowTex, transparent:true, depthWrite:false, opacity:0.85 }));
+      sh.rotation.x = -Math.PI/2; sh.position.set(st.x, 0.03, st.z); scene.add(sh);
+      st.levels.forEach((n, l) => {
+        const y0 = l*LEVEL_H;
+        const p = makePallet(); p.position.set(st.x, y0, st.z); p.rotation.y = (l % 2 ? 0.012 : -0.008); scene.add(p);
+        let seed = (palNo + 1)*977 + l*31; const rnd = () => (seed = (seed*16807) % 2147483647) / 2147483647;
+        for (let i=0;i<n;i++){
+          const [sx, sz] = spots[i];
+          v.set(st.x + sx + (rnd() - 0.5)*0.03, y0 + PAL_H, st.z + sz + (rnd() - 0.5)*0.03);
+          e.set(0, rnd()*Math.PI*2, 0); q.setFromEuler(e);
+          m4.compose(v, q, one); steelIM.setMatrixAt(k, m4); darkIM.setMatrixAt(k, m4); if (labelIM) labelIM.setMatrixAt(k, m4); k++;
+        }
+        palNo++;
+        const info = { isPallet:true, kind, onHand: kegCounts[kind.key], pallets: nPalAll, palletNo: palNo, onThis: n,
+          box: { x: st.x, y: y0 + LEVEL_H/2, z: st.z, w: PAL_X + 0.4, h: LEVEL_H, d: PAL_Z + 0.2 } };
+        const pick = new THREE.Mesh(boardGeo, pickMat);
+        pick.scale.set(info.box.w, info.box.h, info.box.d); pick.position.set(info.box.x, info.box.y, info.box.z);
+        pick.userData.pallet = info; scene.add(pick); pickables.push(pick);
+        pallets.push(info);
+      });
+    }
+    if (steelIM){ steelIM.instanceMatrix.needsUpdate = darkIM.instanceMatrix.needsUpdate = true; if (labelIM) labelIM.instanceMatrix.needsUpdate = true; steelIM.frustumCulled = darkIM.frustumCulled = false; }   // three r147: no instance bounds
+  }
+  // soft green outline around the pallet the mouse is on (like a tank's hover glow)
+  const palletHi = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), new THREE.LineBasicMaterial({ color:0x8fd16e, transparent:true, opacity:0, depthWrite:false }));
+  palletHi.visible = false; scene.add(palletHi);
+
   // ---------- Selection (the details card itself is drawn by React in TanksClient) ----------
   const byName = n => tanks.find(t => t.name === n);
   let selected = null;
@@ -913,7 +1117,18 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
       '<div class="tk-snap-row"><span>Status</span><span class="tk-snap-pill" style="background:' + st.bg + ';color:' + st.fg + '">' + esc(stage) + '</span></div>' +
       tasks;
   }
+  // Keg pallet hover window (Chad, 2026-10-06): how many of that keg size are on hand.
+  function fillSnapPallet(p){
+    const n = p.onHand, word = c => c === 1 ? ' keg' : ' kegs';
+    snapEl.innerHTML =
+      '<div class="tk-snap-prod"><span class="tk-swatch" style="background:#C8CECB"></span><span>' + esc(p.kind.label) + '</span></div>' +
+      '<div class="tk-snap-tank">Packaging Inventory · On Hand</div>' +
+      '<div class="tk-snap-row"><span>In inventory</span><span class="tk-num">' + n + word(n) + '</span></div>' +
+      '<div class="tk-snap-row"><span>Pallets</span><span class="tk-num">' + (n ? p.pallets : 0) + ' <span style="color:#76807B">(' + p.kind.per + ' per pallet)</span></span></div>' +
+      '<div class="tk-snap-row"><span>This pallet</span><span class="tk-num">' + (p.onThis ? p.onThis + ' of ' + p.kind.per : 'Empty') + '</span></div>';
+  }
   function fillSnap(t){
+    if (t.isPallet) return fillSnapPallet(t);
     if (t.live) return fillSnapLive(t);
     const d = SNAP[t.name], ph = PHASE[d.phase], done = d.phase === 'done', st = STAGE[ph.stage];
     const left = tasksLeft(d);
@@ -951,7 +1166,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
     snapEl.style.transform = 'translate(' + x + 'px,' + y + 'px)';
   }
   function updateSnapHover(now){
-    const t = hovered && hovered.volume > 0.05 && (LIVE.size ? !!hovered.live : !!SNAP[hovered.name]) ? hovered : null;
+    const t = (hovered && hovered.volume > 0.05 && (LIVE.size ? !!hovered.live : !!SNAP[hovered.name]) ? hovered : null) || hoveredPallet;
     if (t){
       if (hideTimer){ clearTimeout(hideTimer); hideTimer = null; }
       if (snapTank !== t){
@@ -960,7 +1175,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
       }
     } else {
       hoverSince = 0;
-      if (snapTank && !overSnap && !hideTimer) hideTimer = setTimeout(()=>{ hideTimer = null; if (!overSnap && hovered !== snapTank) hideSnap(); }, 250);
+      if (snapTank && !overSnap && !hideTimer) hideTimer = setTimeout(()=>{ hideTimer = null; if (!overSnap && hovered !== snapTank && hoveredPallet !== snapTank) hideSnap(); }, 250);
     }
   }
   const onSnapEnter = () => { overSnap = true; };
@@ -981,7 +1196,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
   controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
   // (top raised from 16 to 120 ft on 2026-10-05 so W A S D free roam can keep its look-at point up
   // where the camera is looking — see updateRoam)
-  const PAN_MIN = new THREE.Vector3(-75, 0.5, -48), PAN_MAX = new THREE.Vector3(75, 120, 48);
+  const PAN_MIN = new THREE.Vector3(-75, 0.5, -48), PAN_MAX = new THREE.Vector3(100, 120, 48);   // right edge 75 → 100 ft for the keg pallets (2026-10-06)
   controls.addEventListener('change', ()=>{
     const tg = controls.target, before = tg.clone(); tg.clamp(PAN_MIN, PAN_MAX);
     if (!tg.equals(before)) camera.position.add(tg.clone().sub(before));
@@ -989,17 +1204,18 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
 
   // ---------- Hover + click ----------
   const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
-  let hovered = null, downAt = null, lastHitGuy = false;
+  let hovered = null, hoveredPallet = null, downAt = null, lastHitGuy = false;
   function hitTest(e){
     const r = canvas.getBoundingClientRect();
     mouse.set(((e.clientX-r.left)/r.width)*2-1, -((e.clientY-r.top)/r.height)*2+1);
     ray.setFromCamera(mouse, camera);
     const hit = ray.intersectObjects(pickables, false).find(h => h.object.visible && (!h.object.userData.guy || guy.visible));
     lastHitGuy = !!(hit && hit.object.userData.guy);
+    hoveredPallet = hit ? (hit.object.userData.pallet || null) : null;
     return hit ? (hit.object.userData.tank || null) : null;
   }
-  const onMove = e => { if (fp.active){ canvas.style.cursor = 'none'; return; } const vr = canvas.getBoundingClientRect(); lastPointer = { x: e.clientX - vr.left, y: e.clientY - vr.top }; hovered = hitTest(e); canvas.style.cursor = (hovered || lastHitGuy) ? 'pointer' : 'grab'; };
-  const onLeave = () => { hovered = null; };
+  const onMove = e => { if (fp.active){ canvas.style.cursor = 'none'; return; } const vr = canvas.getBoundingClientRect(); lastPointer = { x: e.clientX - vr.left, y: e.clientY - vr.top }; hovered = hitTest(e); canvas.style.cursor = (hovered || lastHitGuy || hoveredPallet) ? 'pointer' : 'grab'; };
+  const onLeave = () => { hovered = null; hoveredPallet = null; };
   const onDown = e => { downAt = [e.clientX, e.clientY]; };
   const onUp = e => {
     if (!downAt) return; const moved = Math.hypot(e.clientX-downAt[0], e.clientY-downAt[1]); downAt = null;
@@ -1166,11 +1382,12 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
 
   // ---------- Walking around on his own ----------
   const PERSON_R = 0.9;
-  const blockers = tanks.map(t => ({ x: t.group.position.x, z: t.group.position.z, r: t.Rft*1.12 + PERSON_R }));
+  const blockers = tanks.map(t => ({ x: t.group.position.x, z: t.group.position.z, r: t.Rft*1.12 + PERSON_R }))
+    .concat(kegStacks.map(st => ({ x: st.x, z: st.z, r: Math.hypot(PAL_X/2 + 0.2, PAL_Z/2) + PERSON_R })));   // keg pallets too
   function freeSpot(x, z){ return blockers.every(b => Math.hypot(x - b.x, z - b.z) > b.r); }
   function pushOut(p){        // never inside a tank (or its legs)
     for (const b of blockers){ const dx = p.x - b.x, dz = p.z - b.z, d = Math.hypot(dx, dz); if (d < b.r){ const k = b.r/(d || 1e-3); p.x = b.x + dx*k; p.z = b.z + dz*k; } }
-    p.x = Math.max(-75, Math.min(75, p.x)); p.z = Math.max(-48, Math.min(48, p.z));
+    p.x = Math.max(-75, Math.min(100, p.x)); p.z = Math.max(-48, Math.min(48, p.z));
   }
   const ai = { mode: 'walk', target: null, tank: null, wait: 0, look: 0 };
   function pickTank(){
@@ -1267,7 +1484,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
   }
   function hideGuyCard(){ guyCard.hidden = true; }
   function enterFP(){
-    hideGuyCard(); select(null); hideSnap(); hovered = null;
+    hideGuyCard(); select(null); hideSnap(); hovered = null; hoveredPallet = null;
     fp.active = true; fp.saved = { pos: camera.position.clone(), target: controls.target.clone(), near: camera.near };
     fp.yaw = guyYaw + Math.PI; fp.pitch = 0;       // camera looks down -z; his yaw faces +z
     controls.enabled = false; guy.visible = false;
@@ -1423,6 +1640,9 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
       if (t.carbBubbles.visible && !reduce) animateCarb(t, dt, tm);
     }
     ring.material.opacity += ((selected ? 0.6 : 0) - ring.material.opacity) * Math.min(1, dt*8);
+    if (hoveredPallet){ const b = hoveredPallet.box; palletHi.position.set(b.x, b.y, b.z); palletHi.scale.set(b.w + 0.1, b.h + 0.06, b.d + 0.1); palletHi.visible = true; }
+    palletHi.material.opacity += ((hoveredPallet ? 0.85 : 0) - palletHi.material.opacity) * Math.min(1, dt*10);
+    if (palletHi.material.opacity < 0.01) palletHi.visible = false;
     updateSnapHover(performance.now());
     updateGuy(dt, tm);
     updateRoam(dt);
@@ -1435,6 +1655,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
 
   function dispose(){
     disposed = true;
+    hideSnap();   // a hover window left open would keep showing the old numbers
     cancelAnimationFrame(raf);
     if (hideTimer) clearTimeout(hideTimer);
     ro.disconnect();
@@ -1455,7 +1676,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live }){
       free(o.geometry);
       for (const m of [].concat(o.material || [])){ free(m.map); free(m); }
     });
-    free(steelEnv); free(floorTex); free(shadowTex);
+    free(steelEnv); free(floorTex); free(shadowTex); free(palletTex); free(kegTex);
     renderer.dispose();
   }
   // getView/setView (2026-10-05): the app's preview controls rebuild the scene with changed

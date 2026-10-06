@@ -60,7 +60,7 @@ interface TankInfo {
 // Tanks beta build number: v1.xx, xx = main Tanks changes so far, preview + site
 // (Chad, 2026-10-05: count every main change, not just pushes). Full list of the
 // first 25 in the project doc claude/tank-view-direction.md. Add 1 per main change.
-const TANKS_BUILD = "1.33";   // 26 walking guy + take control, 27 Shift run + Space jump, 28 overdue warning signs, 29 Ekos tank sync, 30 See Batch Details popup, 31 W A S D free-roam camera, 32 click tanks in first person, 33 admin preview controls + demo tag
+const TANKS_BUILD = "1.34";   // 34 keg pallets (1/2 + 1/6 bbl, Packaging Inventory On Hand), 26 walking guy + take control, 27 Shift run + Space jump, 28 overdue warning signs, 29 Ekos tank sync, 30 See Batch Details popup, 31 W A S D free-roam camera, 32 click tanks in first person, 33 admin preview controls + demo tag
 
 const STATUS_PILL: Record<string, { bg: string; fg: string }> = {
   Fermenting: { bg: "rgba(255,153,0,0.18)", fg: "#FFC266" },
@@ -122,10 +122,12 @@ const SNAP_CSS = `
 
 export default function TanksClient({
   live = [],
+  kegs = null,
   syncedLabel = null,
   isAdmin = false,
 }: {
   live?: LiveTank[];
+  kegs?: { half: number; sixth: number } | null;
   syncedLabel?: string | null;
   isAdmin?: boolean;
 }) {
@@ -159,6 +161,7 @@ export default function TanksClient({
         },
         font: getComputedStyle(canvas).fontFamily || "system-ui, sans-serif",
         live: data,
+        kegs,
       });
       // rebuilt after a preview-control change: same camera, same tank picked
       sceneRef.current.setView(viewRef.current);
@@ -173,7 +176,7 @@ export default function TanksClient({
       sceneRef.current?.dispose();
       sceneRef.current = null;
     };
-  }, [data]);
+  }, [data, kegs]);
 
   // A preview control changed one tank (only this screen; nothing saved).
   const changeTank = useCallback((name: string, change: (r: LiveTank) => void) => {

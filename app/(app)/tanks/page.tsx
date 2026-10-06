@@ -20,11 +20,29 @@ export default async function TanksPage() {
   const profile = await getProfile();
   if (!profile || !hasSection(profile.role, profile.sections, "tanks", profile.is_super_admin)) redirect("/");
 
-  const { data } = await createAdminClient()
-    .from("ekos_tanks")
-    .select(
-      "tank_name, volume_bbl, product_code, batch_title, product_name, color, start_date, stage, yeast_in_cone, dry_hop, temp_f, temp_at, overdue, tasks_left, batch_details, synced_at",
-    );
+  const admin = createAdminClient();
+  const [{ data }, { data: week }] = await Promise.all([
+    admin
+      .from("ekos_tanks")
+      .select(
+        "tank_name, volume_bbl, product_code, batch_title, product_name, color, start_date, stage, yeast_in_cone, dry_hop, temp_f, temp_at, overdue, tasks_left, batch_details, synced_at",
+      ),
+    // current week = the newest one, same as Inventory & Allocation opens to
+    admin.from("weeks").select("id").order("week_start", { ascending: false }).limit(1).maybeSingle(),
+  ]);
+  // Keg pallets (Chad, 2026-10-06 — claude/tanks-keg-pallets-plan.md): 1/2 and 1/6 bbl kegs
+  // On Hand from Inventory & Allocation → Packaging Inventory for the current week, read
+  // fresh every time this page opens (no sync needed — it's the app's own data).
+  let kegs: { half: number; sixth: number } | null = null;
+  if (week) {
+    const { data: rows } = await admin
+      .from("packaging_inventory")
+      .select("item_key, on_hand_qty")
+      .eq("week_id", week.id)
+      .in("item_key", ["kegs_1_2bbl", "kegs_1_6bbl"]);
+    const onHand = (key: string) => Math.max(0, Number((rows ?? []).find((r) => r.item_key === key)?.on_hand_qty) || 0);
+    kegs = { half: onHand("kegs_1_2bbl"), sixth: onHand("kegs_1_6bbl") };
+  }
   const live = ((data ?? []) as LiveTank[]).map((t) => ({
     ...t,
     volume_bbl: Number(t.volume_bbl) || 0,
@@ -41,5 +59,5 @@ export default async function TanksPage() {
       }).format(new Date(newest))
     : null;
   // Preview controls under the 3D view are for admins only (Chad, 2026-10-05).
-  return <TanksClient live={live} syncedLabel={syncedLabel} isAdmin={profile.role === "admin"} />;
+  return <TanksClient live={live} kegs={kegs} syncedLabel={syncedLabel} isAdmin={profile.role === "admin"} />;
 }

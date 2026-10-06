@@ -31,4 +31,6 @@ export function createTankScene(opts: {
   mono?: string;
   /** Rows of table ekos_tanks from the Ekos tank sync (empty = sample data). */
   live?: unknown[];
+  /** 1/2 and 1/6 bbl kegs On Hand (Packaging Inventory, current week) — drawn as keg pallets. */
+  kegs?: { half: number; sixth: number } | null;
 }): TankScene;
