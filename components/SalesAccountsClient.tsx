@@ -9,11 +9,34 @@
 //
 // Stages come from lib/salesAccounts.ts, measured as of the data's own
 // "as of" date (last buy date in the import), not today.
+//
+// Classifications (Feature 2, added 2026-10-07): owner type (FCB / Buddy /
+// Distributor / Cadence, Former is automatic), tier A/B/C, handled by, and
+// the SOP tags. Stored in sales_account_class — separate from the imported
+// data so a re-import never wipes them — edited in the account panel or in
+// bulk (check rows → bulk bar), live for everyone via Supabase Realtime, and
+// every change goes to the Audit Log.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   BIG_LOST_CE,
+  HANDLED_CHOICES,
+  HANDLED_LABEL,
+  OWNER_CHOICES,
+  OWNER_INFO,
+  OWNER_ORDER,
+  TAGS,
+  TIERS,
+  joinTags,
+  ownerShown,
+  parseTags,
+  type HandledBy,
+  type OwnerShown,
+  type OwnerType,
+  type SalesAccountCheckinRow,
+  type SalesAccountClassRow,
+  type Tier,
   NO_REP_DISTRIBUTORS,
   NO_REP_KEY,
   REPS,
@@ -37,22 +60,60 @@ type Account = SalesAccountRow & {
   big: boolean;
   daysDark: number | null;
   search: string;
+  owner: OwnerShown;
+  tier: Tier | null;
+  handled: HandledBy | null;
+  tags: string[];
+  cls: SalesAccountClassRow | null;
+  lastCheckin: string | null;
 };
 
-type SortKey = "name" | "distributor" | "rep" | "stage" | "last_buy_date" | "daysDark" | "ce_12mo" | "lifetime_ce" | "premise";
+type SortKey =
+  | "name"
+  | "distributor"
+  | "rep"
+  | "stage"
+  | "owner"
+  | "tier"
+  | "handled"
+  | "lastCheckin"
+  | "last_buy_date"
+  | "daysDark"
+  | "ce_12mo"
+  | "lifetime_ce"
+  | "premise";
 
 interface Filters {
   stage: AccountStage | null;
+  owner: OwnerShown | null;
   rep: string;
   dist: string;
   prem: string;
+  tier: string;
+  handled: string;
+  tag: string;
   big: boolean;
   hasContact: boolean;
   sort: SortKey;
   asc: boolean;
 }
 
-const DEFAULT_FILTERS: Filters = { stage: null, rep: "", dist: "", prem: "", big: false, hasContact: false, sort: "ce_12mo", asc: false };
+const DEFAULT_FILTERS: Filters = {
+  stage: null,
+  owner: null,
+  rep: "",
+  dist: "",
+  prem: "",
+  tier: "",
+  handled: "",
+  tag: "",
+  big: false,
+  hasContact: false,
+  sort: "ce_12mo",
+  asc: false,
+};
+type ClassPatch = Partial<Pick<SalesAccountClassRow, "owner_type" | "tier" | "handled_by" | "tags">>;
+const CLASS_FIELDS: (keyof ClassPatch)[] = ["owner_type", "tier", "handled_by", "tags"];
 const STORAGE_KEY = "fcb-sales-accounts-filters";
 const PAGE_SIZE = 100;
 const FETCH_SIZE = 1000;
@@ -87,6 +148,58 @@ function BigTag() {
   );
 }
 
+function OwnerPill({ owner }: { owner: OwnerShown }) {
+  const c = OWNER_INFO[owner].color;
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded px-2 py-0.5 text-xs font-medium text-neutral-100" style={{ background: `${c}24`, border: `1px solid ${c}66` }}>
+      {OWNER_INFO[owner].label.replace(" Account", "")}
+    </span>
+  );
+}
+
+// Saves classification changes for one or many accounts, then writes each
+// changed field to the Audit Log (one insert for the whole batch).
+async function saveClassChanges(
+  supabase: ReturnType<typeof createClient>,
+  userId: string | null,
+  changes: { account: Account; patch: ClassPatch }[],
+): Promise<string | null> {
+  const now = new Date().toISOString();
+  const rows = changes.map(({ account, patch }) => ({ outlet_id: account.outlet_id, ...patch, updated_at: now, updated_by: userId }));
+  for (let i = 0; i < rows.length; i += 500) {
+    const { data, error } = await supabase
+      .from("sales_account_class")
+      .upsert(rows.slice(i, i + 500), { onConflict: "outlet_id" })
+      .select("id,outlet_id");
+    if (error) return error.message;
+    if (userId) {
+      const idByOutlet = new Map((data ?? []).map((d) => [d.outlet_id as string, d.id as string]));
+      const audit: Record<string, unknown>[] = [];
+      for (const { account, patch } of changes.slice(i, i + 500)) {
+        const id = idByOutlet.get(account.outlet_id);
+        if (!id) continue;
+        for (const f of CLASS_FIELDS) {
+          if (!(f in patch)) continue;
+          const oldV = account.cls ? account.cls[f] : null;
+          const newV = patch[f];
+          if (String(oldV ?? "") === String(newV ?? "")) continue;
+          audit.push({
+            week_id: null,
+            table_name: "sales_account_class",
+            record_id: id,
+            field_name: f,
+            old_value: oldV == null ? null : String(oldV),
+            new_value: newV == null ? null : String(newV),
+            changed_by: userId,
+          });
+        }
+      }
+      if (audit.length) await supabase.from("audit_log").insert(audit);
+    }
+  }
+  return null;
+}
+
 export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
   const supabase = useMemo(() => createClient(), []);
   const [rows, setRows] = useState<SalesAccountRow[]>([]);
@@ -101,6 +214,12 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
   const [page, setPage] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
+  const [classes, setClasses] = useState<Map<string, SalesAccountClassRow>>(new Map());
+  const [lastCheckins, setLastCheckins] = useState<Map<string, string>>(new Map());
+  const [userId, setUserId] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkMsg, setBulkMsg] = useState<string | null>(null);
+  const closePanel = useCallback(() => setOpenId(null), []);
 
   // Remembered filters (per browser)
   useEffect(() => {
@@ -156,6 +275,42 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
       }
       setLoadMsg(`Loading accounts… ${all.length.toLocaleString()} of ${total.toLocaleString()}`);
     }
+    // Classifications (separate table, survives re-imports)
+    const cls = new Map<string, SalesAccountClassRow>();
+    for (let from = 0; ; from += FETCH_SIZE) {
+      const { data, error: clsError } = await supabase
+        .from("sales_account_class")
+        .select("*")
+        .order("outlet_id")
+        .range(from, from + FETCH_SIZE - 1);
+      if (clsError) {
+        setError(clsError.message);
+        break;
+      }
+      for (const r of (data ?? []) as SalesAccountClassRow[]) cls.set(r.outlet_id, r);
+      if (!data || data.length < FETCH_SIZE) break;
+    }
+    // Last check-in date per account (the panel loads the notes)
+    const last = new Map<string, string>();
+    for (let from = 0; ; from += FETCH_SIZE) {
+      const { data, error: ckError } = await supabase
+        .from("sales_account_checkins")
+        .select("outlet_id,checkin_date")
+        .order("id")
+        .range(from, from + FETCH_SIZE - 1);
+      if (ckError) break;
+      for (const r of (data ?? []) as { outlet_id: string; checkin_date: string }[]) {
+        const cur = last.get(r.outlet_id);
+        if (!cur || r.checkin_date > cur) last.set(r.outlet_id, r.checkin_date);
+      }
+      if (!data || data.length < FETCH_SIZE) break;
+    }
+    setLastCheckins(last);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    setUserId(user?.id ?? null);
+    setClasses(cls);
     setRows(all);
     setLoading(false);
   }, [supabase]);
@@ -164,6 +319,29 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
     load();
   }, [load]);
 
+  // Live: a classification change by anyone shows up here right away.
+  useEffect(() => {
+    const channel = supabase
+      .channel("sales-account-class")
+      .on("postgres_changes", { event: "*", schema: "public", table: "sales_account_class" }, (payload) => {
+        setClasses((prev) => {
+          const next = new Map(prev);
+          if (payload.eventType === "DELETE") {
+            const old = payload.old as Partial<SalesAccountClassRow>;
+            for (const [k, v] of next) if (v.id === old.id) next.delete(k);
+          } else {
+            const row = payload.new as SalesAccountClassRow;
+            next.set(row.outlet_id, row);
+          }
+          return next;
+        });
+      })
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [supabase]);
+
   const accounts: Account[] = useMemo(() => {
     if (!asOf) return [];
     return rows.map((r) => {
@@ -171,6 +349,7 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
       const stage = stageFor({ ...r, buy_months_6: Number(r.buy_months_6) || 0 }, asOf);
       const rep = repFor(r.distributor);
       const repKey = rep ?? (r.distributor && NO_REP_DISTRIBUTORS.includes(r.distributor) ? NO_REP_KEY : null);
+      const cls = classes.get(r.outlet_id) ?? null;
       return {
         ...r,
         lifetime_ce: lifetime,
@@ -180,10 +359,28 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
         repKey,
         big: isLostBig(stage, lifetime),
         daysDark: r.last_buy_date ? daysBetween(r.last_buy_date, asOf) : null,
-        search: `${r.name} ${r.city ?? ""} ${r.zip ?? ""} ${r.outlet_id} ${r.address ?? ""}`.toLowerCase(),
+        search: `${r.name} ${r.city ?? ""} ${r.zip ?? ""} ${r.outlet_id} ${r.address ?? ""} ${cls?.buddy_list ?? ""}`.toLowerCase(),
+        owner: ownerShown(stage, cls?.owner_type),
+        tier: cls?.tier ?? null,
+        handled: cls?.handled_by ?? null,
+        tags: parseTags(cls?.tags),
+        cls,
+        lastCheckin: lastCheckins.get(r.outlet_id) ?? null,
       };
     });
-  }, [rows, asOf]);
+  }, [rows, asOf, classes, lastCheckins]);
+
+  const ownerCounts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const a of accounts) c[a.owner] = (c[a.owner] ?? 0) + 1;
+    return c;
+  }, [accounts]);
+
+  const tierCounts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const a of accounts) if (a.tier) c[a.tier] = (c[a.tier] ?? 0) + 1;
+    return c;
+  }, [accounts]);
 
   const stageCounts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -224,6 +421,10 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
     let list = accounts.filter(
       (a) =>
         (!f.stage || a.stage === f.stage) &&
+        (!f.owner || a.owner === f.owner) &&
+        (!f.tier || (f.tier === "none" ? !a.tier : a.tier === f.tier)) &&
+        (!f.handled || (f.handled === "none" ? !a.handled : a.handled === f.handled)) &&
+        (!f.tag || (f.tag === "none" ? a.tags.length === 0 : a.tags.includes(f.tag))) &&
         (!f.rep || (f.rep === "__unassigned" ? !a.repKey : a.repKey === f.rep)) &&
         (!f.dist || a.distributor === f.dist) &&
         (!f.prem || a.premise === f.prem) &&
@@ -238,6 +439,12 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
           return order.indexOf(a.stage);
         case "rep":
           return a.rep;
+        case "owner":
+          return OWNER_ORDER.indexOf(a.owner);
+        case "tier":
+          return a.tier;
+        case "handled":
+          return a.handled ? HANDLED_LABEL[a.handled] : null;
         case "daysDark":
           return a.daysDark;
         default:
@@ -260,10 +467,63 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
   const curPage = Math.min(page, pages - 1);
   const shown = filtered.slice(curPage * PAGE_SIZE, curPage * PAGE_SIZE + PAGE_SIZE);
   const openAccount = openId ? accounts.find((a) => a.outlet_id === openId) ?? null : null;
+  const selectedAccounts = accounts.filter((a) => selected.has(a.outlet_id));
+  const pageAllSelected = shown.length > 0 && shown.every((a) => selected.has(a.outlet_id));
+
+  const toggleSelect = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const togglePage = () =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (pageAllSelected) for (const a of shown) next.delete(a.outlet_id);
+      else for (const a of shown) next.add(a.outlet_id);
+      return next;
+    });
+
+  async function applyBulk(make: (a: Account) => ClassPatch | null, what: string) {
+    const changes = selectedAccounts
+      .filter((a) => a.owner !== "former" || !("owner_type" in (make(a) ?? {})))
+      .map((a) => ({ account: a, patch: make(a) }))
+      .filter((c): c is { account: Account; patch: ClassPatch } => !!c.patch);
+    if (!changes.length) return;
+    setBulkMsg(`Saving ${changes.length} accounts…`);
+    const err = await saveClassChanges(supabase, userId, changes);
+    if (err) {
+      setBulkMsg(`Couldn't save: ${err}`);
+      return;
+    }
+    setClasses((prev) => {
+      const next = new Map(prev);
+      for (const { account, patch } of changes) {
+        const base: SalesAccountClassRow = account.cls ?? {
+          id: "",
+          outlet_id: account.outlet_id,
+          owner_type: null,
+          tier: null,
+          handled_by: null,
+          tags: "",
+          buddy_list: null,
+          buddy_rep_name: null,
+          buddy_rep_phone: null,
+          buddy_rep_email: null,
+          updated_at: new Date().toISOString(),
+          updated_by: userId,
+        };
+        next.set(account.outlet_id, { ...base, ...patch, updated_at: new Date().toISOString(), updated_by: userId });
+      }
+      return next;
+    });
+    setBulkMsg(`${what} on ${changes.length} account${changes.length === 1 ? "" : "s"}.`);
+  }
 
   const sortBy = (k: SortKey) =>
     updateFilters(
-      filters.sort === k ? { asc: !filters.asc } : { sort: k, asc: ["name", "distributor", "rep", "premise", "daysDark", "stage"].includes(k) },
+      filters.sort === k ? { asc: !filters.asc } : { sort: k, asc: ["name", "distributor", "rep", "premise", "daysDark", "stage", "owner", "tier", "handled"].includes(k) },
     );
 
   const th = (k: SortKey, label: string, right = false) => (
@@ -338,6 +598,44 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
                   <span className="text-xs font-medium text-neutral-400">{STAGE_INFO[s].label}</span>
                   <span className="text-2xl font-bold tabular-nums text-neutral-100">{fmt(stageCounts[s] ?? 0)}</span>
                   <span className="text-[11px] leading-snug text-neutral-500">{STAGE_INFO[s].rule}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Owner</span>
+            {OWNER_ORDER.map((o) => {
+              const on = filters.owner === o;
+              const c = OWNER_INFO[o].color;
+              return (
+                <button
+                  key={o}
+                  type="button"
+                  aria-pressed={on}
+                  title={OWNER_INFO[o].rule}
+                  onClick={() => updateFilters({ owner: on ? null : o })}
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-sm hover:bg-neutral-900 ${on ? "bg-neutral-900 text-neutral-100" : "border-neutral-800 text-neutral-300"}`}
+                  style={on ? { borderColor: c } : undefined}
+                >
+                  <span className="h-2 w-2 rounded-full" style={{ background: c }} />
+                  {OWNER_INFO[o].label}
+                  <span className="tabular-nums text-neutral-500">{fmt(ownerCounts[o] ?? 0)}</span>
+                </button>
+              );
+            })}
+            <span className="ml-2 text-xs font-semibold uppercase tracking-wider text-neutral-500">Tier</span>
+            {TIERS.map((t) => {
+              const on = filters.tier === t;
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => updateFilters({ tier: on ? "" : t })}
+                  className={`rounded-full border px-3 py-1 text-sm hover:bg-neutral-900 ${on ? "border-[#6abc46] bg-neutral-900 text-neutral-100" : "border-neutral-800 text-neutral-300"}`}
+                >
+                  {t} <span className="tabular-nums text-neutral-500">{fmt(tierCounts[t] ?? 0)}</span>
                 </button>
               );
             })}
@@ -436,6 +734,41 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
               <option value="On">On premise</option>
               <option value="Off">Off premise</option>
             </select>
+            <select id="accounts-owner" value={filters.owner ?? ""} onChange={(e) => updateFilters({ owner: (e.target.value || null) as OwnerShown | null })} className="rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100">
+              <option value="">All owners</option>
+              {OWNER_ORDER.map((o) => (
+                <option key={o} value={o}>
+                  {OWNER_INFO[o].label}
+                </option>
+              ))}
+            </select>
+            <select id="accounts-tier" value={filters.tier} onChange={(e) => updateFilters({ tier: e.target.value })} className="rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100">
+              <option value="">All tiers</option>
+              {TIERS.map((t) => (
+                <option key={t} value={t}>
+                  Tier {t}
+                </option>
+              ))}
+              <option value="none">No tier yet</option>
+            </select>
+            <select id="accounts-handled" value={filters.handled} onChange={(e) => updateFilters({ handled: e.target.value })} className="rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100">
+              <option value="">Handled by: anyone</option>
+              {HANDLED_CHOICES.map((h) => (
+                <option key={h} value={h}>
+                  {HANDLED_LABEL[h]}
+                </option>
+              ))}
+              <option value="none">Not set yet</option>
+            </select>
+            <select id="accounts-tag" value={filters.tag} onChange={(e) => updateFilters({ tag: e.target.value })} className="rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100">
+              <option value="">All tags</option>
+              {TAGS.map((t) => (
+                <option key={t.key} value={t.key}>
+                  {t.key}
+                </option>
+              ))}
+              <option value="none">No tags</option>
+            </select>
             <label className="flex cursor-pointer items-center gap-1.5 text-sm text-neutral-400">
               <input id="accounts-big" type="checkbox" checked={filters.big} onChange={(e) => updateFilters({ big: e.target.checked })} className="accent-[#6abc46]" />
               Lost big only ({BIG_LOST_CE}+ CE)
@@ -462,26 +795,64 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
             </button>
           </div>
 
+          {selected.size > 0 && (
+            <BulkBar
+              count={selected.size}
+              message={bulkMsg}
+              onClear={() => {
+                setSelected(new Set());
+                setBulkMsg(null);
+              }}
+              onOwner={(o) => applyBulk(() => ({ owner_type: o }), `Owner set to ${OWNER_INFO[o].label}`)}
+              onTier={(t) => applyBulk(() => ({ tier: t }), t ? `Tier set to ${t}` : "Tier cleared")}
+              onHandled={(h) => applyBulk(() => ({ handled_by: h }), h ? `Handled by set to ${HANDLED_LABEL[h]}` : "Handled by cleared")}
+              onTag={(tag, add) =>
+                applyBulk(
+                  (a) => {
+                    const has = a.tags.includes(tag);
+                    if (add === has) return null;
+                    return { tags: joinTags(add ? [...a.tags, tag] : a.tags.filter((t) => t !== tag)) };
+                  },
+                  `${tag} ${add ? "added" : "removed"}`,
+                )
+              }
+            />
+          )}
+
           <div className="overflow-hidden rounded-lg border border-neutral-800">
             <div className="max-h-[70vh] overflow-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-neutral-800">
+                    <th className="sticky top-0 z-[1] w-8 bg-neutral-950 px-3 py-2">
+                      <input
+                        type="checkbox"
+                        aria-label="Select every account on this page"
+                        checked={pageAllSelected}
+                        onChange={togglePage}
+                        className="accent-[#6abc46]"
+                      />
+                    </th>
                     {th("name", "Account")}
                     {th("distributor", "Distributor")}
                     {th("rep", "Rep")}
                     {th("stage", "Stage")}
+                    {th("owner", "Owner")}
+                    {th("tier", "Tier")}
+                    {th("handled", "Handled by")}
+                    {th("lastCheckin", "Last check-in", true)}
                     {th("last_buy_date", "Last buy", true)}
                     {th("daysDark", "Days dark", true)}
                     {th("ce_12mo", "Last 12 mo CE", true)}
                     {th("lifetime_ce", "Lifetime CE", true)}
                     {th("premise", "Premise")}
+                    <th className="sticky top-0 z-[1] bg-neutral-950 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Tags</th>
                   </tr>
                 </thead>
                 <tbody>
                   {shown.length === 0 ? (
                     <tr>
-                      <td colSpan={9} className="px-3 py-8 text-center text-neutral-500">
+                      <td colSpan={15} className="px-3 py-8 text-center text-neutral-500">
                         No accounts match these filters. Clear a filter to see more.
                       </td>
                     </tr>
@@ -496,6 +867,15 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
                         }}
                         className="cursor-pointer border-b border-neutral-800 last:border-b-0 hover:bg-neutral-900"
                       >
+                        <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${a.name}`}
+                            checked={selected.has(a.outlet_id)}
+                            onChange={() => toggleSelect(a.outlet_id)}
+                            className="accent-[#6abc46]"
+                          />
+                        </td>
                         <td className="max-w-[300px] px-3 py-2">
                           <div className="truncate font-medium text-neutral-100">{a.name}</div>
                           <div className="truncate text-xs text-neutral-500">{[a.city, a.zip].filter(Boolean).join(" · ") || "—"}</div>
@@ -506,6 +886,12 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
                           <StagePill stage={a.stage} />
                           {a.big && <BigTag />}
                         </td>
+                        <td className="whitespace-nowrap px-3 py-2">
+                          <OwnerPill owner={a.owner} />
+                        </td>
+                        <td className="whitespace-nowrap px-3 py-2 font-semibold text-neutral-100">{a.tier ?? <span className="font-normal text-neutral-600">—</span>}</td>
+                        <td className="whitespace-nowrap px-3 py-2 text-neutral-200">{a.handled ? HANDLED_LABEL[a.handled] : <span className="text-neutral-600">—</span>}</td>
+                        <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-neutral-200">{a.lastCheckin ? fdate(a.lastCheckin) : <span className="text-neutral-600">—</span>}</td>
                         <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-neutral-200">
                           {fdate(a.last_buy_date)}
                           {a.report_buy_date && (!a.last_buy_date || a.report_buy_date > a.last_buy_date) && (
@@ -518,6 +904,15 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
                         <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-neutral-200">{a.last_buy_date ? fmt(a.ce_12mo) : "—"}</td>
                         <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-neutral-200">{a.last_buy_date ? fmt(a.lifetime_ce) : "—"}</td>
                         <td className="whitespace-nowrap px-3 py-2 text-neutral-300">{a.premise ?? "—"}</td>
+                        <td className="whitespace-nowrap px-3 py-2">
+                          <div className="flex gap-1">
+                            {a.tags.map((t) => (
+                              <span key={t} className="rounded border border-neutral-700 px-1.5 py-px text-[10px] font-semibold tracking-wide text-neutral-300">
+                                {t}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
                       </tr>
                     ))
                   )}
@@ -554,30 +949,89 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
         </>
       )}
 
-      {openAccount && asOf && <AccountPanel account={openAccount} asOf={asOf} onClose={() => setOpenId(null)} />}
+      {openAccount && asOf && (
+        <AccountPanel
+          account={openAccount}
+          asOf={asOf}
+          onClose={closePanel}
+          onSave={async (patch) => {
+            const err = await saveClassChanges(supabase, userId, [{ account: openAccount, patch }]);
+            if (err) return err;
+            setClasses((prev) => {
+              const next = new Map(prev);
+              const base = openAccount.cls ?? {
+                id: "",
+                outlet_id: openAccount.outlet_id,
+                owner_type: null,
+                tier: null,
+                handled_by: null,
+                tags: "",
+                buddy_list: null,
+                buddy_rep_name: null,
+                buddy_rep_phone: null,
+                buddy_rep_email: null,
+                updated_at: "",
+                updated_by: userId,
+              };
+              next.set(openAccount.outlet_id, { ...base, ...patch, updated_at: new Date().toISOString(), updated_by: userId });
+              return next;
+            });
+            return null;
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function AccountPanel({ account: a, asOf, onClose }: { account: Account; asOf: string; onClose: () => void }) {
+function AccountPanel({
+  account: a,
+  asOf,
+  onClose,
+  onSave,
+}: {
+  account: Account;
+  asOf: string;
+  onClose: () => void;
+  onSave: (patch: ClassPatch) => Promise<string | null>;
+}) {
   const supabase = useMemo(() => createClient(), []);
   const [sales, setSales] = useState<SalesAccountSaleRow[] | null>(null);
   const [contacts, setContacts] = useState<SalesAccountContactRow[] | null>(null);
+  const [checkins, setCheckins] = useState<SalesAccountCheckinRow[] | null>(null);
+  const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [showAllCheckins, setShowAllCheckins] = useState(false);
   const closeRef = useRef<HTMLButtonElement>(null);
+
+  const save = async (patch: ClassPatch, what: string) => {
+    setSaveMsg({ ok: true, text: "Saving…" });
+    const err = await onSave(patch);
+    setSaveMsg(err ? { ok: false, text: `Couldn't save: ${err}` } : { ok: true, text: `${what} saved.` });
+  };
 
   useEffect(() => {
     let alive = true;
     // eslint-disable-next-line react-hooks/set-state-in-effect -- reset while the next account loads
     setSales(null);
     setContacts(null);
+    setCheckins(null);
+    setSaveMsg(null);
+    setShowAllCheckins(false);
     (async () => {
-      const [s, c] = await Promise.all([
+      const [s, c, k] = await Promise.all([
         supabase.from("sales_account_sales").select("month,product,package,distributor,ce,last_buy_date").eq("outlet_id", a.outlet_id).limit(5000),
         supabase.from("sales_account_contacts").select("id,name,title,phone,mobile,email,notes,source").eq("outlet_id", a.outlet_id),
+        supabase
+          .from("sales_account_checkins")
+          .select("id,outlet_id,checkin_date,rep,activity,outcome,notes,brands,contact,source")
+          .eq("outlet_id", a.outlet_id)
+          .order("checkin_date", { ascending: false })
+          .limit(200),
       ]);
       if (!alive) return;
       setSales(((s.data ?? []) as SalesAccountSaleRow[]).map((r) => ({ ...r, ce: Number(r.ce) || 0 })));
       setContacts((c.data ?? []) as SalesAccountContactRow[]);
+      setCheckins((k.data ?? []) as SalesAccountCheckinRow[]);
     })();
     return () => {
       alive = false;
@@ -651,6 +1105,127 @@ function AccountPanel({ account: a, asOf, onClose }: { account: Account; asOf: s
             </div>
           )}
         </div>
+
+        <section className="flex flex-col gap-2">
+          <h3 className="text-xs font-semibold uppercase tracking-widest text-neutral-400">Last check-in</h3>
+          {checkins === null ? (
+            <p className="text-sm text-neutral-500">Loading…</p>
+          ) : checkins.length === 0 ? (
+            <p className="text-sm text-neutral-500">No check-ins on file yet. They&apos;ll come in from Lilypad and from check-ins logged here.</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {(showAllCheckins ? checkins : checkins.slice(0, 1)).map((k, i) => (
+                <CheckinCard key={k.id} checkin={k} latest={i === 0} />
+              ))}
+              {checkins.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAllCheckins((v) => !v)}
+                  className="self-start text-sm text-[#8fd16e] hover:underline"
+                >
+                  {showAllCheckins ? "Show only the last check-in" : `Show all ${checkins.length} check-ins`}
+                </button>
+              )}
+            </div>
+          )}
+        </section>
+
+        <section className="flex flex-col gap-3 rounded-lg border border-neutral-800 bg-neutral-900 p-3">
+          <div className="flex items-baseline justify-between gap-2">
+            <h3 className="text-xs font-semibold uppercase tracking-widest text-neutral-400">Classification</h3>
+            {saveMsg && <span className={`text-xs ${saveMsg.ok ? "text-[#8fd16e]" : "text-red-300"}`}>{saveMsg.text}</span>}
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <label className="flex flex-col gap-1 text-xs text-neutral-500">
+              Owner
+              {a.owner === "former" ? (
+                <span className="py-1.5 text-sm text-neutral-300">Former distributor (automatic)</span>
+              ) : (
+                <select
+                  id="panel-owner"
+                  value={a.cls?.owner_type ?? "distributor"}
+                  onChange={(e) => save({ owner_type: e.target.value as OwnerType }, "Owner")}
+                  className="rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100"
+                >
+                  {OWNER_CHOICES.map((o) => (
+                    <option key={o} value={o}>
+                      {OWNER_INFO[o].label}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-neutral-500">
+              Tier
+              <select
+                id="panel-tier"
+                value={a.tier ?? ""}
+                onChange={(e) => save({ tier: (e.target.value || null) as Tier | null }, "Tier")}
+                className="rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100"
+              >
+                <option value="">Not set</option>
+                {TIERS.map((t) => (
+                  <option key={t} value={t}>
+                    Tier {t}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-neutral-500">
+              Handled by
+              <select
+                id="panel-handled"
+                value={a.handled ?? ""}
+                onChange={(e) => save({ handled_by: (e.target.value || null) as HandledBy | null }, "Handled by")}
+                className="rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100"
+              >
+                <option value="">Not set</option>
+                {HANDLED_CHOICES.map((h) => (
+                  <option key={h} value={h}>
+                    {HANDLED_LABEL[h]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-neutral-500">Tags</span>
+            <div className="flex flex-wrap gap-1.5">
+              {TAGS.map((t) => {
+                const on = a.tags.includes(t.key);
+                return (
+                  <button
+                    key={t.key}
+                    type="button"
+                    aria-pressed={on}
+                    title={t.rule}
+                    onClick={() =>
+                      save({ tags: joinTags(on ? a.tags.filter((x) => x !== t.key) : [...a.tags, t.key]) }, `${t.key} ${on ? "removed" : "added"}`)
+                    }
+                    className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold tracking-wide ${on ? "border-[#6abc46] bg-[#6abc46]/15 text-neutral-100" : "border-neutral-700 text-neutral-400 hover:text-neutral-200"}`}
+                  >
+                    {t.key}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          {a.cls?.buddy_list && (
+            <div className="text-sm text-neutral-300">
+              Target list: <span className="text-neutral-100">{a.cls.buddy_list}</span>
+              {a.cls.buddy_rep_name && (
+                <>
+                  {" "}
+                  · Distributor rep: <span className="text-neutral-100">{a.cls.buddy_rep_name}</span>
+                </>
+              )}
+              {[a.cls.buddy_rep_phone, a.cls.buddy_rep_email].filter(Boolean).length > 0 && (
+                <div className="text-neutral-400">{[a.cls.buddy_rep_phone, a.cls.buddy_rep_email].filter(Boolean).join(" · ")}</div>
+              )}
+            </div>
+          )}
+          {a.cls?.updated_at && <p className="text-xs text-neutral-500">Last changed {new Date(a.cls.updated_at).toLocaleString("en-US")}. Every change is in the Audit Log.</p>}
+        </section>
 
         <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-lg border border-neutral-800 bg-neutral-800 sm:grid-cols-3">
           {[
@@ -739,6 +1314,117 @@ function AccountPanel({ account: a, asOf, onClose }: { account: Account; asOf: s
         </section>
       </aside>
     </>
+  );
+}
+
+function CheckinCard({ checkin: k, latest }: { checkin: SalesAccountCheckinRow; latest: boolean }) {
+  return (
+    <div className={`flex flex-col gap-1 rounded-lg border px-3 py-2 text-sm ${latest ? "border-[#6abc46]/50 bg-[#6abc46]/10" : "border-neutral-800 bg-neutral-900"}`}>
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <span className="font-semibold tabular-nums text-neutral-100">{fdate(k.checkin_date)}</span>
+        <span className="text-neutral-300">{[k.activity, k.rep].filter(Boolean).join(" · ")}</span>
+        {k.outcome && <span className="rounded border border-neutral-700 px-1.5 text-xs text-neutral-300">{k.outcome}</span>}
+      </div>
+      {k.notes ? <p className="whitespace-pre-wrap text-neutral-200">{k.notes}</p> : <p className="text-neutral-500">No notes on this check-in.</p>}
+      {(k.contact || (k.brands && k.brands !== "DID NOT SAMPLE")) && (
+        <p className="text-xs text-neutral-400">
+          {[k.contact && `Spoke with ${k.contact}`, k.brands && k.brands !== "DID NOT SAMPLE" && `Sampled: ${k.brands}`].filter(Boolean).join(" · ")}
+        </p>
+      )}
+      <p className="text-xs text-neutral-500">From {k.source ?? "—"}</p>
+    </div>
+  );
+}
+
+function BulkBar({
+  count,
+  message,
+  onClear,
+  onOwner,
+  onTier,
+  onHandled,
+  onTag,
+}: {
+  count: number;
+  message: string | null;
+  onClear: () => void;
+  onOwner: (o: OwnerType) => void;
+  onTier: (t: Tier | null) => void;
+  onHandled: (h: HandledBy | null) => void;
+  onTag: (tag: string, add: boolean) => void;
+}) {
+  const cls = "rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-sm text-neutral-100";
+  return (
+    <div className="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-lg border border-[#6abc46]/50 bg-neutral-900 px-3 py-2 text-sm">
+      <span className="font-semibold text-neutral-100">{count.toLocaleString()} selected</span>
+      <select
+        id="bulk-owner"
+        value=""
+        onChange={(e) => e.target.value && onOwner(e.target.value as OwnerType)}
+        className={cls}
+      >
+        <option value="">Set owner…</option>
+        {OWNER_CHOICES.map((o) => (
+          <option key={o} value={o}>
+            {OWNER_INFO[o].label}
+          </option>
+        ))}
+      </select>
+      <select
+        id="bulk-tier"
+        value=""
+        onChange={(e) => e.target.value && onTier(e.target.value === "none" ? null : (e.target.value as Tier))}
+        className={cls}
+      >
+        <option value="">Set tier…</option>
+        {TIERS.map((t) => (
+          <option key={t} value={t}>
+            Tier {t}
+          </option>
+        ))}
+        <option value="none">Clear tier</option>
+      </select>
+      <select
+        id="bulk-handled"
+        value=""
+        onChange={(e) => e.target.value && onHandled(e.target.value === "none" ? null : (e.target.value as HandledBy))}
+        className={cls}
+      >
+        <option value="">Set handled by…</option>
+        {HANDLED_CHOICES.map((h) => (
+          <option key={h} value={h}>
+            {HANDLED_LABEL[h]}
+          </option>
+        ))}
+        <option value="none">Clear handled by</option>
+      </select>
+      <select
+        id="bulk-tag"
+        value=""
+        onChange={(e) => {
+          const [op, tag] = e.target.value.split("|");
+          if (tag) onTag(tag, op === "add");
+        }}
+        className={cls}
+      >
+        <option value="">Tags…</option>
+        {TAGS.map((t) => (
+          <option key={`add${t.key}`} value={`add|${t.key}`}>
+            Add {t.key}
+          </option>
+        ))}
+        {TAGS.map((t) => (
+          <option key={`rem${t.key}`} value={`remove|${t.key}`}>
+            Remove {t.key}
+          </option>
+        ))}
+      </select>
+      <button type="button" onClick={onClear} className="rounded-md border border-neutral-700 px-2.5 py-1 text-neutral-300 hover:bg-neutral-800">
+        Clear selection
+      </button>
+      {message && <span className="text-neutral-400">{message}</span>}
+      <span className="w-full text-xs text-neutral-500">Former-distributor accounts keep their automatic owner. Every change is in the Audit Log.</span>
+    </div>
   );
 }
 
@@ -854,11 +1540,20 @@ function ImportPanel({ onDone }: { onDone: () => void }) {
         ["accounts", data.accounts, 2000],
         ["sales", data.sales, 4000],
         ["contacts", data.contacts ?? [], 2000],
+        ["buddies", data.buddies ?? [], 2000],
+        ["checkins", data.checkins ?? [], 2000],
       ];
       const total = parts.reduce((s, [, rows, size]) => s + Math.ceil(rows.length / size), 0) + 1;
       let done = 0;
-      const label: Record<string, string> = { accounts: "Accounts", sales: "Purchase history", contacts: "Contacts" };
+      const label: Record<string, string> = {
+        accounts: "Accounts",
+        sales: "Purchase history",
+        contacts: "Contacts",
+        buddies: "Target-list (Buddy) accounts",
+        checkins: "Check-ins",
+      };
       for (const [action, rows, size] of parts) {
+        if (action === "checkins" && rows.length) await send("checkins_clear");
         for (let i = 0; i < rows.length; i += size) {
           setProgress({ step: label[action], done, total });
           await send(action, { rows: rows.slice(i, i + size) });

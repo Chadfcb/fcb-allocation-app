@@ -140,10 +140,111 @@ export interface ImportAccount {
 }
 export type ImportSale = [string, string, string, string | null, string | null, number, string | null];
 export type ImportContact = [string, string | null, string | null, string | null, string | null, string | null, string | null, string | null];
+// buddies: accounts on a distributor target list → start as Buddy accounts
+// [outlet_id, target list, distributor rep name, phone, email]
+export type ImportBuddy = [string, string | null, string | null, string | null, string | null];
+// checkins: [outlet_id, "YYYY-MM-DD", rep, activity, outcome, notes, brands sampled, contact, source]
+export type ImportCheckin = [
+  string,
+  string,
+  string | null,
+  string | null,
+  string | null,
+  string | null,
+  string | null,
+  string | null,
+  string,
+];
 export interface ImportFile {
   format: "fcb-sales-accounts-v1";
   as_of: string;
   accounts: ImportAccount[];
   sales: ImportSale[];
   contacts: ImportContact[];
+  buddies?: ImportBuddy[];
+  checkins?: ImportCheckin[];
+}
+
+// Check-ins (visits, emails/texts, calls) with their notes —
+// sales_account_checkins. Imported rows have source "Sales Ops: …" or
+// "Lilypad: …"; a re-import replaces only those.
+export interface SalesAccountCheckinRow {
+  id: string;
+  outlet_id: string;
+  checkin_date: string;
+  rep: string | null;
+  activity: string | null;
+  outcome: string | null;
+  notes: string | null;
+  brands: string | null;
+  contact: string | null;
+  source: string | null;
+}
+
+// ---- Classifications (Feature 2, added 2026-10-07) ----
+// Stored in sales_account_class (sql/sales_account_classification.sql),
+// apart from the imported sales data so a re-import never wipes them.
+export type OwnerType = "fcb" | "buddy" | "distributor" | "cadence";
+export type OwnerShown = OwnerType | "former";
+export type Tier = "A" | "B" | "C";
+export type HandledBy = "fcb_rep" | "distributor_rep" | "back_office";
+
+export interface SalesAccountClassRow {
+  id: string;
+  outlet_id: string;
+  owner_type: OwnerType | null;
+  tier: Tier | null;
+  handled_by: HandledBy | null;
+  tags: string;
+  buddy_list: string | null;
+  buddy_rep_name: string | null;
+  buddy_rep_phone: string | null;
+  buddy_rep_email: string | null;
+  updated_at: string;
+  updated_by: string | null;
+}
+
+export const OWNER_INFO: Record<OwnerShown, { label: string; color: string; rule: string }> = {
+  fcb: { label: "FCB Account", color: "#6abc46", rule: "We own the relationship" },
+  buddy: { label: "Buddy Account", color: "#5aa9f0", rule: "Shared account we review with the distributor rep" },
+  distributor: { label: "Distributor Account", color: "#a3a3a3", rule: "The distributor owns it" },
+  cadence: { label: "Cadence Account", color: "#d08cf0", rule: "Never on permanently, buys a few kegs a year when asked" },
+  former: { label: "Former distributor", color: "#7d8782", rule: "Bought through a distributor we no longer use" },
+};
+export const OWNER_ORDER: OwnerShown[] = ["fcb", "buddy", "distributor", "cadence", "former"];
+export const OWNER_CHOICES: OwnerType[] = ["fcb", "buddy", "distributor", "cadence"];
+export const TIERS: Tier[] = ["A", "B", "C"];
+export const HANDLED_LABEL: Record<HandledBy, string> = {
+  fcb_rep: "FCB Rep",
+  distributor_rep: "Distributor Rep",
+  back_office: "Back Office",
+};
+export const HANDLED_CHOICES: HandledBy[] = ["fcb_rep", "distributor_rep", "back_office"];
+// The old Zoho SOP's follow-up tags.
+export const TAGS: { key: string; rule: string }[] = [
+  { key: "SCRUB", rule: "Missing or unverified contact info — needs cleanup" },
+  { key: "NOFOLLOWUP", rule: "Not worth pursuing for now" },
+  { key: "POLITIC", rule: "Needs approval before anyone engages" },
+  { key: "EXEC", rule: "Needs an executive follow-up" },
+  { key: "COMMITTED", rule: "Verbal or written purchase commitment" },
+  { key: "POTENTIAL", rule: "Interested, not committed yet" },
+  { key: "SOCIAL", rule: "Social media engagement" },
+  { key: "EMAIL ONLY", rule: "Passive updates only" },
+];
+
+export function parseTags(tags: string | null | undefined): string[] {
+  return (tags ?? "")
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+export function joinTags(tags: string[]): string {
+  return TAGS.map((t) => t.key).filter((k) => tags.includes(k)).join(",");
+}
+
+// What the page shows as the owner: Former distributor wins (automatic),
+// then whatever was set, else Distributor.
+export function ownerShown(stage: AccountStage, owner: OwnerType | null | undefined): OwnerShown {
+  if (stage === "former") return "former";
+  return owner ?? "distributor";
 }

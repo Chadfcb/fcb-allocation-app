@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getProfile } from "@/lib/getProfile";
 import { createAdminClient } from "@/lib/supabase/admin";
-import type { ImportAccount, ImportContact, ImportSale } from "@/lib/salesAccounts";
+import type { ImportAccount, ImportBuddy, ImportCheckin, ImportContact, ImportSale } from "@/lib/salesAccounts";
 
 // Sales > Accounts import (added 2026-10-07). Admins only. The page reads the
 // import file in the browser and sends it here in pieces:
@@ -9,6 +9,12 @@ import type { ImportAccount, ImportContact, ImportSale } from "@/lib/salesAccoun
 //   { action: "accounts", rows: ImportAccount[] }
 //   { action: "sales", rows: ImportSale[] }
 //   { action: "contacts", rows: ImportContact[] }
+//   { action: "buddies", rows: ImportBuddy[] }  — target-list accounts start as Buddy
+//       accounts. Only adds a classification where the account has none yet;
+//       never changes one someone already set (classifications survive re-imports).
+//   { action: "checkins_clear" }                 — remove previously IMPORTED check-ins
+//       (source "Sales Ops: …" / "Lilypad: …"); check-ins logged in the app stay
+//   { action: "checkins", rows: ImportCheckin[] }
 //   { action: "finish", as_of: "YYYY-MM-DD" }  — fill each account's summary + save the as-of date
 export const maxDuration = 60;
 
@@ -79,6 +85,51 @@ export async function POST(req: NextRequest) {
       source,
     }));
     const { error } = await admin.from("sales_account_contacts").insert(rows);
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true, count: rows.length });
+  }
+
+  if (body.action === "buddies") {
+    const rows = ((body.rows ?? []) as ImportBuddy[]).map(([outlet, list, repName, repPhone, repEmail]) => ({
+      outlet_id: String(outlet),
+      owner_type: "buddy",
+      buddy_list: list,
+      buddy_rep_name: repName,
+      buddy_rep_phone: repPhone,
+      buddy_rep_email: repEmail,
+      updated_by: profile.id,
+    }));
+    const { error } = await admin
+      .from("sales_account_class")
+      .upsert(rows, { onConflict: "outlet_id", ignoreDuplicates: true });
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ ok: true, count: rows.length });
+  }
+
+  if (body.action === "checkins_clear") {
+    for (const prefix of ["Sales Ops:%", "Lilypad:%"]) {
+      const { error } = await admin.from("sales_account_checkins").delete().like("source", prefix);
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ ok: true });
+  }
+
+  if (body.action === "checkins") {
+    const rows = ((body.rows ?? []) as ImportCheckin[])
+      .filter((c) => cleanDate(c[1]))
+      .map(([outlet, date, rep, activity, outcome, notes, brands, contact, source]) => ({
+        outlet_id: String(outlet),
+        checkin_date: date,
+        rep,
+        activity,
+        outcome,
+        notes,
+        brands,
+        contact,
+        source,
+        created_by: profile.id,
+      }));
+    const { error } = await admin.from("sales_account_checkins").insert(rows);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     return NextResponse.json({ ok: true, count: rows.length });
   }
