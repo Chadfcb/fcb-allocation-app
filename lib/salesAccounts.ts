@@ -7,7 +7,7 @@
 // the last buy date in the imported data, not today — so an old import
 // never makes every account look lost.
 
-export type AccountStage = "active" | "new" | "plost" | "lost" | "lead" | "former";
+export type AccountStage = "active" | "new" | "plost" | "lost" | "prospect" | "lead" | "former";
 
 export interface SalesAccountRow {
   outlet_id: string;
@@ -89,10 +89,15 @@ export const STAGE_INFO: Record<AccountStage, { label: string; color: string; ru
   new: { label: "New", color: "#5aa9f0", rule: "Bought in the last 60 days, in 1–2 of the last 6 months" },
   plost: { label: "Potential lost", color: "#f0a63c", rule: "61–90 days since the last buy" },
   lost: { label: "Lost", color: "#ef6a55", rule: "90+ days since the last buy" },
-  lead: { label: "Lead", color: "#a08cf0", rule: "In the account list, never bought" },
+  // Lead vs Prospect (Chad, 2026-10-07): a Lead is any account in the full
+  // account list that has never bought and we know nothing about yet; once we
+  // have contact info for it or someone checks in with it, it becomes a
+  // Prospect (automatic).
+  prospect: { label: "Prospect", color: "#e0c45a", rule: "Never bought, but we have contact info or someone has checked in" },
+  lead: { label: "Lead", color: "#a08cf0", rule: "Never bought, no contact info, never visited or contacted" },
   former: { label: "Former distributor", color: "#7d8782", rule: "Last bought through a distributor we no longer use" },
 };
-export const STAGE_ORDER: AccountStage[] = ["active", "new", "plost", "lost", "lead", "former"];
+export const STAGE_ORDER: AccountStage[] = ["active", "new", "plost", "lost", "prospect", "lead", "former"];
 
 export function repFor(distributor: string | null): string | null {
   return distributor ? (REP_BY_DISTRIBUTOR[distributor] ?? null) : null;
@@ -107,9 +112,15 @@ export function daysBetween(fromIso: string, toIso: string): number {
   return Math.round((Date.parse(toIso + "T00:00:00Z") - Date.parse(fromIso + "T00:00:00Z")) / DAY_MS);
 }
 
-export function stageFor(a: Pick<SalesAccountRow, "distributor" | "last_buy_date" | "buy_months_6">, asOf: string): AccountStage {
+// hasInfo = the account has at least one contact on file or at least one
+// check-in (that's what turns a Lead into a Prospect).
+export function stageFor(
+  a: Pick<SalesAccountRow, "distributor" | "last_buy_date" | "buy_months_6">,
+  asOf: string,
+  hasInfo = false,
+): AccountStage {
   if (isFormerDistributor(a.distributor)) return "former";
-  if (!a.last_buy_date) return "lead";
+  if (!a.last_buy_date) return hasInfo ? "prospect" : "lead";
   const days = daysBetween(a.last_buy_date, asOf);
   if (days <= 60) return a.buy_months_6 >= 3 ? "active" : "new";
   if (days <= 90) return "plost";

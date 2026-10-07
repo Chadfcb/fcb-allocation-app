@@ -369,7 +369,7 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
     if (!asOf) return [];
     return rows.map((r) => {
       const lifetime = Number(r.lifetime_ce) || 0;
-      const stage = stageFor({ ...r, buy_months_6: Number(r.buy_months_6) || 0 }, asOf);
+      const stage = stageFor({ ...r, buy_months_6: Number(r.buy_months_6) || 0 }, asOf, (Number(r.contact_count) || 0) > 0 || lastCheckins.has(r.outlet_id));
       const rep = repFor(r.distributor);
       const repKey = rep ?? (r.distributor && NO_REP_DISTRIBUTORS.includes(r.distributor) ? NO_REP_KEY : null);
       const cls = classes.get(r.outlet_id) ?? null;
@@ -419,12 +419,13 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
           const n = (s: AccountStage) => list.filter((a) => a.stage === s).length;
           return {
             ...r,
-            buying: list.filter((a) => a.stage !== "lead" && a.stage !== "former").length,
+            buying: list.filter((a) => a.stage !== "lead" && a.stage !== "prospect" && a.stage !== "former").length,
             active: n("active"),
             fresh: n("new"),
             plost: n("plost"),
             lost: n("lost"),
             big: list.filter((a) => a.big).length,
+            prospects: n("prospect"),
             leads: n("lead"),
           };
         },
@@ -625,7 +626,7 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
           </div>
 
           {!isC && (
-          <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 xl:grid-cols-6">
+          <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 xl:grid-cols-7">
             {STAGE_ORDER.map((s) => {
               const on = filters.stage === s;
               const c = STAGE_INFO[s].color;
@@ -692,7 +693,7 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
           <div className="overflow-x-auto rounded-lg border border-neutral-800">
             <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-neutral-800 bg-neutral-900 px-3 py-2">
               <span className="text-sm font-semibold text-neutral-100">By rep</span>
-              <span className="text-xs text-neutral-500">Click a rep to filter the list. Leads and former-distributor accounts aren&apos;t counted as buying.</span>
+              <span className="text-xs text-neutral-500">Click a rep to filter the list. Leads, prospects and former-distributor accounts aren&apos;t counted as buying.</span>
             </div>
             <table className="w-full text-sm">
               <thead>
@@ -704,6 +705,7 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
                   <th className="px-3 py-2 text-right font-semibold">Potential lost</th>
                   <th className="px-3 py-2 text-right font-semibold">Lost</th>
                   <th className="px-3 py-2 text-right font-semibold">Lost big</th>
+                  <th className="px-3 py-2 text-right font-semibold">Prospects</th>
                   <th className="px-3 py-2 text-right font-semibold">Leads</th>
                 </tr>
               </thead>
@@ -721,7 +723,7 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
                     <td className="whitespace-nowrap px-3 py-2 text-neutral-100">
                       <span className="font-semibold">{r.name}</span> <span className="text-xs text-neutral-500">{r.territory}</span>
                     </td>
-                    {[r.buying, r.active, r.fresh, r.plost, r.lost, r.big, r.leads].map((v, i) => (
+                    {[r.buying, r.active, r.fresh, r.plost, r.lost, r.big, r.prospects, r.leads].map((v, i) => (
                       <td key={i} className="px-3 py-2 text-right tabular-nums text-neutral-200">
                         {fmt(v)}
                       </td>
@@ -1147,7 +1149,9 @@ function AccountPanel({
   }, [sales]);
 
   const why = (() => {
-    if (a.stage === "lead") return "In the account list with no buys in the sales history.";
+    if (a.stage === "lead") return "In the account list with no buys in the sales history. No contact info or check-ins yet; it becomes a Prospect as soon as it gets either.";
+    if (a.stage === "prospect")
+      return "No buys in the sales history yet, but we have contact info or someone has checked in, so it's a Prospect.";
     if (a.stage === "former")
       return `Last bought through ${a.distributor ?? "an unknown distributor"}, which isn't a current FCB distributor. History is kept, with no rep or reminders.`;
     let s = `Last buy ${fdate(a.last_buy_date)}, ${fmt(a.daysDark)} days before ${fdate(asOf)}. Bought in ${a.buy_months_6} of the last 6 months.`;
