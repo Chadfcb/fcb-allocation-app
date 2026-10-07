@@ -115,6 +115,7 @@ const DEFAULT_FILTERS: Filters = {
 type ClassPatch = Partial<Pick<SalesAccountClassRow, "owner_type" | "tier" | "handled_by" | "tags">>;
 const CLASS_FIELDS: (keyof ClassPatch)[] = ["owner_type", "tier", "handled_by", "tags"];
 const STORAGE_KEY = "fcb-sales-accounts-filters";
+const VIEW_KEY = "fcb-sales-accounts-view";
 const PAGE_SIZE = 100;
 const FETCH_SIZE = 1000;
 const COLUMNS =
@@ -220,6 +221,28 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkMsg, setBulkMsg] = useState<string | null>(null);
   const closePanel = useCallback(() => setOpenId(null), []);
+  // Two views (Chad, 2026-10-07: "lets put the classification part in its own
+  // area in there, its making the main screen too cluttered"):
+  //   overview  — stages, by-rep table, sales columns (the original screen)
+  //   classify  — owner / tier / handled by / tags / last check-in + bulk edit
+  const [view, setView] = useState<"overview" | "classify">("overview");
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(VIEW_KEY) === "classify") setView("classify");
+    } catch {
+      // ignore
+    }
+  }, []);
+  const switchView = (v: "overview" | "classify") => {
+    setView(v);
+    setPage(0);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      // ignore
+    }
+  };
+  const isC = view === "classify";
 
   // Remembered filters (per browser)
   useEffect(() => {
@@ -421,15 +444,15 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
     let list = accounts.filter(
       (a) =>
         (!f.stage || a.stage === f.stage) &&
-        (!f.owner || a.owner === f.owner) &&
-        (!f.tier || (f.tier === "none" ? !a.tier : a.tier === f.tier)) &&
-        (!f.handled || (f.handled === "none" ? !a.handled : a.handled === f.handled)) &&
-        (!f.tag || (f.tag === "none" ? a.tags.length === 0 : a.tags.includes(f.tag))) &&
+        (!isC || !f.owner || a.owner === f.owner) &&
+        (!isC || !f.tier || (f.tier === "none" ? !a.tier : a.tier === f.tier)) &&
+        (!isC || !f.handled || (f.handled === "none" ? !a.handled : a.handled === f.handled)) &&
+        (!isC || !f.tag || (f.tag === "none" ? a.tags.length === 0 : a.tags.includes(f.tag))) &&
         (!f.rep || (f.rep === "__unassigned" ? !a.repKey : a.repKey === f.rep)) &&
         (!f.dist || a.distributor === f.dist) &&
-        (!f.prem || a.premise === f.prem) &&
-        (!f.big || a.big) &&
-        (!f.hasContact || a.contact_count > 0) &&
+        (isC || !f.prem || a.premise === f.prem) &&
+        (isC || !f.big || a.big) &&
+        (isC || !f.hasContact || a.contact_count > 0) &&
         (!q || a.search.includes(q)),
     );
     const order = STAGE_ORDER;
@@ -461,7 +484,7 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
       return (a > b ? 1 : a < b ? -1 : 0) * dir;
     });
     return list;
-  }, [accounts, filters, query]);
+  }, [accounts, filters, query, isC]);
 
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const curPage = Math.min(page, pages - 1);
@@ -581,6 +604,27 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
 
       {accounts.length > 0 && (
         <>
+          <div role="tablist" aria-label="Accounts view" className="flex gap-1 border-b border-neutral-800">
+            {(
+              [
+                ["overview", "Overview"],
+                ["classify", "Classification"],
+              ] as const
+            ).map(([v, label]) => (
+              <button
+                key={v}
+                type="button"
+                role="tab"
+                aria-selected={view === v}
+                onClick={() => switchView(v)}
+                className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${view === v ? "border-[#6abc46] text-neutral-100" : "border-transparent text-neutral-500 hover:text-neutral-200"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {!isC && (
           <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 xl:grid-cols-6">
             {STAGE_ORDER.map((s) => {
               const on = filters.stage === s;
@@ -602,7 +646,9 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
               );
             })}
           </div>
+          )}
 
+          {isC && (
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-semibold uppercase tracking-wider text-neutral-500">Owner</span>
             {OWNER_ORDER.map((o) => {
@@ -640,7 +686,9 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
               );
             })}
           </div>
+          )}
 
+          {!isC && (
           <div className="overflow-x-auto rounded-lg border border-neutral-800">
             <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-neutral-800 bg-neutral-900 px-3 py-2">
               <span className="text-sm font-semibold text-neutral-100">By rep</span>
@@ -683,6 +731,7 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
               </tbody>
             </table>
           </div>
+          )}
 
           <div className="flex flex-wrap items-center gap-2">
             <input
@@ -724,6 +773,7 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
                 </option>
               ))}
             </select>
+            {!isC && (
             <select
               id="accounts-prem"
               value={filters.prem}
@@ -734,6 +784,9 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
               <option value="On">On premise</option>
               <option value="Off">Off premise</option>
             </select>
+            )}
+            {isC && (
+              <>
             <select id="accounts-owner" value={filters.owner ?? ""} onChange={(e) => updateFilters({ owner: (e.target.value || null) as OwnerShown | null })} className="rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100">
               <option value="">All owners</option>
               {OWNER_ORDER.map((o) => (
@@ -769,6 +822,10 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
               ))}
               <option value="none">No tags</option>
             </select>
+              </>
+            )}
+            {!isC && (
+              <>
             <label className="flex cursor-pointer items-center gap-1.5 text-sm text-neutral-400">
               <input id="accounts-big" type="checkbox" checked={filters.big} onChange={(e) => updateFilters({ big: e.target.checked })} className="accent-[#6abc46]" />
               Lost big only ({BIG_LOST_CE}+ CE)
@@ -783,6 +840,8 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
               />
               Has a contact
             </label>
+              </>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -795,7 +854,7 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
             </button>
           </div>
 
-          {selected.size > 0 && (
+          {isC && selected.size > 0 && (
             <BulkBar
               count={selected.size}
               message={bulkMsg}
@@ -824,35 +883,44 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-neutral-800">
-                    <th className="sticky top-0 z-[1] w-8 bg-neutral-950 px-3 py-2">
-                      <input
-                        type="checkbox"
-                        aria-label="Select every account on this page"
-                        checked={pageAllSelected}
-                        onChange={togglePage}
-                        className="accent-[#6abc46]"
-                      />
-                    </th>
+                    {isC && (
+                      <th className="sticky top-0 z-[1] w-8 bg-neutral-950 px-3 py-2">
+                        <input
+                          type="checkbox"
+                          aria-label="Select every account on this page"
+                          checked={pageAllSelected}
+                          onChange={togglePage}
+                          className="accent-[#6abc46]"
+                        />
+                      </th>
+                    )}
                     {th("name", "Account")}
                     {th("distributor", "Distributor")}
                     {th("rep", "Rep")}
                     {th("stage", "Stage")}
-                    {th("owner", "Owner")}
-                    {th("tier", "Tier")}
-                    {th("handled", "Handled by")}
-                    {th("lastCheckin", "Last check-in", true)}
-                    {th("last_buy_date", "Last buy", true)}
-                    {th("daysDark", "Days dark", true)}
-                    {th("ce_12mo", "Last 12 mo CE", true)}
-                    {th("lifetime_ce", "Lifetime CE", true)}
-                    {th("premise", "Premise")}
-                    <th className="sticky top-0 z-[1] bg-neutral-950 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Tags</th>
+                    {isC ? (
+                      <>
+                        {th("owner", "Owner")}
+                        {th("tier", "Tier")}
+                        {th("handled", "Handled by")}
+                        {th("lastCheckin", "Last check-in", true)}
+                        <th className="sticky top-0 z-[1] bg-neutral-950 px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wider text-neutral-500">Tags</th>
+                      </>
+                    ) : (
+                      <>
+                        {th("last_buy_date", "Last buy", true)}
+                        {th("daysDark", "Days dark", true)}
+                        {th("ce_12mo", "Last 12 mo CE", true)}
+                        {th("lifetime_ce", "Lifetime CE", true)}
+                        {th("premise", "Premise")}
+                      </>
+                    )}
                   </tr>
                 </thead>
                 <tbody>
                   {shown.length === 0 ? (
                     <tr>
-                      <td colSpan={15} className="px-3 py-8 text-center text-neutral-500">
+                      <td colSpan={isC ? 10 : 9} className="px-3 py-8 text-center text-neutral-500">
                         No accounts match these filters. Clear a filter to see more.
                       </td>
                     </tr>
@@ -867,15 +935,17 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
                         }}
                         className="cursor-pointer border-b border-neutral-800 last:border-b-0 hover:bg-neutral-900"
                       >
-                        <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
-                          <input
-                            type="checkbox"
-                            aria-label={`Select ${a.name}`}
-                            checked={selected.has(a.outlet_id)}
-                            onChange={() => toggleSelect(a.outlet_id)}
-                            className="accent-[#6abc46]"
-                          />
-                        </td>
+                        {isC && (
+                          <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              aria-label={`Select ${a.name}`}
+                              checked={selected.has(a.outlet_id)}
+                              onChange={() => toggleSelect(a.outlet_id)}
+                              className="accent-[#6abc46]"
+                            />
+                          </td>
+                        )}
                         <td className="max-w-[300px] px-3 py-2">
                           <div className="truncate font-medium text-neutral-100">{a.name}</div>
                           <div className="truncate text-xs text-neutral-500">{[a.city, a.zip].filter(Boolean).join(" · ") || "—"}</div>
@@ -886,12 +956,26 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
                           <StagePill stage={a.stage} />
                           {a.big && <BigTag />}
                         </td>
+                        {isC ? (
+                          <>
                         <td className="whitespace-nowrap px-3 py-2">
                           <OwnerPill owner={a.owner} />
                         </td>
                         <td className="whitespace-nowrap px-3 py-2 font-semibold text-neutral-100">{a.tier ?? <span className="font-normal text-neutral-600">—</span>}</td>
                         <td className="whitespace-nowrap px-3 py-2 text-neutral-200">{a.handled ? HANDLED_LABEL[a.handled] : <span className="text-neutral-600">—</span>}</td>
                         <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-neutral-200">{a.lastCheckin ? fdate(a.lastCheckin) : <span className="text-neutral-600">—</span>}</td>
+                        <td className="whitespace-nowrap px-3 py-2">
+                          <div className="flex gap-1">
+                            {a.tags.map((t) => (
+                              <span key={t} className="rounded border border-neutral-700 px-1.5 py-px text-[10px] font-semibold tracking-wide text-neutral-300">
+                                {t}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                          </>
+                        ) : (
+                          <>
                         <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-neutral-200">
                           {fdate(a.last_buy_date)}
                           {a.report_buy_date && (!a.last_buy_date || a.report_buy_date > a.last_buy_date) && (
@@ -904,15 +988,8 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
                         <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-neutral-200">{a.last_buy_date ? fmt(a.ce_12mo) : "—"}</td>
                         <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-neutral-200">{a.last_buy_date ? fmt(a.lifetime_ce) : "—"}</td>
                         <td className="whitespace-nowrap px-3 py-2 text-neutral-300">{a.premise ?? "—"}</td>
-                        <td className="whitespace-nowrap px-3 py-2">
-                          <div className="flex gap-1">
-                            {a.tags.map((t) => (
-                              <span key={t} className="rounded border border-neutral-700 px-1.5 py-px text-[10px] font-semibold tracking-wide text-neutral-300">
-                                {t}
-                              </span>
-                            ))}
-                          </div>
-                        </td>
+                          </>
+                        )}
                       </tr>
                     ))
                   )}
@@ -920,7 +997,9 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
               </table>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-3 border-t border-neutral-800 bg-neutral-900/50 px-3 py-2 text-sm">
-              <span className="mr-auto text-neutral-400">{fmt(filtered.length)} accounts</span>
+              <span className="mr-auto text-neutral-400">
+                {fmt(filtered.length)} {filtered.length === 1 ? "account" : "accounts"}
+              </span>
               <button
                 type="button"
                 disabled={curPage === 0}
@@ -942,10 +1021,17 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
               </button>
             </div>
           </div>
+          {!isC && (
           <p className="text-xs text-neutral-500">
             CE = case equivalents · Days dark = days since the last buy, as of {fdate(asOf)} ·{" "}
             <span className="text-sky-400">●</span> = a later buy shows up in a Sales Ops report
           </p>
+          )}
+          {isC && (
+            <p className="text-xs text-neutral-500">
+              Tick accounts to change several at once. Click an account to change it on its own. Every change is in the Audit Log.
+            </p>
+          )}
         </>
       )}
 
