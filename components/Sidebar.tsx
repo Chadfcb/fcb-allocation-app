@@ -103,6 +103,8 @@ const NEW_SIDEBAR_IDS: string[] = [
   // 2026-09-05, per Chad.
   "/sales/chain-authorizations",
   "/sales/chain-mandates",
+  // Accounts — new Sales sub-link, added 2026-10-07, per Chad + Art.
+  "/sales/accounts",
   // Tanks — new 3D tank view under MAIN, right below Dashboard (2026-10-03),
   // per Chad.
   "/tanks",
@@ -157,6 +159,10 @@ const OPERATIONS_LINKS: { href: string; label: string; section: SectionKey }[] =
 // Pricing desktop app is folded in — Price List first, then Margin Analysis,
 // Cost Per Case, and Contribution Margin.
 const SALES_LINKS: { href: string; label: string; section: SectionKey }[] = [
+  // Accounts — added 2026-10-07, per Chad + Art (sales system Feature 1).
+  // First in the Sales list since it's the base the rest of the sales
+  // system builds on.
+  { href: "/sales/accounts", label: "Accounts", section: "accounts" },
   { href: "/sales/pricing", label: "Price List", section: "price_list" },
   { href: "/sales/margin-analysis", label: "Margin Analysis", section: "margin_analysis" },
   { href: "/sales/cost-per-case", label: "Cost Per Case", section: "cost_per_case" },

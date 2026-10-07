@@ -35,6 +35,7 @@ export type SectionKey =
   | "tasks"
   | "chain_authorizations"
   | "chain_mandates"
+  | "accounts"
   | "football_pos"
   | "tanks";
 
@@ -141,6 +142,11 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
       // item in this group.
       { key: "chain_authorizations", label: "Chain Authorizations" },
       { key: "chain_mandates", label: "Chain Mandates" },
+      // Accounts — added 2026-10-07, per Chad + Art (sales system Feature 1:
+      // every account, its stage, rep, purchase history and contacts). Rides
+      // along with Sales access like the chain pages. RLS:
+      // has_section(auth.uid(), 'accounts') in sql/sales_accounts.sql.
+      { key: "accounts", label: "Accounts" },
     ],
   },
   {

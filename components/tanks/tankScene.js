@@ -24,10 +24,13 @@
 // 500-lid chute is drawn, continuing the back-row line right of the kegs.
 // COUNT WINDOWS (2026-10-06, claude/tanks-count-windows-plan.md): one always-visible window
 // per item above its pallets, all on one line in the air, facing the camera.
+// LABEL RACK (2026-10-06, claude/tanks-label-shelf-plan.md): `labels` = [{ name, size: 'c19' |
+// 'c16' | 'c12', onHand }] from Label Inventory; plain steel rack, rolls of 2,000 lying flat,
+// one stack per product; one window per shelf listing every brand + its labels.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
-export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, kegs, cans, lids }){
+export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, kegs, cans, lids, labels }){
   const FONT = font || 'system-ui, sans-serif';
   const MONO = mono || 'ui-monospace, "SFMono-Regular", Consolas, monospace';
   let disposed = false;
@@ -1190,6 +1193,117 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
     if (body){ body.instanceMatrix.needsUpdate = ends.instanceMatrix.needsUpdate = true; }
   }
 
+
+  // ---------- Label rolls on a pallet rack (Chad, 2026-10-06 — claude/tanks-label-shelf-plan.md) ----------
+  // Plain steel rack (steel uprights, beams and shelf decks — no paint colors, Chad) right of the lid pallet: top shelf
+  // 19.2oz, middle 16oz, bottom 12oz. One stack per product, rolls lying flat (like Chad's photo:
+  // wide, squat roll, black plastic core with spokes, wound stock showing as rings on top).
+  // 2,000 labels per roll; On Hand = individual labels → full rolls + one smaller part roll (its
+  // diameter shrinks with what's left, like a used roll). Product name tag on the beam under each
+  // stack. Counts = Inventory & Allocation → Label Inventory On Hand (live in the app).
+  const LBL_PER_ROLL = 2000, ROLL_R = 6.5/12, CORE_R = 1.75/12;
+  const LBL_SHELVES = [   // top → bottom
+    { key:'c19', label:'19.2oz Labels', h:7.1/12, deckY:5.55 },
+    { key:'c16', label:'16oz Labels',   h:5.9/12, deckY:2.9 },
+    { key:'c12', label:'12oz Labels',   h:4.6/12, deckY:0.5 },
+  ];
+  const lblRows = (Array.isArray(labels) ? labels : []).map(r => ({ name: String(r.name || ''), size: r.size, onHand: Math.max(0, Math.floor(Number(r.onHand) || 0)) }))
+    .filter(r => r.name && LBL_SHELVES.some(s => s.key === r.size));
+  const STACK_W = ROLL_R*2 + 0.35, RACK_D = 3.5, RACK_TOP = 8.2, BEAM_H = 0.34;
+  const perShelf = LBL_SHELVES.map(s => lblRows.filter(r => r.size === s.key));
+  const rackSlots = Math.max(6, ...perShelf.map(a => a.length));
+  const MID_GAP = rackSlots*STACK_W + 0.6 > 9 ? 0.45 : 0;   // room for the middle upright between bays
+  const RACK_W = rackSlots*STACK_W + 0.6 + MID_GAP;
+  const slotX = i => -RACK_W/2 + 0.3 + STACK_W/2 + i*STACK_W + (MID_GAP && i >= Math.ceil(rackSlots/2) ? MID_GAP : 0);
+  const rackRight = lidPallets.length ? Math.max(...lidPallets.map(p => p.x)) + LPAL_X/2 : canStart;
+  const rack = { x: rackRight + 4.0 + RACK_W/2, z: (68 - CZ)*FT_PER_PX, w: RACK_W };
+  const lblStacks = [];
+  if (labels){
+    const lin = h => new THREE.Color(h).convertSRGBToLinear();
+    // plain steel everywhere (Chad: "steel frame, steel shelf, get rid of all those colors")
+    const frameSteel = new THREE.MeshStandardMaterial({ color: lin('#9aa09d'), roughness: 0.42, metalness: 0.85, envMap: steelEnv, envMapIntensity: 0.6 });
+    const beamSteel = new THREE.MeshStandardMaterial({ color: lin('#a7aca9'), roughness: 0.38, metalness: 0.85, envMap: steelEnv, envMapIntensity: 0.6 });
+    const deckMat = new THREE.MeshStandardMaterial({ color: lin('#8e9491'), roughness: 0.5, metalness: 0.8, envMap: steelEnv, envMapIntensity: 0.5 });
+    const add = (mat, w, h, d, x, y, z) => { const m = new THREE.Mesh(boardGeo, mat); m.scale.set(w, h, d); m.position.set(x, y, z); scene.add(m); return m; };
+    // uprights (one frame at each end + one in the middle when wide), with cross braces
+    const frames = MID_GAP ? [-RACK_W/2, -RACK_W/2 + 0.3 + Math.ceil(rackSlots/2)*STACK_W + MID_GAP/2, RACK_W/2] : [-RACK_W/2, RACK_W/2];
+    for (const fx of frames){
+      for (const fz of [-RACK_D/2, RACK_D/2]) add(frameSteel, 0.25, RACK_TOP, 0.18, rack.x + fx, RACK_TOP/2, rack.z + fz);
+      for (let yb = 0.3; yb + 1.6 <= RACK_TOP - 0.3; yb += 1.6){   // braces stay inside the frame
+        const br = add(frameSteel, 0.06, Math.hypot(RACK_D, 1.6), 0.06, rack.x + fx, yb + 0.8, rack.z); br.rotation.x = Math.atan2(RACK_D, 1.6);
+      }
+      add(frameSteel, 0.4, 0.05, RACK_D + 0.3, rack.x + fx, 0.025, rack.z);   // foot plate
+    }
+    // each level: front + back orange step beams and a wood deck
+    for (const s of LBL_SHELVES){
+      for (const bz of [-RACK_D/2, RACK_D/2]) add(beamSteel, RACK_W, BEAM_H, 0.14, rack.x, s.deckY - BEAM_H/2, rack.z + bz);
+      add(deckMat, RACK_W - 0.1, 0.06, RACK_D, rack.x, s.deckY + 0.03, rack.z);   // steel shelf deck
+    }
+    add(beamSteel, RACK_W, BEAM_H, 0.14, rack.x, RACK_TOP - 0.3, rack.z + RACK_D/2);
+    add(beamSteel, RACK_W, BEAM_H, 0.14, rack.x, RACK_TOP - 0.3, rack.z - RACK_D/2);
+    const sh = new THREE.Mesh(new THREE.PlaneGeometry(RACK_W + 2, RACK_D + 2), new THREE.MeshBasicMaterial({ map:shadowTex, transparent:true, depthWrite:false, opacity:0.7 }));
+    sh.rotation.x = -Math.PI/2; sh.position.set(rack.x, 0.03, rack.z); scene.add(sh);
+
+    // roll pieces (shared): side band (printed stock, one color per product), top/bottom faces
+    // (liner rings), black core with spokes
+    function ringsTex(){
+      const N = 256, c = document.createElement('canvas'); c.width = c.height = N; const g = c.getContext('2d');
+      g.fillStyle = '#9d978d'; g.fillRect(0, 0, N, N);
+      for (let r = 20; r < N/2; r += 1.5){ g.strokeStyle = 'rgba(' + (Math.random() < 0.5 ? '60,58,54' : '225,222,214') + ',' + (0.12 + Math.random()*0.18) + ')'; g.lineWidth = 1; g.beginPath(); g.arc(N/2, N/2, r, 0, Math.PI*2); g.stroke(); }
+      const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; return t;
+    }
+    const faceTex = ringsTex();
+    const faceMat = new THREE.MeshStandardMaterial({ map: faceTex, roughness: 0.35, metalness: 0.05 });
+    const coreMat = new THREE.MeshStandardMaterial({ color: lin('#141515'), roughness: 0.6 });
+    const stockMat = new THREE.MeshStandardMaterial({ color: lin('#b9b2a6'), roughness: 0.4, metalness: 0.05 });   // plain label stock, no colors (Chad)
+    const bandMat = () => stockMat;
+    const sideGeo = new THREE.CylinderGeometry(1, 1, 1, 40, 1, true);
+    const faceGeo = new THREE.RingGeometry(CORE_R/ROLL_R, 1, 40, 1); faceGeo.rotateX(-Math.PI/2);
+    const coreGeo = new THREE.CylinderGeometry(CORE_R, CORE_R, 1, 20, 1, true);
+    const spokeGeo = new THREE.BoxGeometry(CORE_R*2*0.92, 0.04, 0.02);
+    function makeRoll(name, h, labelsOn){
+      const g = new THREE.Group();
+      const frac = labelsOn/LBL_PER_ROLL, R = Math.sqrt(CORE_R*CORE_R + (ROLL_R*ROLL_R - CORE_R*CORE_R)*frac);   // used roll = smaller
+      const side = new THREE.Mesh(sideGeo, bandMat(name)); side.scale.set(R, h*0.98, R); side.position.y = h/2; g.add(side);
+      for (const y of [0.005, h - 0.005]){ const f = new THREE.Mesh(faceGeo, faceMat); f.scale.set(R, 1, R); f.position.y = y; if (y < h/2) f.rotation.x = Math.PI; g.add(f); }
+      const core = new THREE.Mesh(coreGeo, coreMat); core.scale.y = h; core.position.y = h/2; g.add(core);
+      coreMat.side = THREE.DoubleSide;
+      for (let k = 0; k < 4; k++){ const sp = new THREE.Mesh(spokeGeo, coreMat); sp.rotation.y = k*Math.PI/4; sp.position.y = h - 0.03; g.add(sp); }
+      return g;
+    }
+    // name tag on the front beam under each stack
+    function tagTex(name, n){
+      const c = document.createElement('canvas'); c.width = 256; c.height = 80; const g = c.getContext('2d');
+      g.fillStyle = '#f4f1e8'; g.fillRect(0, 0, 256, 80);
+      g.fillStyle = '#1b1d1c'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      let fs = 30; g.font = '700 ' + fs + 'px ' + FONT; while (g.measureText(name).width > 240 && fs > 14){ fs -= 2; g.font = '700 ' + fs + 'px ' + FONT; }
+      g.fillText(name, 128, 28);
+      g.font = '500 24px ' + MONO; g.fillStyle = '#4a4f4c'; g.fillText(n.toLocaleString('en-US'), 128, 60);
+      const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; return t;
+    }
+    LBL_SHELVES.forEach((s, si) => {
+      const rows = perShelf[si];
+      const clear = (si === 0 ? RACK_TOP - 0.3 - BEAM_H : LBL_SHELVES[si - 1].deckY - BEAM_H) - (s.deckY + 0.06) - 0.1;
+      const maxH = Math.max(1, Math.floor(clear/s.h));
+      rows.forEach((r, i) => {
+        const x = rack.x + slotX(i), z = rack.z + 0.2;
+        const full = Math.floor(r.onHand/LBL_PER_ROLL), part = r.onHand % LBL_PER_ROLL, rolls = full + (part ? 1 : 0);
+        for (let k = 0; k < rolls; k++){
+          const lv = k % maxH, col = Math.floor(k/maxH);       // too tall for the shelf → next to it, behind
+          const roll = makeRoll(r.name, s.h, k < full ? LBL_PER_ROLL : part);
+          roll.position.set(x, s.deckY + 0.06 + lv*s.h, z - col*(ROLL_R*2 + 0.1)); scene.add(roll);
+        }
+        const tag = new THREE.Mesh(new THREE.PlaneGeometry(STACK_W - 0.12, 0.3), new THREE.MeshBasicMaterial({ map: tagTex(r.name, r.onHand), toneMapped: false }));
+        tag.position.set(x, s.deckY - BEAM_H/2, rack.z + RACK_D/2 + 0.08); scene.add(tag);
+        const info = { isPallet:true, isLabels:true, name: r.name, shelf: s, onHand: r.onHand, full, part,
+          box: { x, y: s.deckY + 0.06 + Math.max(1, Math.min(rolls, maxH))*s.h/2, z, w: STACK_W - 0.05, h: Math.max(1, Math.min(rolls, maxH))*s.h + 0.1, d: RACK_D - 0.2 } };
+        const pick = new THREE.Mesh(boardGeo, pickMat); pick.scale.set(info.box.w, info.box.h, info.box.d); pick.position.set(info.box.x, info.box.y, info.box.z);
+        pick.userData.pallet = info; scene.add(pick); pickables.push(pick);
+        lblStacks.push(info);
+      });
+    });
+  }
+
   // ---------- Count windows over the pallets (Chad, 2026-10-06) ----------
   // One always-visible window per item, floating above that item's pallets and always facing
   // the camera, showing the total On Hand — so nobody has to hover/click to see it. Same
@@ -1217,6 +1331,12 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
     tagSpecs.push({ label: '202 LOE Ends (Lids)', count: n, unit: n === 1 ? 'lid' : 'lids', sub: n ? fmtN(ch) + (ch === 1 ? ' chute' : ' chutes') : 'Empty pallet',
       x: (Math.min(...lidPallets.map(p => p.x)) + Math.max(...lidPallets.map(p => p.x)))/2, z: Math.min(...lidPallets.map(p => p.z)), top: (5/12) + 0.04 + layers*SLV_D });
   }
+  if (labels) LBL_SHELVES.forEach((s, si) => {
+    const n = perShelf[si].reduce((a, r) => a + r.onHand, 0), rolls = perShelf[si].reduce((a, r) => a + Math.ceil(r.onHand/LBL_PER_ROLL), 0);
+    // Chad: "we need total of each brands label" → each shelf's window lists every brand + its labels
+    tagSpecs.push({ label: s.label, count: n, unit: n === 1 ? 'label' : 'labels', sub: fmtN(rolls) + (rolls === 1 ? ' roll' : ' rolls'),
+      rows: perShelf[si].map(r => [r.name, r.onHand]), x: rack.x + (si - 1)*rack.w/3, z: rack.z, top: RACK_TOP });
+  });
   // all windows on one line in the air (Chad: "line them up"): just above the tallest pallet stack
   const tagY = Math.max(0, ...tagSpecs.map(t => t.top)) + 1.2;
   const tagZ = tagSpecs.length ? Math.min(...tagSpecs.map(t => t.z)) : 0;
@@ -1229,6 +1349,16 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
       'background:linear-gradient(155deg,rgba(106,188,70,0.18),rgba(106,188,70,0.04) 50%,rgba(255,255,255,0.03)),rgba(10,15,13,0.55);' +
       'border:1px solid rgba(143,209,110,0.38);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);' +
       'box-shadow:0 10px 28px rgba(0,0,0,0.38),0 0 18px rgba(106,188,70,0.12);transform-origin:50% 100%;will-change:transform;visibility:hidden';
+    if (t.rows){                     // label shelves: one line per brand
+      el.style.textAlign = 'left';
+      el.innerHTML =
+        '<div style="font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#A3ADA8;text-align:center;margin-bottom:4px">' + escT(t.label) + '</div>' +
+        (t.rows.length ? t.rows.map(([nm, v]) => '<div style="display:flex;justify-content:space-between;gap:14px;font-size:12.5px;line-height:1.5"><span>' + escT(nm) + '</span>' +
+          '<span style="font-family:' + MONO + ';font-weight:600;color:' + (v ? '#F2F7F0' : '#8A948F') + '">' + fmtN(v) + '</span></div>').join('')
+          : '<div style="font-size:12px;color:#8A948F;text-align:center">None</div>');
+      tagHost.appendChild(el);
+      return { el, pos: new THREE.Vector3(t.x, tagY, t.z) };
+    }
     el.innerHTML =
       '<div style="font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:#A3ADA8">' + escT(t.label) + '</div>' +
       '<div style="font-family:' + MONO + ';font-size:20px;font-weight:600;line-height:1.15;color:' + (t.count ? '#F2F7F0' : '#8A948F') + '">' + fmtN(t.count) + ' ' +
@@ -1388,7 +1518,17 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
       (p.pallets > 1 ? '<div class="tk-snap-row"><span>Pallets</span><span class="tk-num">' + p.palletNo + ' of ' + p.pallets + '</span></div>' : '') +
       '<div class="tk-snap-row"><span>This pallet</span><span class="tk-num">' + thisTxt + '</span></div>';
   }
+  function fillSnapLabels(p){
+    const n = p.onHand, rolls = p.full + (p.part ? 1 : 0);
+    snapEl.innerHTML =
+      '<div class="tk-snap-prod"><span class="tk-swatch" style="background:#7A6A58"></span><span>' + esc(p.name) + '</span></div>' +
+      '<div class="tk-snap-tank">' + esc(p.shelf.label) + ' · Label Inventory · On Hand</div>' +
+      '<div class="tk-snap-row"><span>In inventory</span><span class="tk-num">' + fmt(n) + (n === 1 ? ' label' : ' labels') + '</span></div>' +
+      '<div class="tk-snap-row"><span>Rolls</span><span class="tk-num">' + (rolls ? p.full + ' full' + (p.part ? ' + 1 part (' + fmt(p.part) + ')' : '') : 'None') + '</span></div>' +
+      '<div class="tk-snap-row"><span>Per roll</span><span class="tk-num">' + fmt(LBL_PER_ROLL) + '</span></div>';
+  }
   function fillSnapPallet(p){
+    if (p.isLabels) return fillSnapLabels(p);
     if (p.isLids) return fillSnapLids(p);
     if (p.isCans) return fillSnapCans(p);
     const n = p.onHand, word = c => c === 1 ? ' keg' : ' kegs';
@@ -1468,7 +1608,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
   controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
   // (top raised from 16 to 120 ft on 2026-10-05 so W A S D free roam can keep its look-at point up
   // where the camera is looking — see updateRoam)
-  const PAN_MIN = new THREE.Vector3(-75, 0.5, -48), PAN_MAX = new THREE.Vector3(130, 120, 48);   // right edge 75 → 130 ft for the keg + can pallets (2026-10-06)
+  const PAN_MIN = new THREE.Vector3(-75, 0.5, -48), PAN_MAX = new THREE.Vector3(150, 120, 48);   // right edge 75 → 150 ft for the keg + can pallets + label rack (2026-10-06)
   controls.addEventListener('change', ()=>{
     const tg = controls.target, before = tg.clone(); tg.clamp(PAN_MIN, PAN_MAX);
     if (!tg.equals(before)) camera.position.add(tg.clone().sub(before));
@@ -1657,11 +1797,12 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
   const blockers = tanks.map(t => ({ x: t.group.position.x, z: t.group.position.z, r: t.Rft*1.12 + PERSON_R }))
     .concat(kegStacks.map(st => ({ x: st.x, z: st.z, r: Math.hypot(PAL_X/2 + 0.2, PAL_Z/2) + PERSON_R })))    // keg pallets too
     .concat(canPallets.map(p => ({ x: p.x, z: p.z, r: Math.hypot(CPAL_X/2, CPAL_Z/2) + PERSON_R })))          // can pallets
-    .concat(lidPallets.map(p => ({ x: p.x, z: p.z, r: Math.hypot(LPAL_X/2, LPAL_Z/2) + PERSON_R })));         // lid pallets
+    .concat(lidPallets.map(p => ({ x: p.x, z: p.z, r: Math.hypot(LPAL_X/2, LPAL_Z/2) + PERSON_R })))          // lid pallets
+    .concat(labels ? Array.from({ length: Math.ceil(RACK_W/2.5) + 1 }, (_, i) => ({ x: rack.x - RACK_W/2 + i*(RACK_W/Math.ceil(RACK_W/2.5)), z: rack.z, r: RACK_D/2 + 0.4 + PERSON_R })) : []);   // label rack
   function freeSpot(x, z){ return blockers.every(b => Math.hypot(x - b.x, z - b.z) > b.r); }
   function pushOut(p){        // never inside a tank (or its legs)
     for (const b of blockers){ const dx = p.x - b.x, dz = p.z - b.z, d = Math.hypot(dx, dz); if (d < b.r){ const k = b.r/(d || 1e-3); p.x = b.x + dx*k; p.z = b.z + dz*k; } }
-    p.x = Math.max(-75, Math.min(130, p.x)); p.z = Math.max(-48, Math.min(48, p.z));
+    p.x = Math.max(-75, Math.min(150, p.x)); p.z = Math.max(-48, Math.min(48, p.z));
   }
   const ai = { mode: 'walk', target: null, tank: null, wait: 0, look: 0 };
   function pickTank(){

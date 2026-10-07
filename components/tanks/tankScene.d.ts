@@ -37,4 +37,6 @@ export function createTankScene(opts: {
   cans?: { c19: number; c16: number; c12: number } | null;
   /** 202 LOE ends (lids) On Hand, individual lids — drawn as a lid pallet (500 per chute). */
   lids?: number | null;
+  /** Label Inventory On Hand per can product (individual labels) — drawn as label rolls on the steel rack. */
+  labels?: { name: string; size: "c19" | "c16" | "c12"; onHand: number }[] | null;
 }): TankScene;

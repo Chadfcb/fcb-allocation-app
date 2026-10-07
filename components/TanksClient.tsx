@@ -60,7 +60,7 @@ interface TankInfo {
 // Tanks beta build number: v1.xx, xx = main Tanks changes so far, preview + site
 // (Chad, 2026-10-05: count every main change, not just pushes). Full list of the
 // first 25 in the project doc claude/tank-view-direction.md. Add 1 per main change.
-const TANKS_BUILD = "1.37";   // 37 count windows sized by distance (no overlap), 36 count windows over the pallets, 35 can + lid pallets, 34 keg pallets (1/2 + 1/6 bbl, Packaging Inventory On Hand), 26 walking guy + take control, 27 Shift run + Space jump, 28 overdue warning signs, 29 Ekos tank sync, 30 See Batch Details popup, 31 W A S D free-roam camera, 32 click tanks in first person, 33 admin preview controls + demo tag
+const TANKS_BUILD = "1.38";   // 38 label rack (rolls of 2,000 by product, steel shelves), 37 count windows sized by distance (no overlap), 36 count windows over the pallets, 35 can + lid pallets, 34 keg pallets (1/2 + 1/6 bbl, Packaging Inventory On Hand), 26 walking guy + take control, 27 Shift run + Space jump, 28 overdue warning signs, 29 Ekos tank sync, 30 See Batch Details popup, 31 W A S D free-roam camera, 32 click tanks in first person, 33 admin preview controls + demo tag
 
 const STATUS_PILL: Record<string, { bg: string; fg: string }> = {
   Fermenting: { bg: "rgba(255,153,0,0.18)", fg: "#FFC266" },
@@ -125,6 +125,7 @@ export default function TanksClient({
   kegs = null,
   cans = null,
   lids = null,
+  labels = null,
   syncedLabel = null,
   isAdmin = false,
 }: {
@@ -132,6 +133,7 @@ export default function TanksClient({
   kegs?: { half: number; sixth: number } | null;
   cans?: { c19: number; c16: number; c12: number } | null;
   lids?: number | null;
+  labels?: { name: string; size: "c19" | "c16" | "c12"; onHand: number }[] | null;
   syncedLabel?: string | null;
   isAdmin?: boolean;
 }) {
@@ -168,6 +170,7 @@ export default function TanksClient({
         kegs,
         cans,
         lids,
+        labels,
       });
       // rebuilt after a preview-control change: same camera, same tank picked
       sceneRef.current.setView(viewRef.current);
@@ -182,7 +185,7 @@ export default function TanksClient({
       sceneRef.current?.dispose();
       sceneRef.current = null;
     };
-  }, [data, kegs, cans, lids]);
+  }, [data, kegs, cans, lids, labels]);
 
   // A preview control changed one tank (only this screen; nothing saved).
   const changeTank = useCallback((name: string, change: (r: LiveTank) => void) => {

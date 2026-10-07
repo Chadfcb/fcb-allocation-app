@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getProfile } from "@/lib/getProfile";
 import { hasSection } from "@/lib/permissions";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { derivePackaging } from "@/lib/packaging";
 import TanksClient, { type LiveTank } from "@/components/TanksClient";
 
 // Tanks (added 2026-10-03, per Chad) — 3D "x-ray" view of every unitank in
@@ -37,6 +38,9 @@ export default async function TanksPage() {
   let kegs: { half: number; sixth: number } | null = null;
   let cans: { c19: number; c16: number; c12: number } | null = null;
   let lids: number | null = null;
+  // Label rack (Chad, 2026-10-06 — claude/tanks-label-shelf-plan.md): Label Inventory On Hand
+  // (individual labels) for every active can product, same rows/order as Inventory & Allocation.
+  let labels: { name: string; size: "c19" | "c16" | "c12"; onHand: number }[] | null = null;
   if (week) {
     const { data: rows } = await admin
       .from("packaging_inventory")
@@ -47,6 +51,28 @@ export default async function TanksPage() {
     kegs = { half: onHand("kegs_1_2bbl"), sixth: onHand("kegs_1_6bbl") };
     cans = { c19: onHand("cans_19_2oz"), c16: onHand("cans_16oz"), c12: onHand("cans_12oz") };
     lids = onHand("lids_202");
+
+    const [{ data: products }, { data: labelRows }] = await Promise.all([
+      admin
+        .from("products")
+        .select("id, name, sort_order")
+        .eq("active", true)
+        .order("sort_order", { ascending: true, nullsFirst: false })
+        .order("name"),
+      admin.from("label_inventory").select("product_id, on_hand_qty").eq("week_id", week.id),
+    ]);
+    const onHandFor = new Map((labelRows ?? []).map((r) => [r.product_id as string, Number(r.on_hand_qty) || 0]));
+    const SIZE = { "19_2oz": "c19", "16oz": "c16", "12oz": "c12" } as const;
+    labels = [];
+    for (const p of (products ?? []) as { id: string; name: string }[]) {
+      const pk = derivePackaging(p.name);
+      if (pk.kind !== "can") continue;
+      labels.push({
+        name: p.name.split(" (")[0].trim() || p.name, // "Capt. Hazy (Case - 12x - 19.2oz - Can)" → "Capt. Hazy"
+        size: SIZE[pk.size],
+        onHand: Math.max(0, onHandFor.get(p.id) ?? 0),
+      });
+    }
   }
   const live = ((data ?? []) as LiveTank[]).map((t) => ({
     ...t,
@@ -64,5 +90,5 @@ export default async function TanksPage() {
       }).format(new Date(newest))
     : null;
   // Preview controls under the 3D view are for admins only (Chad, 2026-10-05).
-  return <TanksClient live={live} kegs={kegs} cans={cans} lids={lids} syncedLabel={syncedLabel} isAdmin={profile.role === "admin"} />;
+  return <TanksClient live={live} kegs={kegs} cans={cans} lids={lids} labels={labels} syncedLabel={syncedLabel} isAdmin={profile.role === "admin"} />;
 }

@@ -17,6 +17,7 @@ export default async function SalesLayout({ children }: { children: React.ReactN
       "margin_analysis",
       "cost_per_case",
       "contribution_margin",
+      "accounts",
     ])
   ) {
     redirect("/inventory");
