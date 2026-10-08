@@ -35,6 +35,7 @@ const addMonths = (ym: string, n: number) => {
   return `${Math.floor(i / 12)}-${String((i % 12) + 1).padStart(2, "0")}`;
 };
 const FIRST_MONTH = "2020-01";
+type SortKey = "last" | "cases" | "ce" | "lastCases" | "lastCe";
 const SEL = "rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100";
 
 interface Option {
@@ -81,7 +82,7 @@ export default function SalesProductLookup({
   const [hideError, setHideError] = useState<string | null>(null);
   const hideNew = useNewFeature("feature:accounts-product-hide");
   // By account sort (Chad, 2026-10-08): default = last month bought, newest first.
-  const [acctSort, setAcctSort] = useState<{ key: "last" | "cases" | "ce"; desc: boolean }>({ key: "last", desc: true });
+  const [acctSort, setAcctSort] = useState<{ key: SortKey; desc: boolean }>({ key: "last", desc: true });
 
   useEffect(() => {
     (async () => {
@@ -236,7 +237,15 @@ export default function SalesProductLookup({
   const sortedAccounts = useMemo(() => {
     const rows = [...(result?.by_account ?? [])];
     const val = (a: ProductLookupResult["by_account"][number]) =>
-      acctSort.key === "last" ? a.last_month : acctSort.key === "cases" ? Number(a.cases) : Number(a.ce);
+      acctSort.key === "last"
+        ? a.last_month
+        : acctSort.key === "cases"
+          ? Number(a.cases)
+          : acctSort.key === "ce"
+            ? Number(a.ce)
+            : acctSort.key === "lastCases"
+              ? Number(a.last_cases)
+              : Number(a.last_ce);
     rows.sort((a, b) => {
       const x = val(a);
       const y = val(b);
@@ -245,7 +254,7 @@ export default function SalesProductLookup({
     });
     return rows;
   }, [result, acctSort]);
-  const sortHead = (key: "last" | "cases" | "ce", label: string) => (
+  const sortHead = (key: SortKey, label: string) => (
     <th className="sticky top-0 bg-neutral-950 px-3 py-2 text-right font-semibold">
       <button
         type="button"
@@ -575,7 +584,7 @@ export default function SalesProductLookup({
               <span className="text-sm font-semibold text-neutral-100">By account</span>
               <span className="text-xs text-neutral-500">
                 {sortedAccounts.length > ACCT_SHOWN ? `Showing the first ${ACCT_SHOWN} of ${fmt(sortedAccounts.length, 0)} accounts. ` : ""}
-                Click a column to sort; click an account to open it.
+                &quot;That month&quot; = the account&apos;s last month bought. Click a column to sort; click an account to open it.
               </span>
             </div>
             <div className="max-h-[60vh] overflow-auto">
@@ -587,6 +596,8 @@ export default function SalesProductLookup({
                     {sortHead("cases", "Cases / kegs")}
                     {sortHead("ce", "CE")}
                     {sortHead("last", "Last month bought")}
+                    {sortHead("lastCases", "Cases that month")}
+                    {sortHead("lastCe", "CE that month")}
                   </tr>
                 </thead>
                 <tbody>
@@ -608,6 +619,8 @@ export default function SalesProductLookup({
                       <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-neutral-100">{fmt(a.cases)}</td>
                       <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-neutral-300">{fmt(a.ce)}</td>
                       <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-neutral-300">{monthLabel(a.last_month.slice(0, 7))}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-neutral-100">{fmt(a.last_cases)}</td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right tabular-nums text-neutral-300">{fmt(a.last_ce)}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -275,5 +275,5 @@ export interface ProductLookupResult {
   by_month: (ProductLookupRow & { month: string })[];
   by_distributor: (ProductLookupRow & { distributor: string })[];
   by_product: (ProductLookupRow & { product: string; size: string })[];
-  by_account: { outlet_id: string; name: string | null; city: string | null; distributor: string | null; ce: number; cases: number; last_month: string }[];
+  by_account: { outlet_id: string; name: string | null; city: string | null; distributor: string | null; ce: number; cases: number; last_month: string; last_ce: number; last_cases: number }[];
 }

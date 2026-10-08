@@ -15,7 +15,9 @@
 -- Both check Accounts access once (has_section(…, 'accounts')) and then read
 -- the tables directly, so wide searches stay fast. by_account returns EVERY
 -- account (not just the top 500, changed 2026-10-08) so the page can sort by
--- last month bought, cases or CE; the page shows 500 at a time.
+-- last month bought, cases or CE; the page shows 500 at a time. Each account
+-- also gets last_cases / last_ce: what it bought in its last month bought
+-- (added 2026-10-08).
 -- Run this in Supabase's SQL Editor BEFORE pushing the code.
 -- Idempotent — safe to run more than once.
 
@@ -113,11 +115,15 @@ begin
         select product, size, sum(ce) as ce, sum(cases) as cases, count(distinct outlet_id) as accounts
         from f group by product, size) p),
     'by_account', (select coalesce(json_agg(x order by x.last_month desc, x.cases desc), '[]'::json) from (
-        select g.outlet_id, a.name, a.city, g.distributor, round(g.ce, 2) as ce, round(g.cases, 2) as cases, g.last_month
+        select g.outlet_id, a.name, a.city, g.distributor, round(g.ce, 2) as ce, round(g.cases, 2) as cases, g.last_month,
+               round(lm.ce, 2) as last_ce, round(lm.cases, 2) as last_cases
         from (
           select outlet_id, max(distributor) as distributor, sum(ce) as ce, sum(cases) as cases, max(month) as last_month
           from f group by outlet_id
         ) g
+        left join (
+          select outlet_id, month, sum(ce) as ce, sum(cases) as cases from f group by outlet_id, month
+        ) lm on lm.outlet_id = g.outlet_id and lm.month = g.last_month
         left join public.sales_accounts a on a.outlet_id = g.outlet_id) x)
   )
   into result;
