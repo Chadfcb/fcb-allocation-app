@@ -7,13 +7,16 @@
 -- by the import file, and two read-only lookups the page calls:
 --   sales_product_options()  every product + size that has sales (for the pickers)
 --   sales_product_lookup(...) totals, by month, by distributor, by product + size,
---                             and by account, for the chosen filters
+--                             and by account (all accounts), for the chosen filters
 -- Cases are worked out from CE by size: 12oz case (24) = 1 CE, 16oz case (24) =
 -- 1.333 CE, 19.2oz case (12) = 0.8 CE, 22oz case (12) = 0.917 CE, 1/2 bbl =
 -- 6.889 CE, 1/6 bbl = 2.293 CE, 13.2 gal keg = 5.867 CE.
 --
 -- Both check Accounts access once (has_section(…, 'accounts')) and then read
--- the tables directly, so wide searches stay fast. Run this in Supabase's SQL Editor BEFORE pushing the code.
+-- the tables directly, so wide searches stay fast. by_account returns EVERY
+-- account (not just the top 500, changed 2026-10-08) so the page can sort by
+-- last month bought, cases or CE; the page shows 500 at a time.
+-- Run this in Supabase's SQL Editor BEFORE pushing the code.
 -- Idempotent — safe to run more than once.
 
 alter table public.sales_account_sales add column if not exists size text;
@@ -109,13 +112,11 @@ begin
     'by_product', (select coalesce(json_agg(p order by p.cases desc), '[]'::json) from (
         select product, size, sum(ce) as ce, sum(cases) as cases, count(distinct outlet_id) as accounts
         from f group by product, size) p),
-    'by_account', (select coalesce(json_agg(x order by x.cases desc), '[]'::json) from (
-        select g.outlet_id, a.name, a.city, g.distributor, g.ce, g.cases, g.last_month
+    'by_account', (select coalesce(json_agg(x order by x.last_month desc, x.cases desc), '[]'::json) from (
+        select g.outlet_id, a.name, a.city, g.distributor, round(g.ce, 2) as ce, round(g.cases, 2) as cases, g.last_month
         from (
           select outlet_id, max(distributor) as distributor, sum(ce) as ce, sum(cases) as cases, max(month) as last_month
           from f group by outlet_id
-          order by sum(cases) desc
-          limit 500
         ) g
         left join public.sales_accounts a on a.outlet_id = g.outlet_id) x)
   )

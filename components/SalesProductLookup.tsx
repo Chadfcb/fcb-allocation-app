@@ -80,6 +80,8 @@ export default function SalesProductLookup({
   const [hideMenu, setHideMenu] = useState<"hide" | "unhide" | null>(null);
   const [hideError, setHideError] = useState<string | null>(null);
   const hideNew = useNewFeature("feature:accounts-product-hide");
+  // By account sort (Chad, 2026-10-08): default = last month bought, newest first.
+  const [acctSort, setAcctSort] = useState<{ key: "last" | "cases" | "ce"; desc: boolean }>({ key: "last", desc: true });
 
   useEffect(() => {
     (async () => {
@@ -230,6 +232,33 @@ export default function SalesProductLookup({
 
   const shownProducts = productList.filter((p) => !productQuery || p.toLowerCase().includes(productQuery.toLowerCase()));
   const t = result?.totals;
+  const ACCT_SHOWN = 500;
+  const sortedAccounts = useMemo(() => {
+    const rows = [...(result?.by_account ?? [])];
+    const val = (a: ProductLookupResult["by_account"][number]) =>
+      acctSort.key === "last" ? a.last_month : acctSort.key === "cases" ? Number(a.cases) : Number(a.ce);
+    rows.sort((a, b) => {
+      const x = val(a);
+      const y = val(b);
+      const c = x < y ? -1 : x > y ? 1 : Number(b.cases) - Number(a.cases);
+      return acctSort.key !== "last" || x !== y ? (acctSort.desc ? -c : c) : c;
+    });
+    return rows;
+  }, [result, acctSort]);
+  const sortHead = (key: "last" | "cases" | "ce", label: string) => (
+    <th className="sticky top-0 bg-neutral-950 px-3 py-2 text-right font-semibold">
+      <button
+        type="button"
+        id={`lookup-sort-${key}`}
+        onClick={() => setAcctSort((s) => (s.key === key ? { key, desc: !s.desc } : { key, desc: true }))}
+        className={`inline-flex items-center gap-1 uppercase tracking-wider hover:text-neutral-200 ${acctSort.key === key ? "text-neutral-100" : ""}`}
+        aria-label={`Sort by ${label}`}
+      >
+        {label}
+        <span className="text-[10px]">{acctSort.key === key ? (acctSort.desc ? "▼" : "▲") : "↕"}</span>
+      </button>
+    </th>
+  );
 
   return (
     <div className="flex flex-col gap-4">
@@ -545,8 +574,8 @@ export default function SalesProductLookup({
             <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-neutral-800 bg-neutral-900 px-3 py-2">
               <span className="text-sm font-semibold text-neutral-100">By account</span>
               <span className="text-xs text-neutral-500">
-                {result.totals.accounts > result.by_account.length ? `Top ${result.by_account.length} of ${fmt(result.totals.accounts, 0)} accounts. ` : ""}
-                Click an account to open it.
+                {sortedAccounts.length > ACCT_SHOWN ? `Showing the first ${ACCT_SHOWN} of ${fmt(sortedAccounts.length, 0)} accounts. ` : ""}
+                Click a column to sort; click an account to open it.
               </span>
             </div>
             <div className="max-h-[60vh] overflow-auto">
@@ -555,13 +584,13 @@ export default function SalesProductLookup({
                   <tr className="text-[11px] uppercase tracking-wider text-neutral-500">
                     <th className="sticky top-0 bg-neutral-950 px-3 py-2 text-left font-semibold">Account</th>
                     <th className="sticky top-0 bg-neutral-950 px-3 py-2 text-left font-semibold">Distributor</th>
-                    <th className="sticky top-0 bg-neutral-950 px-3 py-2 text-right font-semibold">Cases / kegs</th>
-                    <th className="sticky top-0 bg-neutral-950 px-3 py-2 text-right font-semibold">CE</th>
-                    <th className="sticky top-0 bg-neutral-950 px-3 py-2 text-right font-semibold">Last month bought</th>
+                    {sortHead("cases", "Cases / kegs")}
+                    {sortHead("ce", "CE")}
+                    {sortHead("last", "Last month bought")}
                   </tr>
                 </thead>
                 <tbody>
-                  {result.by_account.map((a) => (
+                  {sortedAccounts.slice(0, ACCT_SHOWN).map((a) => (
                     <tr
                       key={a.outlet_id}
                       tabIndex={0}
