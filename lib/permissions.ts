@@ -37,7 +37,8 @@ export type SectionKey =
   | "chain_mandates"
   | "accounts"
   | "football_pos"
-  | "tanks";
+  | "tanks"
+  | "sales_dashboard";
 
 // Ernie AI is deliberately its own grantable section, separate from every
 // page section above — an admin may want someone to have, say, Purchase
@@ -83,6 +84,7 @@ export type GroupKey =
   | "events_calendar"
   | "pos_labels"
   | "tanks"
+  | "sales_dashboard"
   | "tasks"
   | "audit_log";
 
@@ -184,6 +186,16 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
     key: "tanks",
     label: "Tanks",
     items: [{ key: "tanks", label: "Tanks" }],
+  },
+  {
+    // Sales Dashboard (under MAIN, below Tanks) — its own Users > Edit toggle,
+    // added 2026-10-08 per Chad: gap report by chain / distributor, chain
+    // setup, and turning accounts off / back on. Admins always have it. RLS
+    // and report functions: has_section(..., 'sales_dashboard') in
+    // sql/sales_dashboard.sql.
+    key: "sales_dashboard",
+    label: "Sales Dashboard",
+    items: [{ key: "sales_dashboard", label: "Sales Dashboard" }],
   },
   {
     key: "tasks",

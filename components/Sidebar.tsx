@@ -108,6 +108,9 @@ const NEW_SIDEBAR_IDS: string[] = [
   // Tanks — new 3D tank view under MAIN, right below Dashboard (2026-10-03),
   // per Chad.
   "/tanks",
+  // Sales Dashboard — new page under MAIN, right below Tanks (2026-10-08),
+  // per Chad.
+  "/sales-dashboard",
   // Football POS — new POS sub-link, added 2026-09-05, per Chad.
   "/pos/football",
   // Cash Flow Dashboard — new Finance section, added 2026-09-09, per Chad.
@@ -867,6 +870,8 @@ export default function Sidebar({
     !showErnie &&
     !showTasks &&
     !showAuditLog &&
+    !can("tanks") &&
+    !can("sales_dashboard") &&
     visibleFinance.length === 0 &&
     visibleOperations.length === 0 &&
     visibleSales.length === 0 &&
@@ -883,7 +888,7 @@ export default function Sidebar({
     ...(showUpcTree ? ["section:upcs", ...upcDescendantIds()] : []),
   ];
 
-  const showMainGroup = role === "admin" || showErnie || showTasks;
+  const showMainGroup = role === "admin" || showErnie || showTasks || can("tanks") || can("sales_dashboard");
   const showDepartments =
     visibleFinance.length > 0 ||
     visibleOperations.length > 0 ||
@@ -990,6 +995,17 @@ export default function Sidebar({
                       <IconTank />
                       Tanks
                       {showsNew("/tanks") && <NewBadge />}
+                    </Link>
+                  )}
+
+                  {/* Sales Dashboard (2026-10-08) — gap report by chain /
+                      distributor, chain setup, turn accounts off / on.
+                      Gated by its own "Sales Dashboard" access. */}
+                  {can("sales_dashboard") && (
+                    <Link href="/sales-dashboard" className={topLinkClass("/sales-dashboard")} onClick={() => dismissNew("/sales-dashboard")}>
+                      <IconChart />
+                      Sales Dashboard
+                      {showsNew("/sales-dashboard") && <NewBadge />}
                     </Link>
                   )}
 
