@@ -7,9 +7,17 @@
 // range; the database adds it up (sales_product_lookup in
 // sql/sales_product_lookup.sql) and this shows the totals, a month-by-month
 // chart, and breakdowns by distributor, product + size, and account.
+//
+// Hide items / Unhide items (added 2026-10-08, per Chad): one shared list of
+// products we don't make anymore (sales_product_hidden, sql/sales_product_hidden.sql).
+// Hidden products drop out of the product chips and out of "all products"
+// totals. Anyone with Accounts access can hide or unhide; changes go to the
+// Audit Log.
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import NewBadge from "@/components/NewBadge";
+import { useNewFeature } from "@/lib/newFeatures";
 import {
   CURRENT_DISTRIBUTORS,
   PRODUCT_SIZES,
@@ -67,6 +75,11 @@ export default function SalesProductLookup({
   const [result, setResult] = useState<ProductLookupResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // product -> row id in sales_product_hidden; null until loaded
+  const [hidden, setHidden] = useState<Map<string, string> | null>(null);
+  const [hideMenu, setHideMenu] = useState<"hide" | "unhide" | null>(null);
+  const [hideError, setHideError] = useState<string | null>(null);
+  const hideNew = useNewFeature("feature:accounts-product-hide");
 
   useEffect(() => {
     (async () => {
@@ -76,11 +89,69 @@ export default function SalesProductLookup({
     })();
   }, [supabase]);
 
-  const productList = useMemo(() => {
+  useEffect(() => {
+    (async () => {
+      const { data, error: e } = await supabase.from("sales_product_hidden").select("id,product");
+      if (e) {
+        // Table not there yet (SQL not run) — show everything.
+        setHideError(e.message);
+        setHidden(new Map());
+      } else setHidden(new Map((data ?? []).map((r) => [r.product as string, r.id as string])));
+    })();
+  }, [supabase]);
+
+  const allProducts = useMemo(() => {
     const m = new Map<string, number>();
     for (const o of options ?? []) m.set(o.product, (m.get(o.product) ?? 0) + o.ce);
     return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([p]) => p);
   }, [options]);
+  const productList = useMemo(() => allProducts.filter((p) => !hidden?.has(p)), [allProducts, hidden]);
+  const hiddenList = useMemo(() => allProducts.filter((p) => hidden?.has(p)), [allProducts, hidden]);
+
+  async function setProductHidden(product: string, hide: boolean) {
+    setHideError(null);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (hide) {
+      const { data, error: e } = await supabase
+        .from("sales_product_hidden")
+        .insert({ product, hidden_by: user?.id ?? null })
+        .select("id")
+        .single();
+      if (e) return setHideError(e.message);
+      setHidden((h) => new Map(h ?? []).set(product, data.id as string));
+      setProducts((ps) => ps.filter((p) => p !== product));
+      await supabase.from("audit_log").insert({
+        week_id: null,
+        table_name: "sales_product_hidden",
+        record_id: data.id,
+        field_name: "hidden",
+        old_value: product,
+        new_value: "hidden",
+        changed_by: user?.id ?? null,
+      });
+    } else {
+      const id = hidden?.get(product);
+      if (!id) return;
+      const { error: e } = await supabase.from("sales_product_hidden").delete().eq("id", id);
+      if (e) return setHideError(e.message);
+      setHidden((h) => {
+        const n = new Map(h ?? []);
+        n.delete(product);
+        return n;
+      });
+      await supabase.from("audit_log").insert({
+        week_id: null,
+        table_name: "sales_product_hidden",
+        record_id: id,
+        field_name: "hidden",
+        old_value: product,
+        new_value: "shown",
+        changed_by: user?.id ?? null,
+      });
+    }
+  }
 
   const distributors = useMemo(() => {
     if (dist) return [dist];
@@ -89,14 +160,23 @@ export default function SalesProductLookup({
   }, [dist, rep]);
 
   // Run the lookup whenever a filter changes (short pause so typing doesn't spam it).
+  // "All products" means all products that aren't hidden.
+  const lookupProducts = useMemo(() => {
+    if (products.length) return products;
+    if (!hidden || hidden.size === 0) return [];
+    return productList.length ? productList : ["(none)"];
+  }, [products, hidden, productList]);
+  const ready = hidden !== null && (options !== null || optError !== null);
+
   useEffect(() => {
+    if (!ready) return;
     const t = setTimeout(async () => {
       setBusy(true);
       setError(null);
       const lo = from <= to ? from : to;
       const hi = from <= to ? to : from;
       const { data, error: e } = await supabase.rpc("sales_product_lookup", {
-        p_products: products,
+        p_products: lookupProducts,
         p_sizes: sizes,
         p_distributors: distributors,
         p_outlet: account?.outlet_id ?? null,
@@ -112,7 +192,7 @@ export default function SalesProductLookup({
       setResult(data as ProductLookupResult);
     }, 250);
     return () => clearTimeout(t);
-  }, [supabase, products, sizes, distributors, account, premise, from, to]);
+  }, [supabase, ready, lookupProducts, sizes, distributors, account, premise, from, to]);
 
   const setRange = (kind: "this" | "3" | "12" | "ytd" | "lastyear" | "all") => {
     const y = lastMonth.slice(0, 4);
@@ -307,7 +387,60 @@ export default function SalesProductLookup({
                 All sizes
               </button>
             )}
+            <div className="relative ml-auto flex gap-2">
+              {(
+                [
+                  ["hide", "Hide items", productList.length],
+                  ["unhide", "Unhide items", hiddenList.length],
+                ] as const
+              ).map(([k, label, n]) => (
+                <button
+                  key={k}
+                  id={`lookup-${k}-items`}
+                  type="button"
+                  aria-expanded={hideMenu === k}
+                  onClick={() => {
+                    setHideMenu(hideMenu === k ? null : k);
+                    if (k === "hide") hideNew.dismiss();
+                  }}
+                  className={`relative z-30 rounded-md border px-3 py-1 text-sm ${hideMenu === k ? "border-[#6abc46] bg-[#6abc46]/15 text-neutral-100" : "border-neutral-700 text-neutral-300 hover:bg-neutral-800"}`}
+                >
+                  {label} <span className="text-neutral-500">({n})</span>
+                  {k === "hide" && hideNew.isNew && <NewBadge inline />}
+                </button>
+              ))}
+              {hideMenu && (
+                <>
+                  <button type="button" aria-label="Close" className="fixed inset-0 z-20 cursor-default" onClick={() => setHideMenu(null)} />
+                  <div className="absolute right-0 top-full z-30 mt-1 flex max-h-96 w-72 flex-col rounded-md border border-neutral-700 bg-neutral-950 shadow-lg">
+                    <p className="border-b border-neutral-800 px-3 py-2 text-xs text-neutral-400">
+                      {hideMenu === "hide"
+                        ? "Click a product to hide it for everyone. Hidden products are left out of the list and the totals."
+                        : "Click a product to bring it back."}
+                    </p>
+                    <div className="overflow-y-auto py-1">
+                      {(hideMenu === "hide" ? productList : hiddenList).length === 0 ? (
+                        <p className="px-3 py-2 text-sm text-neutral-500">{hideMenu === "hide" ? "Nothing left to hide." : "Nothing is hidden."}</p>
+                      ) : (
+                        (hideMenu === "hide" ? productList : hiddenList).map((p) => (
+                          <button
+                            key={p}
+                            type="button"
+                            onClick={() => setProductHidden(p, hideMenu === "hide")}
+                            className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm text-neutral-200 hover:bg-neutral-800"
+                          >
+                            <span className="truncate">{p}</span>
+                            <span className="shrink-0 text-xs text-neutral-500">{hideMenu === "hide" ? "Hide" : "Unhide"}</span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
+          {hideError && <p className="text-xs text-red-300">Couldn&apos;t update hidden products: {hideError}</p>}
         </div>
 
         <div className="flex flex-col gap-1">
@@ -359,7 +492,7 @@ export default function SalesProductLookup({
       {/* Results */}
       <div className={`flex flex-col gap-4 ${busy ? "opacity-60" : ""}`}>
         <p className="text-sm text-neutral-400">
-          {products.length ? products.join(", ") : "All products"} · {sizes.length ? sizes.join(", ") : "all sizes"} ·{" "}
+          {products.length ? products.join(", ") : hiddenList.length ? `All products except ${hiddenList.length} hidden` : "All products"} · {sizes.length ? sizes.join(", ") : "all sizes"} ·{" "}
           {dist || (rep ? `${rep}'s distributors` : "all distributors")}
           {premise ? ` · ${premise} premise` : ""}
           {account ? ` · ${account.name}` : ""} · {monthLabel(from <= to ? from : to)} – {monthLabel(from <= to ? to : from)}

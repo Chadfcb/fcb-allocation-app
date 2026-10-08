@@ -31,6 +31,12 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    id: "feature:accounts-product-hide",
+    page: "/sales/accounts",
+    label: "Hide items / Unhide items buttons on Sales > Accounts > Product Lookup (shared list of products we don't make anymore)",
+    added: "2026-10-08",
+  },
+  {
     id: "feature:accounts-product-lookup",
     page: "/sales/accounts",
     label: "Product Lookup tab on Sales > Accounts (cases by product, size, distributor, rep, account and month range)",
