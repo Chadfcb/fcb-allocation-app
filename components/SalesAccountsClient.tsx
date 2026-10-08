@@ -19,6 +19,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import NewBadge from "@/components/NewBadge";
+import SalesProductLookup from "@/components/SalesProductLookup";
+import { useNewFeature } from "@/lib/newFeatures";
 import {
   BIG_LOST_CE,
   HANDLED_CHOICES,
@@ -225,15 +228,20 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
   // area in there, its making the main screen too cluttered"):
   //   overview  — stages, by-rep table, sales columns (the original screen)
   //   classify  — owner / tier / handled by / tags / last check-in + bulk edit
-  const [view, setView] = useState<"overview" | "classify">("overview");
+  //   lookup    — Product Lookup (added 2026-10-08): cases of a product / size
+  //               by distributor, rep, account and month range
+  const [view, setView] = useState<"overview" | "classify" | "lookup">("overview");
+  const lookupNew = useNewFeature("feature:accounts-product-lookup");
   useEffect(() => {
     try {
-      if (localStorage.getItem(VIEW_KEY) === "classify") setView("classify");
+      const saved = localStorage.getItem(VIEW_KEY);
+      if (saved === "classify" || saved === "lookup") setView(saved);
     } catch {
       // ignore
     }
   }, []);
-  const switchView = (v: "overview" | "classify") => {
+  const switchView = (v: "overview" | "classify" | "lookup") => {
+    if (v === "lookup") lookupNew.dismiss();
     setView(v);
     setPage(0);
     try {
@@ -610,6 +618,7 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
               [
                 ["overview", "Overview"],
                 ["classify", "Classification"],
+                ["lookup", "Product Lookup"],
               ] as const
             ).map(([v, label]) => (
               <button
@@ -621,9 +630,19 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
                 className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${view === v ? "border-[#6abc46] text-neutral-100" : "border-transparent text-neutral-500 hover:text-neutral-200"}`}
               >
                 {label}
+                {v === "lookup" && lookupNew.isNew && <NewBadge inline />}
               </button>
             ))}
           </div>
+
+          {view === "lookup" && asOf ? (
+            <SalesProductLookup
+              asOf={asOf}
+              accounts={rows.map((r) => ({ outlet_id: r.outlet_id, name: r.name, city: r.city }))}
+              onOpenAccount={setOpenId}
+            />
+          ) : (
+          <>
 
           {!isC && (
           <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 xl:grid-cols-7">
@@ -1033,6 +1052,8 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
             <p className="text-xs text-neutral-500">
               Tick accounts to change several at once. Click an account to change it on its own. Every change is in the Audit Log.
             </p>
+          )}
+          </>
           )}
         </>
       )}

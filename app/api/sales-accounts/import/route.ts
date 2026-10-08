@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (body.action === "sales") {
-    const rows = ((body.rows ?? []) as ImportSale[]).map(([outlet, ym, product, pkg, dist, ce, lb]) => ({
+    const rows = ((body.rows ?? []) as ImportSale[]).map(([outlet, ym, product, pkg, dist, ce, lb, size]) => ({
       outlet_id: String(outlet),
       month: `${ym}-01`,
       product,
@@ -67,6 +67,7 @@ export async function POST(req: NextRequest) {
       distributor: dist,
       ce,
       last_buy_date: cleanDate(lb),
+      size: size ?? null,
     }));
     const { error } = await admin.from("sales_account_sales").insert(rows);
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });

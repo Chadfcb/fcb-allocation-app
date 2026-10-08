@@ -133,7 +133,7 @@ export function isLostBig(stage: AccountStage, lifetimeCe: number): boolean {
 
 // ---- Import file (made from Chad's spreadsheets; see the Import panel) ----
 // accounts:  {id, n, a, c, st, z, ph, d, pr, bd, rd, rn}
-// sales:     [outlet_id, "YYYY-MM", product, package, distributor, ce, last_buy "YYYY-MM-DD"]
+// sales:     [outlet_id, "YYYY-MM", product, package, distributor, ce, last_buy "YYYY-MM-DD", size]
 // contacts:  [outlet_id, name, title, phone, mobile, email, notes, source]
 export interface ImportAccount {
   id: string;
@@ -149,7 +149,7 @@ export interface ImportAccount {
   rd?: string | null;
   rn?: string | null;
 }
-export type ImportSale = [string, string, string, string | null, string | null, number, string | null];
+export type ImportSale = [string, string, string, string | null, string | null, number, string | null, (string | null)?];
 export type ImportContact = [string, string | null, string | null, string | null, string | null, string | null, string | null, string | null];
 // buddies: accounts on a distributor target list → start as Buddy accounts
 // [outlet_id, target list, distributor rep name, phone, email]
@@ -258,4 +258,22 @@ export function joinTags(tags: string[]): string {
 export function ownerShown(stage: AccountStage, owner: OwnerType | null | undefined): OwnerShown {
   if (stage === "former") return "former";
   return owner ?? "distributor";
+}
+
+// ---- Product Lookup (added 2026-10-08) ----
+// Whole months only (Chad). Sizes are cleaned up in the import file; cases are
+// worked out from CE by size in SQL (sql/sales_product_lookup.sql).
+export const PRODUCT_SIZES = ["12oz", "16oz", "19.2oz", "22oz bottle", "1/2 bbl", "1/6 bbl", "13.2 gal keg", "Other"];
+
+export interface ProductLookupRow {
+  ce: number;
+  cases: number;
+  accounts: number;
+}
+export interface ProductLookupResult {
+  totals: ProductLookupRow & { months: number };
+  by_month: (ProductLookupRow & { month: string })[];
+  by_distributor: (ProductLookupRow & { distributor: string })[];
+  by_product: (ProductLookupRow & { product: string; size: string })[];
+  by_account: { outlet_id: string; name: string | null; city: string | null; distributor: string | null; ce: number; cases: number; last_month: string }[];
 }

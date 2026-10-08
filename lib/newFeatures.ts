@@ -30,6 +30,12 @@ export interface NewFeature {
 }
 
 export const NEW_FEATURES: NewFeature[] = [
+  {
+    id: "feature:accounts-product-lookup",
+    page: "/sales/accounts",
+    label: "Product Lookup tab on Sales > Accounts (cases by product, size, distributor, rep, account and month range)",
+    added: "2026-10-08",
+  },
   // "feature:ernie-customize" (the old Ernie-only Customize button) was
   // removed 2026-09-29 — that button is gone, replaced by the site-wide one
   // below. Leaving it here would light up the My Ernie AI link forever with
