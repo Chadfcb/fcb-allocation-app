@@ -213,6 +213,60 @@ function applyKeyedRecordChange<T extends { id: string; updated_by?: string | nu
   setter((prev) => ({ ...prev, [keyOf(row)]: row }));
 }
 
+// Packaging / Label Inventory "count which colors" switch (Chad,
+// 2026-10-13). Green (On Hand) cells are product that's already packaged,
+// so Chad wants to see what Remaining looks like counting only purple
+// (Need to Package) cells, or only green, or everything (the normal view).
+// View-only — nothing is saved, and it resets to All on every page load.
+type ConsumptionColorFilter = "all" | "need_to_package" | "good_confirmed";
+
+const CONSUMPTION_FILTER_OPTIONS: { key: ConsumptionColorFilter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "need_to_package", label: "Purple" },
+  { key: "good_confirmed", label: "Green" },
+];
+
+function ConsumptionFilterSwitch({
+  value,
+  onChange,
+}: {
+  value: ConsumptionColorFilter;
+  onChange: (next: ConsumptionColorFilter) => void;
+}) {
+  return (
+    <div
+      className="flex shrink-0 overflow-hidden rounded border border-neutral-700 text-[11px]"
+      title="Which allocation cells count toward Consumed: all of them, only purple (Need to Package), or only green (On Hand)"
+    >
+      {CONSUMPTION_FILTER_OPTIONS.map((opt) => {
+        const active = value === opt.key;
+        const swatch = opt.key === "all" ? null : STATUS_FLAG_COLORS[opt.key];
+        return (
+          <button
+            key={opt.key}
+            type="button"
+            onClick={() => onChange(opt.key)}
+            className={`flex items-center gap-1 px-2 py-0.5 ${
+              active ? "bg-neutral-700 text-neutral-100" : "text-neutral-400 hover:bg-neutral-800"
+            }`}
+          >
+            {swatch && (
+              <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: swatch }} />
+            )}
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function consumptionFilterTag(filter: ConsumptionColorFilter): string | null {
+  if (filter === "need_to_package") return "Showing: Purple only";
+  if (filter === "good_confirmed") return "Showing: Green only";
+  return null;
+}
+
 export default function InventoryPage() {
   const supabase = useMemo(() => createClient(), []);
 
@@ -279,6 +333,11 @@ export default function InventoryPage() {
   // row at once instead of the usual pinned-to-Packaging-Inventory height +
   // internal scrollbar.
   const [labelInventoryExpanded, setLabelInventoryExpanded] = useState(false);
+
+  // All · Purple · Green switches on the Packaging and Label Inventory
+  // blocks — independent of each other, always start on All.
+  const [packagingColorFilter, setPackagingColorFilter] = useState<ConsumptionColorFilter>("all");
+  const [labelColorFilter, setLabelColorFilter] = useState<ConsumptionColorFilter>("all");
 
   // Main allocation table — horizontal scroll is contained to this block
   // (Chad, 2026-09-23: dragging the scrollbar used to scroll the whole page,
@@ -748,6 +807,22 @@ export default function InventoryPage() {
   // (parsed from its name) and its total allocated quantity across all
   // distributors this week. See lib/packaging.ts for the recipes.
   const consumption = computeConsumption(products, allocatedFor);
+
+  // Same math, counting only the allocation cells color-coded with one
+  // status flag (purple = Need to Package, green = On Hand). Cells with no
+  // color or any other color only count under "All".
+  function allocatedWithFlag(productId: string, flag: NonNullable<StatusFlag>) {
+    return distributors.reduce((sum, d) => {
+      const cell = allocations[`${productId}:${d.id}`];
+      return cell && cell.status_flag === flag ? sum + (cell.quantity ?? 0) : sum;
+    }, 0);
+  }
+  function consumptionFor(filter: ConsumptionColorFilter) {
+    if (filter === "all") return consumption;
+    return computeConsumption(products, (productId) => allocatedWithFlag(productId, filter));
+  }
+  const packagingConsumption = consumptionFor(packagingColorFilter);
+  const labelConsumption = consumptionFor(labelColorFilter);
 
   // Only can-based products need a label row — kegs and tap handles don't.
   const labelProducts = products
@@ -2138,9 +2213,17 @@ export default function InventoryPage() {
           ref={packagingCardRef}
           className="min-w-[380px] flex-1 shrink-0 self-start rounded-lg border border-neutral-800 bg-neutral-950 p-3"
         >
-          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
-            Packaging Inventory <span className="font-normal normal-case text-neutral-500">— Automatically adjusted as allocations are entered</span>
-          </h2>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+              Packaging Inventory <span className="font-normal normal-case text-neutral-500">— Automatically adjusted as allocations are entered</span>
+              {consumptionFilterTag(packagingColorFilter) && (
+                <span className="ml-2 rounded bg-yellow-500/15 px-1.5 py-0.5 font-normal normal-case text-yellow-300">
+                  {consumptionFilterTag(packagingColorFilter)}
+                </span>
+              )}
+            </h2>
+            <ConsumptionFilterSwitch value={packagingColorFilter} onChange={setPackagingColorFilter} />
+          </div>
           <table className="w-full text-xs">
             <thead>
               <tr className="text-neutral-500">
@@ -2153,7 +2236,7 @@ export default function InventoryPage() {
             <tbody className="divide-y divide-neutral-900">
               {PACKAGING_ITEMS.map((item) => {
                 const onHand = packaging[item.key]?.on_hand_qty ?? 0;
-                const consumed = consumption.packagingConsumed[item.key] ?? 0;
+                const consumed = packagingConsumption.packagingConsumed[item.key] ?? 0;
                 const remaining = onHand - consumed;
                 return (
                   <tr key={item.key}>
@@ -2284,7 +2367,14 @@ export default function InventoryPage() {
           <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
             <h2 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
               Label Inventory <span className="font-normal normal-case text-neutral-500">— Automatically adjusted as allocations are entered</span>
+              {consumptionFilterTag(labelColorFilter) && (
+                <span className="ml-2 rounded bg-yellow-500/15 px-1.5 py-0.5 font-normal normal-case text-yellow-300">
+                  {consumptionFilterTag(labelColorFilter)}
+                </span>
+              )}
             </h2>
+            <div className="flex shrink-0 items-center gap-2">
+            <ConsumptionFilterSwitch value={labelColorFilter} onChange={setLabelColorFilter} />
             <button
               onClick={() => setLabelInventoryExpanded((prev) => !prev)}
               title={
@@ -2296,6 +2386,7 @@ export default function InventoryPage() {
             >
               {labelInventoryExpanded ? "⤡ Collapse" : "⤢ Expand"}
             </button>
+            </div>
           </div>
           <div className={`min-h-0 flex-1 ${labelInventoryExpanded ? "" : "overflow-y-auto"}`}>
             <table className="w-full text-xs">
@@ -2310,7 +2401,7 @@ export default function InventoryPage() {
               <tbody className="divide-y divide-neutral-900">
                 {labelProducts.map((p) => {
                   const onHand = labelInventory[p.id]?.on_hand_qty ?? 0;
-                  const consumed = consumption.labelConsumed[p.id] ?? 0;
+                  const consumed = labelConsumption.labelConsumed[p.id] ?? 0;
                   const remaining = onHand - consumed;
                   return (
                     <tr key={p.id}>
