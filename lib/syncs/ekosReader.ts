@@ -452,16 +452,13 @@ export async function readEkosDistributorInventory(): Promise<EkosInventoryRow[]
   const { page } = await getEkosSession();
   await page.goto(DISTRIBUTOR_INVENTORY_URL, { waitUntil: "networkidle2" });
   await snap(page, "Distributor Inventory — just opened");
-  await waitFor(
-    () => page.evaluate(() => !!document.querySelector("table tbody tr") && /\d+ of \d+/.test(document.body.innerText)),
-    "the Distributor Inventory report",
-  );
+  let range = await waitForInventoryPage(page, null, "the Distributor Inventory report");
 
   // The report remembers the last page viewed — go back to page 1 first.
   for (let i = 0; i < 50; i++) {
     const moved = await page.evaluate(clickPager, "prev");
     if (!moved) break;
-    await sleep(700);
+    range = await waitForInventoryPage(page, range, "the previous page of the Distributor Inventory report");
   }
 
   const all: string[][] = [];
@@ -485,7 +482,7 @@ export async function readEkosDistributorInventory(): Promise<EkosInventoryRow[]
     all.push(...pageData.rows);
     const moved = await page.evaluate(clickPager, "next");
     if (!moved) break;
-    await sleep(800);
+    range = await waitForInventoryPage(page, range, "the next page of the Distributor Inventory report");
   }
 
   const iDist = headers.indexOf("Distributor");
@@ -506,6 +503,32 @@ export async function readEkosDistributorInventory(): Promise<EkosInventoryRow[]
   }));
 }
 
+// Waits until a Distributor Inventory page has really finished drawing.
+// After an arrow click Ekos shows a 1-row "loading" table with no
+// "26-50 of 97" label for about a second. The old fixed 0.8 s pause read
+// that loading row on a slow morning → "Read 26 of 0" (2026-10-15). Now:
+// wait until the label is back, shows a different page than before
+// (`notRange`), and the number of rows matches it (e.g. 26-50 → 25 rows).
+async function waitForInventoryPage(page: Page, notRange: string | null, what: string): Promise<string> {
+  let ready = "";
+  await waitFor(async () => {
+    const state = await page.evaluate(() => {
+      const range =
+        [...document.querySelectorAll("p, span")]
+          .map((p) => (p.textContent || "").trim())
+          .filter((t) => /^\d+-\d+ of \d+$/.test(t))
+          .pop() ?? "";
+      return { range, rows: document.querySelectorAll("table tbody tr").length };
+    });
+    if (!state.range || state.range === notRange) return false;
+    const m = state.range.match(/^(\d+)-(\d+) of (\d+)$/);
+    if (!m || state.rows !== Number(m[2]) - Number(m[1]) + 1) return false;
+    ready = state.range;
+    return true;
+  }, what);
+  return ready;
+}
+
 // ---------------------------------------------------------------------------
 // Tanks (added 2026-10-05) — claude/tank-sync-plan.md
 // ---------------------------------------------------------------------------
@@ -524,17 +547,36 @@ export async function readEkosTanks(): Promise<EkosTanksRead> {
 async function readTankMap(page: Page): Promise<{ map: EkosTankMapItem[]; frame: Frame }> {
   await page.goto(FACILITY_VIEW_URL, { waitUntil: "networkidle2" });
   await snap(page, "Tank map — just opened");
+  // Ekos draws the map in two steps: the rooms (SILO, Cold Storage #1, BK,
+  // MT…) about a second before the FV tanks. Reading as soon as a few spots
+  // showed up sometimes caught only the rooms → "didn't show any FV tanks"
+  // (2026-10-14 11:11, 2026-10-15 4:40). Now: wait until the map has FV
+  // tanks AND its spot count is the same on two checks in a row.
   let frame: Frame | undefined;
+  let lastCount = -1;
   await waitFor(async () => {
     for (const f of page.frames()) {
-      const n = await f.evaluate(() => document.querySelectorAll(".floorplanItemOuter").length).catch(() => 0);
-      if (n >= 5) {
-        frame = f;
-        return true;
+      const s = await f
+        .evaluate(() => {
+          const items = [...document.querySelectorAll(".floorplanItemOuter")];
+          const fv = items.filter((el) =>
+            /^FV/i.test((el.querySelector(".floorplanItemTitle")?.textContent || "").trim()),
+          ).length;
+          return { n: items.length, fv };
+        })
+        .catch(() => ({ n: 0, fv: 0 }));
+      if (s.n >= 5 && s.fv > 0) {
+        const steady = s.n === lastCount;
+        lastCount = s.n;
+        if (steady) {
+          frame = f;
+          return true;
+        }
+        return false;
       }
     }
     return false;
-  }, "the tank map (Facility View)");
+  }, "the tank map (Facility View) to finish drawing");
   await snap(page, "Tank map — ready");
 
   const raw = await frame!.evaluate(() =>
