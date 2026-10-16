@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getErnieTools, buildErnieSystemPrompt, runErnieTool } from "@/lib/ernie/tools";
+import { buildErnieMaps } from "@/lib/ernie/dataMap";
 import { danglingServerToolUseIds, withoutDanglingServerToolUse } from "@/lib/ernie/replyBudget";
 import { getSlackUserClient } from "@/lib/ernie/slackUserSession";
 import { closeBrowseSession, logBrowseStep } from "@/lib/ernie/browser";
@@ -402,8 +403,14 @@ async function askErnie(
   const requestId = crypto.randomUUID();
 
   if (appUser && hasSection(appUser.role, appUser.sections, ERNIE_SECTION, appUser.isSuperAdmin)) {
+    // Live data map + page map (2026-10-16 -- lib/ernie/dataMap.ts). The data
+    // map only when Ernie is signed in AS this person (otherwise he has no
+    // query tool here, and the master-key client isn't this person anyway).
+    const ernieMaps = runsAsUser
+      ? await buildErnieMaps(supabase, appUser.role, appUser.sections, appUser.isSuperAdmin).catch(() => null)
+      : null;
     systemPrompt =
-      buildErnieSystemPrompt(appUser.role, appUser.sections, appUser.isSuperAdmin, appUser.personNotes) + slackNote;
+      buildErnieSystemPrompt(appUser.role, appUser.sections, appUser.isSuperAdmin, appUser.personNotes, ernieMaps) + slackNote;
     const allowedDataTools = getErnieTools(appUser.role, appUser.sections, appUser.isSuperAdmin).filter(
       (t) => SLACK_ALLOWED_TOOL_NAMES.has(t.name) || (runsAsUser && SLACK_SIGNED_IN_EXTRA_TOOL_NAMES.has(t.name)),
     );

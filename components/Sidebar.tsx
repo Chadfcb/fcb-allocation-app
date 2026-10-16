@@ -48,6 +48,18 @@ import { hasSection, ERNIE_SECTION, type AnySectionKey, type SectionKey } from "
 import { createClient } from "@/lib/supabase/client";
 import NewBadge from "@/components/NewBadge";
 import { NEW_FEATURES, NEW_SEEN_EVENT, featureIdsOnPage } from "@/lib/newFeatures";
+// The page list itself lives in lib/appPages.ts — shared with Ernie (2026-10-16).
+import {
+  FINANCE_LINKS,
+  OPERATIONS_LINKS,
+  SALES_LINKS,
+  CALENDARS_LINKS,
+  ADMIN_LINKS,
+  ERNIE_LINKS,
+  POS_LINKS,
+  POS_LABEL_BRANDS,
+  UPC_BRANDS,
+} from "@/lib/appPages";
 
 const NEW_SIDEBAR_IDS: string[] = [
   // Only actual leaf pages and true sub-tree parents (like a brand under
@@ -132,60 +144,19 @@ const NEW_SIDEBAR_IDS: string[] = [
 // Operations. Distributor Data (added same day) holds each distributor's
 // payment terms and any other distributor-level finance data that comes
 // up later.
-const FINANCE_LINKS: { href: string; label: string; section: SectionKey }[] = [
-  { href: "/finance/cashflow-dashboard", label: "Cash Flow Dashboard", section: "cashflow_dashboard" },
-  { href: "/finance/distributor-data", label: "Distributor Data", section: "distributor_data" },
-];
+// FINANCE_LINKS — moved to lib/appPages.ts (2026-10-16) so Ernie reads the same page list.
 
-const OPERATIONS_LINKS: { href: string; label: string; section: SectionKey }[] = [
-  { href: "/purchase-orders", label: "Purchase Orders", section: "purchase_orders" },
-  { href: "/inventory", label: "Inventory & Allocation", section: "inventory_allocation" },
-  { href: "/distributor-inventory", label: "Distributor Inventory", section: "distributor_inventory" },
-  { href: "/build-orders", label: "Build Orders", section: "build_orders" },
-  { href: "/pricing", label: "Distributor Pricing", section: "distributor_pricing" },
-  { href: "/admin/weeks", label: "Weeks", section: "weeks" },
-  // Audit Log used to be last here — moved out to its own top-level nav
-  // entry below Users (see the standalone Link further down), per Chad,
-  // 2026-09-05: "lets move audit log to a main category, below Users, and
-  // out of operations." UPC's (new, same date) is no longer a flat link
-  // here either — like Labels, it's now its own expandable brand tree
-  // (see UPC_BRANDS / showUpcTree below) rendered right after Labels.
-  //
-  // Batch Ingredients — new standalone page, added 2026-09-16 per Chad,
-  // positioned right below UPC's. Placed after the Weeks entry here (not
-  // before it) so it lands in opsAfterLabels below, which renders after
-  // the Labels/UPC's tree block rather than before it.
-  { href: "/batch-ingredients", label: "Batch Ingredients", section: "batch_ingredients" },
-];
+// OPERATIONS_LINKS — moved to lib/appPages.ts (2026-10-16) so Ernie reads the same page list.
 
 // Sales sub-links get added here one at a time as each piece of the old FCB
 // Pricing desktop app is folded in — Price List first, then Margin Analysis,
 // Cost Per Case, and Contribution Margin.
-const SALES_LINKS: { href: string; label: string; section: SectionKey }[] = [
-  // Accounts — added 2026-10-07, per Chad + Art (sales system Feature 1).
-  // First in the Sales list since it's the base the rest of the sales
-  // system builds on.
-  { href: "/sales/accounts", label: "Accounts", section: "accounts" },
-  { href: "/sales/pricing", label: "Price List", section: "price_list" },
-  { href: "/sales/margin-analysis", label: "Margin Analysis", section: "margin_analysis" },
-  { href: "/sales/cost-per-case", label: "Cost Per Case", section: "cost_per_case" },
-  { href: "/sales/contribution-margin", label: "Contribution Margin", section: "contribution_margin" },
-  // Added 2026-09-05, per Chad, imported from a chain authorizations/
-  // mandates spreadsheet. Not their own Users > Edit toggle — they ride
-  // along with Sales access, same as every other link in this list (see
-  // lib/permissions.ts SECTION_GROUPS).
-  { href: "/sales/chain-authorizations", label: "Chain Authorizations", section: "chain_authorizations" },
-  { href: "/sales/chain-mandates", label: "Chain Mandates", section: "chain_mandates" },
-];
+// SALES_LINKS — moved to lib/appPages.ts (2026-10-16) so Ernie reads the same page list.
 
 // Calendars — currently just Events Calendar, structured as an expandable
 // parent (like Operations/Sales) rather than a flat link, since Chad plans
 // to add more calendar types under this same category later.
-const CALENDARS_LINKS: { href: string; label: string; section: SectionKey }[] = [
-  { href: "/events", label: "Events Calendar", section: "events_calendar" },
-  { href: "/chain-calendar", label: "Chain Calendar", section: "events_calendar" },
-  { href: "/social-media-calendar", label: "Social Media Calendar", section: "events_calendar" },
-];
+// CALENDARS_LINKS — moved to lib/appPages.ts (2026-10-16) so Ernie reads the same page list.
 
 const FINANCE_STORAGE_KEY = "fcb-sidebar-finance-expanded";
 const OPERATIONS_STORAGE_KEY = "fcb-sidebar-operations-expanded";
@@ -208,16 +179,9 @@ const ERNIE_STORAGE_KEY = "fcb-sidebar-ernie-expanded";
 // rules (Users: admins only; Audit Log: the "audit_log" section) — they're
 // just grouped here now instead of standing alone.
 const ADMIN_STORAGE_KEY = "fcb-sidebar-admin-expanded";
-const ADMIN_LINKS: { href: string; label: string; section?: SectionKey }[] = [
-  { href: "/admin/users", label: "Users" },
-  { href: "/admin/audit", label: "Audit Log", section: "audit_log" },
-  { href: "/admin/ekos-sync", label: "Ekos Sync" },
-];
+// ADMIN_LINKS — moved to lib/appPages.ts (2026-10-16) so Ernie reads the same page list.
 
-const ERNIE_LINKS: { href: string; label: string }[] = [
-  { href: "/ernie", label: "My Ernie AI" },
-  { href: "/ernie/projects", label: "Projects" },
-];
+// ERNIE_LINKS — moved to lib/appPages.ts (2026-10-16) so Ernie reads the same page list.
 
 type TopLevelCategory = "ernie" | "finance" | "operations" | "sales" | "calendars" | "pos" | "admin";
 
@@ -259,9 +223,7 @@ function topLevelCategoryForPath(pathname: string): TopLevelCategory | null {
 // items to — Football POS (added same day) is its first one: a flat file
 // library of football-season POS art, no brand/size nesting like Labels.
 const POS_STORAGE_KEY = "fcb-sidebar-pos-expanded";
-const POS_LINKS: { href: string; label: string; section: SectionKey }[] = [
-  { href: "/pos/football", label: "Football POS", section: "football_pos" },
-];
+// POS_LINKS — moved to lib/appPages.ts (2026-10-16) so Ernie reads the same page list.
 
 // Labels > <brand> > <size> — a nested tree (unlike Operations/Sales' other
 // links, which are one level of flat links), so its expand/collapse state
@@ -287,67 +249,7 @@ const POS_TREE_STORAGE_KEY = "fcb-sidebar-pos-tree-expanded";
 // look like it was opening everything at once.
 const PERSISTED_POS_TREE_KEYS = ["pos-labels", "upcs"];
 
-const POS_LABEL_BRANDS: {
-  treeKey: string;
-  label: string;
-  sizes: { href: string; label: string }[];
-}[] = [
-  {
-    treeKey: "pos-labels-fcb",
-    label: "FCB",
-    sizes: [
-      { href: "/pos/labels/fcb/19-2oz", label: "19.2 oz Labels" },
-      { href: "/pos/labels/fcb/16oz", label: "16 oz Labels" },
-      { href: "/pos/labels/fcb/12oz", label: "12 oz Labels" },
-    ],
-  },
-  {
-    treeKey: "pos-labels-speakeasy",
-    label: "Speakeasy",
-    sizes: [
-      { href: "/pos/labels/speakeasy/19-2oz", label: "19.2 oz Labels" },
-      { href: "/pos/labels/speakeasy/16oz", label: "16 oz Labels" },
-      { href: "/pos/labels/speakeasy/12oz", label: "12 oz Labels" },
-    ],
-  },
-  {
-    treeKey: "pos-labels-sonoma-cider",
-    label: "Sonoma Cider",
-    sizes: [
-      { href: "/pos/labels/sonoma-cider/19-2oz", label: "19.2 oz Labels" },
-      { href: "/pos/labels/sonoma-cider/16oz", label: "16 oz Labels" },
-      { href: "/pos/labels/sonoma-cider/12oz", label: "12 oz Labels" },
-    ],
-  },
-  // Oobli and Ugly Fresca — added 2026-09-05, flagged New! below since
-  // they're brand new to everyone (see NEW_SIDEBAR_IDS at the top of this
-  // file).
-  {
-    // Oobli only ships in 16oz, per Chad 2026-09-05 — no 19.2oz/12oz sizes.
-    treeKey: "pos-labels-oobli",
-    label: "Oobli",
-    sizes: [{ href: "/pos/labels/oobli/16oz", label: "16 oz Labels" }],
-  },
-  {
-    treeKey: "pos-labels-ugly-fresca",
-    label: "Ugly Fresca",
-    sizes: [
-      { href: "/pos/labels/ugly-fresca/19-2oz", label: "19.2 oz Labels" },
-      { href: "/pos/labels/ugly-fresca/16oz", label: "16 oz Labels" },
-      { href: "/pos/labels/ugly-fresca/12oz", label: "12 oz Labels" },
-    ],
-  },
-  {
-    // Catch-all for one-off custom labels that aren't one of FCB's own
-    // brands (e.g. Spartan Ale, made for San Jose State University) — added
-    // 2026-09-05, per Chad: "add a new sub category called Other, put the
-    // spartan ale in there." Only a 12oz bucket, since there's no reason to
-    // expect other sizes of a one-off label.
-    treeKey: "pos-labels-other",
-    label: "Other",
-    sizes: [{ href: "/pos/labels/other/12oz", label: "12 oz Labels" }],
-  },
-];
+// POS_LABEL_BRANDS — moved to lib/appPages.ts (2026-10-16) so Ernie reads the same page list.
 
 // UPC's > <brand> > <size> — added 2026-09-05, per Chad: "UPC has sub
 // categories, Same Sub categories as Labels," then, after seeing a
@@ -358,54 +260,7 @@ const POS_LABEL_BRANDS: {
 // posTreeExpanded collapse-state map as Labels (it's just a generic
 // id -> expanded record); this tree's own ids are prefixed "upc-" so they
 // don't collide with Labels' "pos-labels-*" keys.
-const UPC_BRANDS: {
-  treeKey: string;
-  label: string;
-  sizes: { href: string; label: string }[];
-}[] = [
-  {
-    treeKey: "upc-fcb",
-    label: "FCB",
-    sizes: [
-      { href: "/upcs/fcb/19-2oz", label: "19.2 oz UPC's" },
-      { href: "/upcs/fcb/16oz", label: "16 oz UPC's" },
-      { href: "/upcs/fcb/12oz", label: "12 oz UPC's" },
-    ],
-  },
-  {
-    treeKey: "upc-speakeasy",
-    label: "Speakeasy",
-    sizes: [
-      { href: "/upcs/speakeasy/19-2oz", label: "19.2 oz UPC's" },
-      { href: "/upcs/speakeasy/16oz", label: "16 oz UPC's" },
-      { href: "/upcs/speakeasy/12oz", label: "12 oz UPC's" },
-    ],
-  },
-  {
-    treeKey: "upc-sonoma-cider",
-    label: "Sonoma Cider",
-    sizes: [
-      { href: "/upcs/sonoma-cider/19-2oz", label: "19.2 oz UPC's" },
-      { href: "/upcs/sonoma-cider/16oz", label: "16 oz UPC's" },
-      { href: "/upcs/sonoma-cider/12oz", label: "12 oz UPC's" },
-    ],
-  },
-  {
-    // Oobli only ships in 16oz, per Chad 2026-09-05 — no 19.2oz/12oz sizes.
-    treeKey: "upc-oobli",
-    label: "Oobli",
-    sizes: [{ href: "/upcs/oobli/16oz", label: "16 oz UPC's" }],
-  },
-  {
-    treeKey: "upc-ugly-fresca",
-    label: "Ugly Fresca",
-    sizes: [
-      { href: "/upcs/ugly-fresca/19-2oz", label: "19.2 oz UPC's" },
-      { href: "/upcs/ugly-fresca/16oz", label: "16 oz UPC's" },
-      { href: "/upcs/ugly-fresca/12oz", label: "12 oz UPC's" },
-    ],
-  },
-];
+// UPC_BRANDS — moved to lib/appPages.ts (2026-10-16) so Ernie reads the same page list.
 
 // Every id nested under the Labels tree, for sectionShowsNew() to check
 // when deciding whether the Labels button itself (and, one level up,
@@ -979,6 +834,8 @@ export default function Sidebar({
               </button>
               {mainOpen && (
                 <>
+                  {/* These Main links are also listed in MAIN_LINKS
+                      (lib/appPages.ts) for Ernie — add/change one there too. */}
                   {role === "admin" && (
                     <Link href="/dashboard" className={topLinkClass("/dashboard")} onClick={() => dismissNew("/dashboard")}>
                       <IconHome />

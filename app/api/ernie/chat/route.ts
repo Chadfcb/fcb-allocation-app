@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getErnieTools, buildErnieSystemPrompt, runErnieTool, describeErnieToolLabel } from "@/lib/ernie/tools";
+import { buildErnieMaps } from "@/lib/ernie/dataMap";
 import { hasSection, getUserSections, ERNIE_SECTION } from "@/lib/permissions";
 import { buildFileContentBlocks, captureCodeExecutionFile, logErnieToolExecution, type ErnieFileRow } from "@/lib/ernie/files";
 import { closeBrowseSession, logBrowseStep } from "@/lib/ernie/browser";
@@ -247,6 +248,9 @@ export async function POST(req: NextRequest) {
       // genuine new user message) carries a different requestId.
       const requestId = crypto.randomUUID();
       const replyStartedAt = Date.now();
+      // Ernie's live data map + page map for this person (2026-10-16 —
+      // lib/ernie/dataMap.ts). Built once per reply, before the tool loop.
+      const ernieMaps = await buildErnieMaps(supabase, role, sections, isSuperAdmin).catch(() => null);
 
       try {
         // Resolve (or create) the conversation this message belongs to, and
@@ -504,7 +508,7 @@ export async function POST(req: NextRequest) {
               system: [
                 {
                   type: "text",
-                  text: buildErnieSystemPrompt(role, sections, isSuperAdmin, personNotes) + projectSystemPrompt,
+                  text: buildErnieSystemPrompt(role, sections, isSuperAdmin, personNotes, ernieMaps) + projectSystemPrompt,
                   cache_control: { type: "ephemeral", ttl: "1h" },
                 },
               ],
