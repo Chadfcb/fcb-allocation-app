@@ -33,7 +33,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   if (gate.error) return gate.error;
 
   const [{ data: profiles, error: profilesErr }, { data: access, error: accessErr }] = await Promise.all([
-    supabase.from("profiles").select("id, full_name, email, role").order("full_name", { ascending: true }),
+    // Removed users (2026-10-19) can't be given Project access.
+    supabase.from("profiles").select("id, full_name, email, role").is("removed_at", null).order("full_name", { ascending: true }),
     supabase.from("ernie_project_access").select("user_id, granted_at").eq("project_id", projectId),
   ]);
 

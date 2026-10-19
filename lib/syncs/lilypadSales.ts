@@ -137,6 +137,7 @@ interface Agg {
   distributor: string | null;
   ce: number;
   last_buy_date: string;
+  first_buy_in_month: string; // first invoice date that month (2026-10-19, for Re-Activated)
   size: string;
 }
 
@@ -182,8 +183,19 @@ export function rollUpInvoices(rows: Row[], windowStart: string, windowEnd: stri
     if (cur) {
       cur.ce += ce;
       if (date > cur.last_buy_date) cur.last_buy_date = date;
+      if (date < cur.first_buy_in_month) cur.first_buy_in_month = date;
     } else {
-      agg.set(key, { outlet_id: outlet, month, product, package: pkg, distributor: dist, ce, last_buy_date: date, size: sizeFor(pkg) });
+      agg.set(key, {
+        outlet_id: outlet,
+        month,
+        product,
+        package: pkg,
+        distributor: dist,
+        ce,
+        last_buy_date: date,
+        first_buy_in_month: date,
+        size: sizeFor(pkg),
+      });
     }
     if (!accounts.has(outlet)) {
       accounts.set(outlet, {
@@ -209,7 +221,17 @@ export async function syncLilypadSales(admin: SupabaseClient): Promise<SalesSync
   const { data: meta } = await admin.from("sales_data_meta").select("as_of").eq("id", 1).maybeSingle();
   const asOf = (meta?.as_of as string | null) ?? `${today.slice(0, 4)}-01-01`;
   const anchor = asOf < today ? asOf : today;
-  const windowStart = firstOfMonth(anchor, 2);
+  let windowStart = firstOfMonth(anchor, 2);
+  // Re-Activated (2026-10-19) needs each month's FIRST invoice date. Months
+  // saved before that (or by a full re-import) don't have it → re-pull this
+  // year from Jan 1, once; after that the normal window applies again.
+  const yearStart = `${today.slice(0, 4)}-01-01`;
+  const { count: missingFirst } = await admin
+    .from("sales_account_sales")
+    .select("id", { count: "exact", head: true })
+    .gte("month", yearStart)
+    .is("first_buy_in_month", null);
+  if ((missingFirst ?? 0) > 0 && yearStart < windowStart) windowStart = yearStart;
 
   const file = await runLilypadExport("invoices", `FCB-Data sync ${today} (sales)`, {
     distributors: ["ALL SELECTED"],

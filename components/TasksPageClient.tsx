@@ -48,7 +48,7 @@ const AVATAR_PALETTE = ["#d9a23d", "#4a9fd9", "#c96ad4", "#e05c5c", "#6ABC46", "
 
 type View = "categories" | "subcategories" | "items" | "detail" | "calendar";
 type Filter = "open" | "resolved";
-type ProfileLite = Pick<Profile, "full_name" | "email">;
+type ProfileLite = Pick<Profile, "full_name" | "email" | "removed_at">;
 
 function slugify(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, "-");
@@ -244,10 +244,12 @@ export default function TasksPageClient() {
   }, [supabase]);
 
   const loadProfiles = useCallback(async () => {
-    const { data } = await supabase.from("profiles").select("id, full_name, email");
+    // removed_at (2026-10-19): removed people still show by name on old
+    // tasks, but aren't offered in the "assign to" pickers.
+    const { data } = await supabase.from("profiles").select("id, full_name, email, removed_at");
     const map: Record<string, ProfileLite> = {};
-    (data as (Pick<Profile, "id" | "full_name" | "email">)[] | null)?.forEach((p) => {
-      map[p.id] = { full_name: p.full_name, email: p.email };
+    (data as (Pick<Profile, "id" | "full_name" | "email" | "removed_at">)[] | null)?.forEach((p) => {
+      map[p.id] = { full_name: p.full_name, email: p.email, removed_at: p.removed_at ?? null };
     });
     setProfiles(map);
   }, [supabase]);
@@ -962,7 +964,7 @@ export default function TasksPageClient() {
                 <div>
                   <p className="mb-1.5 text-xs text-neutral-400">Assign to (optional):</p>
                   <div className="flex flex-wrap gap-1.5">
-                    {Object.entries(profiles).map(([id, p]) => {
+                    {Object.entries(profiles).filter(([, p]) => !p.removed_at).map(([id, p]) => {
                       const selected = newTaskAssignees.includes(id);
                       const name = p.full_name?.trim() || firstNameFor(p);
                       return (
@@ -1338,7 +1340,7 @@ export default function TasksPageClient() {
                     {showAssigneePicker && (
                       <div className="absolute left-0 top-7 z-10 flex w-56 flex-col gap-1 rounded-lg border border-neutral-700 bg-neutral-900 p-2 shadow-lg">
                         {Object.entries(profiles)
-                          .filter(([id]) => !assigneesFor(selectedItem.id).includes(id))
+                          .filter(([id, p]) => !p.removed_at && !assigneesFor(selectedItem.id).includes(id))
                           .map(([id, p]) => (
                             <button
                               key={id}
@@ -1353,7 +1355,7 @@ export default function TasksPageClient() {
                             </button>
                           ))}
                         {Object.entries(profiles).filter(
-                          ([id]) => !assigneesFor(selectedItem.id).includes(id),
+                          ([id, p]) => !p.removed_at && !assigneesFor(selectedItem.id).includes(id),
                         ).length === 0 && (
                           <p className="px-2 py-1 text-xs text-neutral-600">Everyone&apos;s assigned.</p>
                         )}

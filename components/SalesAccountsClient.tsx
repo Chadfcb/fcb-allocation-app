@@ -123,7 +123,7 @@ const VIEW_KEY = "fcb-sales-accounts-view";
 const PAGE_SIZE = 100;
 const FETCH_SIZE = 1000;
 const COLUMNS =
-  "outlet_id,name,address,city,zip,phone,distributor,premise,best_day,last_buy_date,lifetime_ce,ce_12mo,buy_months_6,contact_count,report_buy_date,report_note";
+  "outlet_id,name,address,city,zip,phone,distributor,premise,best_day,last_buy_date,first_buy_date,bought_61_150,lifetime_ce,ce_12mo,buy_months_6,contact_count,report_buy_date,report_note";
 
 const fmt = (n: number | null | undefined) =>
   n == null ? "—" : Number(n).toLocaleString("en-US", { maximumFractionDigits: 1 });
@@ -381,7 +381,7 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
     if (!asOf) return [];
     return rows.map((r) => {
       const lifetime = Number(r.lifetime_ce) || 0;
-      const stage = stageFor({ ...r, buy_months_6: Number(r.buy_months_6) || 0 }, asOf, (Number(r.contact_count) || 0) > 0 || lastCheckins.has(r.outlet_id));
+      const stage = stageFor(r, asOf, (Number(r.contact_count) || 0) > 0 || lastCheckins.has(r.outlet_id));
       const rep = repFor(r.distributor);
       const repKey = rep ?? (r.distributor && NO_REP_DISTRIBUTORS.includes(r.distributor) ? NO_REP_KEY : null);
       const cls = classes.get(r.outlet_id) ?? null;
@@ -434,6 +434,7 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
             buying: list.filter((a) => a.stage !== "lead" && a.stage !== "prospect" && a.stage !== "former").length,
             active: n("active"),
             fresh: n("new"),
+            reactivated: n("reactivated"),
             plost: n("plost"),
             lost: n("lost"),
             big: list.filter((a) => a.big).length,
@@ -702,7 +703,7 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
           <>
 
           {!isC && (
-          <div className="grid grid-cols-2 gap-2.5 md:grid-cols-3 xl:grid-cols-7">
+          <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4 xl:grid-cols-8">
             {STAGE_ORDER.map((s) => {
               const on = filters.stage === s;
               const c = STAGE_INFO[s].color;
@@ -778,6 +779,7 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
                   <th className="px-3 py-2 text-right font-semibold">Buying</th>
                   <th className="px-3 py-2 text-right font-semibold">Active</th>
                   <th className="px-3 py-2 text-right font-semibold">New</th>
+                  <th className="px-3 py-2 text-right font-semibold">Re-Activated</th>
                   <th className="px-3 py-2 text-right font-semibold">Potential lost</th>
                   <th className="px-3 py-2 text-right font-semibold">Lost</th>
                   <th className="px-3 py-2 text-right font-semibold">Lost big</th>
@@ -799,7 +801,7 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
                     <td className="whitespace-nowrap px-3 py-2 text-neutral-100">
                       <span className="font-semibold">{r.name}</span> <span className="text-xs text-neutral-500">{r.territory}</span>
                     </td>
-                    {[r.buying, r.active, r.fresh, r.plost, r.lost, r.big, r.prospects, r.leads].map((v, i) => (
+                    {[r.buying, r.active, r.fresh, r.reactivated, r.plost, r.lost, r.big, r.prospects, r.leads].map((v, i) => (
                       <td key={i} className="px-3 py-2 text-right tabular-nums text-neutral-200">
                         {fmt(v)}
                       </td>
@@ -1250,6 +1252,9 @@ function AccountPanel({
     if (a.stage === "former")
       return `Last bought through ${a.distributor ?? "an unknown distributor"}, which isn't a current FCB distributor. History is kept, with no rep or reminders.`;
     let s = `Last buy ${fdate(a.last_buy_date)}, ${fmt(a.daysDark)} days before ${fdate(asOf)}. Bought in ${a.buy_months_6} of the last 6 months.`;
+    if (a.stage === "new") s += ` First order ever ${fdate(a.first_buy_date)}, so it's brand new.`;
+    if (a.stage === "reactivated") s += " Nothing bought in the 90 days before the last 60, so it's Re-Activated.";
+    if (a.stage === "active") s += " Also bought in the 90 days before the last 60, so it's Active.";
     if (a.big) s += ` Lifetime ${fmt(a.lifetime_ce)} CE, so it's flagged lost big (${BIG_LOST_CE}+ CE).`;
     return s;
   })();

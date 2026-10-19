@@ -32,6 +32,10 @@ export interface Profile {
   // token; this column is the real "used the app today" signal. Null for
   // someone who hasn't loaded a page since this was added.
   last_active_at: string | null;
+  // Access removed (left the company) — Admin → Users "Remove access",
+  // 2026-10-19 (sql/user_removal.sql). Null = active.
+  removed_at?: string | null;
+  removed_by?: string | null;
 }
 
 export interface Distributor {

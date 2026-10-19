@@ -7,7 +7,7 @@
 // the last buy date in the imported data, not today — so an old import
 // never makes every account look lost.
 
-export type AccountStage = "active" | "new" | "plost" | "lost" | "prospect" | "lead" | "former";
+export type AccountStage = "active" | "new" | "reactivated" | "plost" | "lost" | "prospect" | "lead" | "former";
 
 export interface SalesAccountRow {
   outlet_id: string;
@@ -20,6 +20,12 @@ export interface SalesAccountRow {
   premise: string | null;
   best_day: string | null;
   last_buy_date: string | null;
+  // First-ever buy date (exact day from LilyPad data; month start for older
+  // VIP history) and whether the account bought in the 90 days before the
+  // last 60 (days 61–150 back from the as-of date) — both filled by
+  // sales_accounts_refresh (sql/account_stages_reactivated.sql, 2026-10-19).
+  first_buy_date: string | null;
+  bought_61_150: boolean | null;
   lifetime_ce: number;
   ce_12mo: number;
   buy_months_6: number;
@@ -85,8 +91,17 @@ export const NO_REP_KEY = "__none";
 export const BIG_LOST_CE = 50;
 
 export const STAGE_INFO: Record<AccountStage, { label: string; color: string; rule: string }> = {
-  active: { label: "Active", color: "#6abc46", rule: "Bought in the last 60 days, and in 3+ of the last 6 months" },
-  new: { label: "New", color: "#5aa9f0", rule: "Bought in the last 60 days, in 1–2 of the last 6 months" },
+  // New / Re-Activated / Active (Chad, 2026-10-19): New = brand new, first
+  // order ever in the last 60 days. Re-Activated = bought in the last 60 days
+  // after buying nothing in the 90 days before that. Everyone else who bought
+  // in the last 60 days is Active.
+  active: { label: "Active", color: "#6abc46", rule: "Bought in the last 60 days, and in the 90 days before that" },
+  new: { label: "New", color: "#5aa9f0", rule: "Brand new — first order ever in the last 60 days" },
+  reactivated: {
+    label: "Re-Activated",
+    color: "#3fc9b0",
+    rule: "Bought in the last 60 days after buying nothing in the 90 days before that",
+  },
   plost: { label: "Potential lost", color: "#f0a63c", rule: "61–90 days since the last buy" },
   lost: { label: "Lost", color: "#ef6a55", rule: "90+ days since the last buy" },
   // Lead vs Prospect (Chad, 2026-10-07): a Lead is any account in the full
@@ -97,7 +112,7 @@ export const STAGE_INFO: Record<AccountStage, { label: string; color: string; ru
   lead: { label: "Lead", color: "#a08cf0", rule: "Never bought, no contact info, never visited or contacted" },
   former: { label: "Former distributor", color: "#7d8782", rule: "Last bought through a distributor we no longer use" },
 };
-export const STAGE_ORDER: AccountStage[] = ["active", "new", "plost", "lost", "prospect", "lead", "former"];
+export const STAGE_ORDER: AccountStage[] = ["active", "new", "reactivated", "plost", "lost", "prospect", "lead", "former"];
 
 export function repFor(distributor: string | null): string | null {
   return distributor ? (REP_BY_DISTRIBUTOR[distributor] ?? null) : null;
@@ -115,14 +130,17 @@ export function daysBetween(fromIso: string, toIso: string): number {
 // hasInfo = the account has at least one contact on file or at least one
 // check-in (that's what turns a Lead into a Prospect).
 export function stageFor(
-  a: Pick<SalesAccountRow, "distributor" | "last_buy_date" | "buy_months_6">,
+  a: Pick<SalesAccountRow, "distributor" | "last_buy_date" | "first_buy_date" | "bought_61_150">,
   asOf: string,
   hasInfo = false,
 ): AccountStage {
   if (isFormerDistributor(a.distributor)) return "former";
   if (!a.last_buy_date) return hasInfo ? "prospect" : "lead";
   const days = daysBetween(a.last_buy_date, asOf);
-  if (days <= 60) return a.buy_months_6 >= 3 ? "active" : "new";
+  if (days <= 60) {
+    if (a.first_buy_date && daysBetween(a.first_buy_date, asOf) <= 60) return "new";
+    return a.bought_61_150 ? "active" : "reactivated";
+  }
   if (days <= 90) return "plost";
   return "lost";
 }

@@ -3358,9 +3358,12 @@ export async function runErnieTool(
     }
 
     case "get_users": {
+      // Removed users (left the company, 2026-10-19) are left out — they
+      // can't be assigned anything.
       const { data, error } = await supabase
         .from("profiles")
         .select("id, full_name, email, role, created_at")
+        .is("removed_at", null)
         .order("full_name");
       if (error) throw error;
       return data;

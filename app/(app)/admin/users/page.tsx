@@ -288,6 +288,9 @@ export default function UsersPage() {
   // that be fixed after the fact. This is that fix.
   const [editFullName, setEditFullName] = useState("");
   const [saving, setSaving] = useState(false);
+  // Remove access / Restore (2026-10-19).
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -370,6 +373,35 @@ export default function UsersPage() {
       await load();
     } finally {
       setSaving(false);
+    }
+  }
+
+  // Remove access / Restore — app/api/admin/users/remove/route.ts does the
+  // work (login block, sections, tier) with the server's own key.
+  async function changeRemoval(target: UserRow, action: "remove" | "restore") {
+    const name = target.full_name?.trim() || target.email;
+    const question =
+      action === "remove"
+        ? `Remove ${name}'s access?\n\nTheir login is blocked right away, all their sections (and Ernie) are taken away, and they become an Employee. Their history (audit log, tasks, check-ins) stays. You can restore them later.`
+        : `Restore ${name}?\n\nTheir login works again, as an Employee with NO sections — use Edit access afterwards to give back what they should see.`;
+    if (!window.confirm(question)) return;
+    setRemoving(target.id);
+    setRemoveError(null);
+    try {
+      const res = await fetch("/api/admin/users/remove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, userId: target.id }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setRemoveError(body.error ?? "Something went wrong.");
+        return;
+      }
+      setEditingId(null);
+      await load();
+    } finally {
+      setRemoving(null);
     }
   }
 
@@ -542,7 +574,7 @@ export default function UsersPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-neutral-900">
-            {users.map((user) => {
+            {users.filter((u) => !u.removed_at).map((user) => {
               const tier = tierOf(user.role, user.is_super_admin);
               return (
                 <Fragment key={user.id}>
@@ -640,7 +672,18 @@ export default function UsersPage() {
                             onToggle={(key, checked) => setEditSections((prev) => ({ ...prev, [key]: checked }))}
                           />
 
-                          <div className="flex justify-end gap-2 pt-1">
+                          <div className="flex items-center justify-end gap-2 pt-1">
+                            {user.id !== viewerId && (tier === "employee" || viewerIsSuperAdmin) && (
+                              <button
+                                type="button"
+                                disabled={removing === user.id}
+                                onClick={() => changeRemoval(user, "remove")}
+                                className="mr-auto rounded-md border border-red-500/50 px-3 py-1.5 text-sm text-red-300 hover:bg-red-500/10 disabled:opacity-50"
+                                title="They left the company — block their login and take away all access. History is kept."
+                              >
+                                {removing === user.id ? "Removing…" : "Remove access"}
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => setEditingId(null)}
@@ -667,6 +710,47 @@ export default function UsersPage() {
           </tbody>
         </table>
       </div>
+
+      {removeError && <p className="text-sm text-red-400">{removeError}</p>}
+
+      {users.some((u) => u.removed_at) && (
+        <div className="overflow-hidden rounded-lg border border-neutral-800 bg-neutral-950">
+          <div className="border-b border-neutral-800 bg-neutral-900 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            Removed users — login blocked, no access. Their history stays in the app.
+          </div>
+          <table className="min-w-full divide-y divide-neutral-900 text-sm">
+            <tbody className="divide-y divide-neutral-900">
+              {users
+                .filter((u) => u.removed_at)
+                .map((user) => {
+                  const by = users.find((u) => u.id === user.removed_by);
+                  return (
+                    <tr key={user.id}>
+                      <td className="px-3 py-2 text-neutral-400">{user.full_name?.trim() || firstNameFor(user)}</td>
+                      <td className="px-3 py-2 text-neutral-500">{user.email}</td>
+                      <td className="px-3 py-2 text-neutral-500">
+                        Removed {new Date(user.removed_at as string).toLocaleDateString()}
+                        {by ? ` by ${by.full_name?.trim() || firstNameFor(by)}` : ""}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        {(user.role !== "admin" || viewerIsSuperAdmin) && (
+                          <button
+                            type="button"
+                            disabled={removing === user.id}
+                            onClick={() => changeRemoval(user, "restore")}
+                            className="rounded-md border border-neutral-700 px-3 py-1 text-xs text-neutral-300 hover:bg-neutral-900 disabled:opacity-50"
+                          >
+                            {removing === user.id ? "Restoring…" : "Restore"}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
