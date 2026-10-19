@@ -274,7 +274,11 @@ body {
   background: rgba(255, 255, 255, 0.03);
 }
 
-/* Firefox scrollbar styling to match the theme */
+/* Scroll bars, every one on the site (2026-10-19, per Chad: the light-grey
+   bar was hard to see — "make all scroll bars white"). The bar is the
+   theme's text color: white on dark themes, dark on a light Customize theme
+   (a white bar would vanish there). The track stays the dark page shade.
+   scrollbar-color works in Chrome, Edge and Firefox. */
 * {
-  scrollbar-color: var(--color-neutral-700, #404040) var(--color-neutral-900, #171717);
+  scrollbar-color: var(--color-white, #ffffff) var(--color-neutral-900, #171717);
 }

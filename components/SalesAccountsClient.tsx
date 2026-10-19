@@ -22,6 +22,7 @@ import { createClient } from "@/lib/supabase/client";
 import NewBadge from "@/components/NewBadge";
 import SalesProductLookup from "@/components/SalesProductLookup";
 import { useNewFeature } from "@/lib/newFeatures";
+import { downloadAccountsXlsx, exportFileName } from "@/lib/accountsExport";
 import {
   BIG_LOST_CE,
   HANDLED_CHOICES,
@@ -232,6 +233,9 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
   //               by distributor, rep, account and month range
   const [view, setView] = useState<"overview" | "classify" | "lookup">("overview");
   const lookupNew = useNewFeature("feature:accounts-product-lookup");
+  // Export report (Overview, 2026-10-19).
+  const exportNew = useNewFeature("feature:accounts-export");
+  const [exporting, setExporting] = useState(false);
   useEffect(() => {
     try {
       const saved = localStorage.getItem(VIEW_KEY);
@@ -553,6 +557,59 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
     setBulkMsg(`${what} on ${changes.length} account${changes.length === 1 ? "" : "s"}.`);
   }
 
+  // Export report — every account the filters + search match (all pages, in
+  // the current sort order). lib/accountsExport.ts builds the .xlsx.
+  async function exportReport() {
+    exportNew.dismiss();
+    if (exporting) return;
+    setExporting(true);
+    try {
+      const f = filters;
+      const parts: string[] = [];
+      if (f.dist) parts.push(f.dist);
+      if (f.rep) parts.push(f.rep === NO_REP_KEY ? "No FCB rep" : f.rep === "__unassigned" ? "Unassigned" : f.rep);
+      if (f.stage) parts.push(STAGE_INFO[f.stage].label);
+      if (f.prem) parts.push(`${f.prem} premise`);
+      if (f.big) parts.push("Lost big");
+      if (f.hasContact) parts.push("Has a contact");
+      if (query.trim()) parts.push(`"${query.trim()}"`);
+      const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date());
+      await downloadAccountsXlsx(
+        filtered.map((a) => ({
+          outlet_id: a.outlet_id,
+          name: a.name,
+          address: a.address,
+          city: a.city,
+          zip: a.zip,
+          phone: a.phone,
+          distributor: a.distributor,
+          rep: a.rep,
+          stage: STAGE_INFO[a.stage].label,
+          big: a.big,
+          last_buy_date: a.last_buy_date,
+          daysDark: a.daysDark,
+          ce_12mo: a.ce_12mo,
+          lifetime_ce: a.lifetime_ce,
+          premise: a.premise,
+          owner: OWNER_INFO[a.owner].label,
+          tier: a.tier,
+          handled: a.handled ? HANDLED_LABEL[a.handled] : null,
+          tags: a.tags,
+          lastCheckin: a.lastCheckin,
+        })),
+        {
+          filterLine: parts.length ? `Filters: ${parts.join(" · ")}` : "All accounts (no filters)",
+          asOf: asOf ? fdate(asOf) : null,
+          fileName: exportFileName(parts.length ? parts : ["All"], today),
+        },
+      );
+    } catch (e) {
+      alert(`Couldn't build the export: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   const sortBy = (k: SortKey) =>
     updateFilters(
       filters.sort === k ? { asc: !filters.asc } : { sort: k, asc: ["name", "distributor", "rep", "premise", "daysDark", "stage", "owner", "tier", "handled"].includes(k) },
@@ -869,11 +926,28 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
                 setQuery("");
                 updateFilters({ ...DEFAULT_FILTERS });
               }}
-              className="rounded-md border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-900"
+              className="ml-auto rounded-md border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-900"
             >
               Clear filters
             </button>
           </div>
+
+          {/* Export report row (Overview, 2026-10-19, per Chad): its own row
+              under the filters, button at the far right under Clear filters. */}
+          {!isC && (
+            <div className="-mt-2 flex items-center justify-end">
+              <button
+                type="button"
+                onClick={exportReport}
+                disabled={exporting || filtered.length === 0}
+                title={`Download every account these filters match (${fmt(filtered.length)}) as a spreadsheet`}
+                className="inline-flex items-center gap-2 rounded-md border border-neutral-700 px-3 py-1.5 text-sm text-neutral-300 hover:bg-neutral-900 disabled:opacity-40"
+              >
+                {exporting ? "Building report…" : "Export report"}
+                {exportNew.isNew && <NewBadge inline />}
+              </button>
+            </div>
+          )}
 
           {isC && selected.size > 0 && (
             <BulkBar

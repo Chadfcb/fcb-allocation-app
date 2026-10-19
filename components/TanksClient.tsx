@@ -92,8 +92,8 @@ const SNAP_CSS = `
 .tk-snap-row span:first-child{color:#A3ADA8}
 .tk-snap-pill{display:inline-block;padding:3px 11px;border-radius:999px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.05em}
 .tk-tasks-h{display:flex;justify-content:space-between;margin:10px 0 6px;font-size:11px;font-weight:600;color:#A3ADA8;text-transform:uppercase;letter-spacing:0.12em}
-.tk-tasks{max-height:150px;overflow-y:auto;padding-right:4px;display:flex;flex-direction:column;gap:6px;scrollbar-width:thin;scrollbar-color:rgba(143,209,110,0.45) transparent}
-.tk-tasks::-webkit-scrollbar{width:6px}.tk-tasks::-webkit-scrollbar-thumb{background:rgba(143,209,110,0.45);border-radius:6px}
+.tk-tasks{max-height:150px;overflow-y:auto;padding-right:4px;display:flex;flex-direction:column;gap:6px;scrollbar-width:thin;scrollbar-color:var(--color-white,#fff) transparent}
+.tk-tasks::-webkit-scrollbar{width:6px}.tk-tasks::-webkit-scrollbar-thumb{background:var(--color-white,#fff);border-radius:6px}
 .tk-task{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;align-items:start;padding:8px 10px;border-radius:12px;background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06)}
 .tk-task .d{font-family:ui-monospace,"SFMono-Regular",Consolas,monospace;font-size:11px;color:#8FD16E;padding-top:1px;white-space:nowrap}
 .tk-task .n{font-size:13px;line-height:1.35}
