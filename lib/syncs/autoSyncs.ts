@@ -12,6 +12,9 @@ import {
   readEkosOpenPurchaseOrders,
   readEkosTanks,
 } from "@/lib/syncs/ekosReader";
+import { closeLilypadSession } from "@/lib/syncs/lilypadReader";
+import { syncLilypadSales } from "@/lib/syncs/lilypadSales";
+import { syncLilypadCheckins } from "@/lib/syncs/lilypadCheckins";
 
 // Automatic Syncs (Admin → Ekos Sync) — added 2026-10-03.
 // Plan: claude/ekos-auto-sync-plan.md.
@@ -83,6 +86,22 @@ export const SYNC_SOURCES: SyncSourceDef[] = [
       return syncEkosTanks(createAdminClient(), read);
     },
   },
+  {
+    // Added 2026-10-16 (claude/lilypad-sync-plan.md). Signs into LilyPad with
+    // LILYPAD_USERNAME / LILYPAD_PASSWORD from Vercel.
+    key: "lilypad_sales",
+    label: "LilyPad — Account Sales",
+    description:
+      "What each distributor sold to each store/bar (LilyPad Invoices, every distributor). Re-pulls the last 2–3 months each run so late invoices fill in → Sales → Accounts.",
+    run: () => syncLilypadSales(createAdminClient()),
+  },
+  {
+    key: "lilypad_checkins",
+    label: "LilyPad — Check-ins",
+    description:
+      "Every rep visit, call and email logged in LilyPad (last 45 days each run; back to Jan 1 the first time) → Sales → Accounts check-ins.",
+    run: () => syncLilypadCheckins(createAdminClient()),
+  },
 ];
 
 // Who gets the email when an automatic run has a problem.
@@ -141,8 +160,9 @@ export async function runAutoSyncs(
     }
   }
 
-  // Sign out of Ekos / close the hidden browser.
+  // Sign out of Ekos / LilyPad — close the hidden browsers.
   await closeEkosSession();
+  await closeLilypadSession();
   if (options.snapshot) {
     stopSnapshots();
     return summary;
@@ -161,9 +181,9 @@ export async function runAutoSyncs(
     try {
       await sendMail({
         to: ALERT_EMAILS.join(","),
-        subject: "Ekos Sync needs a look",
+        subject: "Automatic sync needs a look",
         text: [
-          "The automatic Ekos sync ran but something didn't go cleanly:",
+          "The automatic sync (Ekos / LilyPad) ran but something didn't go cleanly:",
           "",
           ...lines,
           "Full details: FCB Data → Admin → Ekos Sync.",

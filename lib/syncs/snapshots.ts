@@ -40,8 +40,14 @@ export function snapshotsOn(): boolean {
   return rec !== null;
 }
 
+// Ekos, and LilyPad (added 2026-10-16) — the two sites the syncs read.
 function isEkos(host: string) {
-  return host === "app.goekos.com" || host.endsWith(".goekos-tech.net") || host.endsWith(".goekos.com");
+  return (
+    host === "app.goekos.com" ||
+    host.endsWith(".goekos-tech.net") ||
+    host.endsWith(".goekos.com") ||
+    host.endsWith(".fintech.com")
+  );
 }
 
 // Hide one-time sign-in codes; keep query strings off.
