@@ -16,9 +16,9 @@ import { isoDate, pick, readSheets, text, type Row } from "@/lib/syncs/lilypadFi
 //
 // Exports LilyPad's "Activities & Tasks" report — every activity type (Off /
 // On Premise Visit, Phone Call, Email/Text Contact, Distributor Visit, …),
-// every user including inactive ones, all accounts — with every column each
-// activity's form has (so Meeting Recap / Brands Sampled / Contact come
-// along), and saves them to sales_account_checkins with source
+// every user including inactive ones, all accounts — with LilyPad's default
+// columns (one sheet per activity type, incl. Meeting Recap / Brands Sampled
+// / Contact), and saves them to sales_account_checkins with source
 // "Lilypad: sync".
 //
 // Window: the last 45 days every run (late entries get picked up). If the app
@@ -33,25 +33,6 @@ import { isoDate, pick, readSheets, text, type Row } from "@/lib/syncs/lilypadFi
 
 const SOURCE = "Lilypad: sync";
 const RECENT_DAYS = 45;
-
-const DEFAULT_COLUMNS: [string, string][] = [
-  ["activityname", "Activity Name"],
-  ["datestartedat", "Date Started At"],
-  ["timestartedat", "Time Started At"],
-  ["datecompletedat", "Date Completed At"],
-  ["timecompletedat", "Time Completed At"],
-  ["user", "User"],
-  ["points", "Points"],
-  ["accountid", "Account Id"],
-  ["accountname", "Account Name"],
-  ["accountaddress", "Account Address"],
-  ["accountcity", "Account City"],
-  ["accountstate", "Account State"],
-  ["accountzip", "Account Zip"],
-  ["premise", "Premise"],
-  ["distributor", "Distributor"],
-  ["contact", "Contact"],
-];
 
 function daysAgo(iso: string, days: number): string {
   const d = new Date(Date.parse(`${iso}T12:00:00Z`) - days * 86400_000);
@@ -119,21 +100,26 @@ export async function syncLilypadCheckins(admin: SupabaseClient) {
     .from("sales_account_checkins")
     .select("id", { count: "exact", head: true })
     .like("source", "Lilypad:%");
-  const start = (lilypadCount ?? 0) > 0 ? daysAgo(today, RECENT_DAYS) : `${today.slice(0, 4)}-01-01`;
+  // Also back to Jan 1 once if none of the saved LilyPad check-ins has notes
+  // yet — the first run (2026-10-19) saved them without the answer columns.
+  const { count: withNotes } = await admin
+    .from("sales_account_checkins")
+    .select("id", { count: "exact", head: true })
+    .like("source", "Lilypad:%")
+    .not("notes", "is", null);
+  const start =
+    (lilypadCount ?? 0) > 0 && (withNotes ?? 0) > 0 ? daysAgo(today, RECENT_DAYS) : `${today.slice(0, 4)}-01-01`;
 
   const [defs, { teams, users }] = await Promise.all([readLilypadActivityDefs(), readLilypadTeamsAndUsers()]);
   if (!defs.length) throw new Error("LilyPad returned no activity types — the reader needs an update.");
 
-  const attributes = defs.map((d) => ({
-    id: d.id,
-    name: d.name,
-    attributes: [
-      ...DEFAULT_COLUMNS.map(([name, displayname]) => ({ displayname, name, ischecked: true, isShown: true })),
-      ...d.fields
-        .filter((f) => !DEFAULT_COLUMNS.some(([k]) => k === f.name))
-        .map((f) => ({ displayname: f.label, name: f.name, ischecked: true, isShown: true })),
-    ],
-  }));
+  // Columns: LilyPad's own default (attributes: []), the same setting Chad's
+  // working "pce" exports use. Listing every form field explicitly (the first
+  // build) gave the right column headers but EMPTY answers — Meeting Recap,
+  // Brands Sampled, etc. were blank for all 3,377 check-ins in the
+  // 2026-10-19 file, while LilyPad itself has them (e.g. Steve's 8/14 RENOS
+  // visit, "DID NOT SAMPLE").
+  const attributes: unknown[] = [];
 
   const file = await runLilypadExport(
     "activity",
@@ -155,6 +141,11 @@ export async function syncLilypadCheckins(admin: SupabaseClient) {
   );
   const sheets = await readSheets(file, "Account Id");
   const { rows, accounts, skipped } = checkinsFromSheets(sheets);
+  const rawDistributors = new Set<string>();
+  for (const sh of sheets) for (const r of sh.rows) {
+    const d = text(pick(r, "Distributor"));
+    if (d) rawDistributors.add(d);
+  }
 
   // Skip what's already in the app from the Sales Ops spreadsheets, and
   // anything listed twice in the file.
@@ -192,6 +183,14 @@ export async function syncLilypadCheckins(admin: SupabaseClient) {
       .upsert(accounts.slice(i, i + 1000), { onConflict: "outlet_id", ignoreDuplicates: true });
     if (error) issues.push(`Saving new accounts from check-ins failed: ${error.message}`);
   }
+  // The first run (2026-10-19) saved a few accounts with LilyPad's full
+  // distributor name (e.g. "Beauchamp Dist Co."); use the app's names.
+  for (const raw of rawDistributors) {
+    const mapped = appDistributor(raw);
+    if (mapped && mapped !== raw) {
+      await admin.from("sales_accounts").update({ distributor: mapped }).eq("distributor", raw);
+    }
+  }
 
   const { error: delError } = await admin
     .from("sales_account_checkins")
@@ -209,6 +208,6 @@ export async function syncLilypadCheckins(admin: SupabaseClient) {
   return {
     syncedCount: fresh.length,
     issues,
-    summary: `${fresh.length} check-ins saved from ${start} on (${alreadyThere} already in the app from Sales Ops${skipped ? `; ${skipped} activities with no account skipped` : ""})`,
+    summary: `${fresh.length} check-ins saved from ${start} on — ${fresh.filter((c) => c.notes).length} with notes, ${fresh.filter((c) => c.brands).length} with brands sampled (${alreadyThere} already in the app from Sales Ops${skipped ? `; ${skipped} activities with no account skipped` : ""})`,
   };
 }

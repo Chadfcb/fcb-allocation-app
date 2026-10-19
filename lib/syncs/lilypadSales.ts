@@ -42,6 +42,16 @@ const DISTRIBUTORS: [RegExp, string][] = [
   [/^ca03$|breakthru|wine warehouse/i, "Breakthru"],
   [/coast/i, "Coast"],
   [/superior/i, "Superior"],
+  // Older / other distributors, named the way the VIP-era data names them.
+  [/geyser/i, "Geyser"],
+  [/beauchamp/i, "Beauchamp"],
+  [/chrissa/i, "Chrissa"],
+  [/donaghy/i, "Donaghy"],
+  [/heimark/i, "Heimark Distributing Co."],
+  [/^classic/i, "Classic"],
+  [/^advance/i, "Advance"],
+  [/stone dist/i, "Stone Distribution"],
+  [/del ?reka/i, "Del Reka Distributing"],
 ];
 
 export function appDistributor(raw: string | null): string | null {
@@ -63,6 +73,41 @@ export function sizeFor(pkg: string | null): string {
   if (/16\s*oz/.test(s)) return "16oz";
   if (/12\s*oz/.test(s)) return "12oz";
   return "Other";
+}
+
+// Case equivalents per unit, same as sales_case_factor() in SQL.
+const CASE_FACTOR: Record<string, number> = {
+  "12oz": 1,
+  "16oz": 1.3333,
+  "19.2oz": 0.8,
+  "22oz bottle": 0.9167,
+  "1/2 bbl": 6.8889,
+  "1/6 bbl": 2.2933,
+  "13.2 gal keg": 5.8667,
+};
+
+// LilyPad's Invoices export cuts brand names at 25 characters ("Captain Save
+// A Hop HAZY I", "Nectarine Pie of the Tige") and has "Prohibition Ale" for
+// what the app calls "Prohibition Red Ale" (found in the first live file,
+// 2026-10-19). Match each one to the full name the app already uses: exact →
+// the only known name that starts with it → the only known name that has all
+// its words in order. Unknown brands keep LilyPad's name.
+export function canonicalProduct(raw: string, known: string[]): string {
+  const k = raw.trim();
+  const low = k.toLowerCase();
+  const exact = known.find((n) => n.toLowerCase() === low);
+  if (exact) return exact;
+  const starts = known.filter((n) => n.toLowerCase().startsWith(low));
+  if (starts.length === 1) return starts[0];
+  const words = low.split(/\s+/).filter(Boolean);
+  const inOrder = known.filter((n) => {
+    const nw = n.toLowerCase().split(/\s+/);
+    let i = 0;
+    for (const w of nw) if (i < words.length && (w === words[i] || (i === words.length - 1 && w.startsWith(words[i])))) i++;
+    return i === words.length;
+  });
+  if (inOrder.length === 1) return inOrder[0];
+  return k;
 }
 
 function premise(v: string | null): string | null {
@@ -95,22 +140,40 @@ interface Agg {
   size: string;
 }
 
-export function rollUpInvoices(rows: Row[], windowStart: string, windowEnd: string) {
+export function rollUpInvoices(rows: Row[], windowStart: string, windowEnd: string, knownProducts: string[] = []) {
   const agg = new Map<string, Agg>();
   const accounts = new Map<string, Record<string, string | null>>();
+  const nameFix = new Map<string, string>();
   let skipped = 0;
+  let zeroLines = 0;
   let maxDate = "";
   for (const r of rows) {
     const outlet = text(pick(r, "Account Id", /account ?id/i));
     const date = isoDate(pick(r, "Invoice Date", /invoice date|^date$/i));
-    const product = text(pick(r, "Brand Name", /brand/i));
+    const rawProduct = text(pick(r, "Brand Name", /brand name/i));
+    let product: string | null = null;
+    if (rawProduct) {
+      if (!nameFix.has(rawProduct)) nameFix.set(rawProduct, canonicalProduct(rawProduct, knownProducts));
+      product = nameFix.get(rawProduct)!;
+    }
     const pkg = text(pick(r, "Product Name", /product name|^product$/i));
     const dist = appDistributor(text(pick(r, "Distributor", /^distributor$/i)));
-    const ce = num(pick(r, "CE", /^ce$|case equiv/i));
+    const units = num(pick(r, "Units"));
+    let ce = num(pick(r, "CE", /^ce$|case equiv/i));
     if (date && (date < windowStart || date > windowEnd)) continue; // outside the window
     if (!outlet || !date || !product) {
       skipped++;
       continue;
+    }
+    // Lines with nothing sold (0 units, 0 CE) aren't sales — the VIP-era
+    // import never had them either. CE missing but units there → work CE out.
+    if (!ce) {
+      const factor = CASE_FACTOR[sizeFor(pkg)];
+      if (units && factor) ce = units * factor;
+      else {
+        zeroLines++;
+        continue;
+      }
     }
     if (date > maxDate) maxDate = date;
     const month = `${date.slice(0, 7)}-01`;
@@ -136,7 +199,8 @@ export function rollUpInvoices(rows: Row[], windowStart: string, windowEnd: stri
     }
   }
   const rowsOut = [...agg.values()].map((a) => ({ ...a, ce: Math.round(a.ce * 10000) / 10000 }));
-  return { rows: rowsOut, accounts: [...accounts.values()], skipped, maxDate };
+  const renamed = [...nameFix].filter(([a, b]) => a !== b).map(([a, b]) => `${a} → ${b}`);
+  return { rows: rowsOut, accounts: [...accounts.values()], skipped, zeroLines, renamed, maxDate };
 }
 
 export async function syncLilypadSales(admin: SupabaseClient): Promise<SalesSyncResult> {
@@ -155,10 +219,26 @@ export async function syncLilypadSales(admin: SupabaseClient): Promise<SalesSync
     worklist: [],
     target: 1, // All Accounts
   });
+  // Product (brand) names the app already uses, from the months before the
+  // window, so cut-off LilyPad names can be matched to them.
+  const known = new Set<string>();
+  for (let from = 0; from < 60_000; from += 1000) {
+    const { data, error } = await admin
+      .from("sales_account_sales")
+      .select("product")
+      .gte("month", "2024-01-01")
+      .lt("month", windowStart)
+      .order("id")
+      .range(from, from + 999);
+    if (error) throw new Error(`Reading product names failed: ${error.message}`);
+    for (const d of data ?? []) if (d.product) known.add(d.product as string);
+    if (!data || data.length < 1000) break;
+  }
+
   const sheets = await readSheets(file, "Account Id");
   if (!sheets.length) throw new Error("LilyPad's Invoices file had no sheet with an \"Account Id\" column — the reader needs an update.");
   const all = sheets.flatMap((s) => s.rows);
-  const { rows, accounts, skipped, maxDate } = rollUpInvoices(all, windowStart, today);
+  const { rows, accounts, skipped, zeroLines, renamed, maxDate } = rollUpInvoices(all, windowStart, today, [...known]);
   if (!rows.length) throw new Error(`LilyPad's Invoices file had no usable rows from ${windowStart} on — nothing changed.`);
 
   // Safety: compare each finished month with what's already in the app.
@@ -207,12 +287,18 @@ export async function syncLilypadSales(admin: SupabaseClient): Promise<SalesSync
     note: "LilyPad sync",
   });
   if (metaError) issues.push(`Couldn't save the as-of date: ${metaError.message}`);
-  if (skipped) issues.push(`${skipped} invoice lines skipped (missing account, date or brand).`);
+  // A stray line or two without an account is normal in LilyPad's file — only
+  // flag it when it's more than that.
+  if (skipped > Math.max(5, all.length * 0.01)) issues.push(`${skipped} invoice lines skipped (missing account, date or brand).`);
 
   const months = [...newCounts.keys()].sort();
   return {
     syncedCount: rows.length,
     issues,
-    summary: `${all.length} invoice lines → ${rows.length} account-month rows for ${months[0]?.slice(0, 7)}–${months[months.length - 1]?.slice(0, 7)}; data now through ${newAsOf}`,
+    summary:
+      `${all.length} invoice lines → ${rows.length} account-month rows for ${months[0]?.slice(0, 7)}–${months[months.length - 1]?.slice(0, 7)}; data now through ${newAsOf}` +
+      (zeroLines ? `; ${zeroLines} zero-quantity lines left out` : "") +
+      (skipped ? `; ${skipped} lines with no account/date/brand left out` : "") +
+      (renamed.length ? `; names matched: ${renamed.join(", ")}` : ""),
   };
 }
