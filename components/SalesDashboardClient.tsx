@@ -1,7 +1,10 @@
 "use client";
 
 // Sales Dashboard (Main → Sales Dashboard), added 2026-10-08, per Chad.
-// Three tabs:
+// Four tabs:
+//   Action Items — opens first (added 2026-10-20): every store not buying a
+//                 Mandate item, across all chains/distributors
+//                 (components/SalesActionItems.tsx).
 //   Gap Report  — pick a chain + distributor. By store: each store's carried
 //                 items (CE in the last 90 days, last sold) and gaps. By item:
 //                 each item's store count across every chain for a distributor.
@@ -18,6 +21,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import SalesDashboardSetup from "@/components/SalesDashboardSetup";
+import SalesActionItems, { useActionItems, type ActionRow } from "@/components/SalesActionItems";
 import NewBadge from "@/components/NewBadge";
 import { useNewFeature } from "@/lib/newFeatures";
 import { isFormerDistributor } from "@/lib/salesAccounts";
@@ -42,6 +46,15 @@ import {
 } from "@/lib/salesDashboard";
 
 export type Supa = ReturnType<typeof createClient>;
+
+// Action Items → "open this store in the Gap Report".
+interface GapJump {
+  chain: string;
+  dist: string;
+  q: string;
+  outlet: string;
+  n: number;
+}
 
 export const SEL = "rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1.5 text-sm text-neutral-100";
 const BTN = "rounded-md border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-800 disabled:opacity-50";
@@ -95,12 +108,13 @@ function StatusLegend() {
   );
 }
 
-// "How to read this" button on the Gap Report (added 2026-10-20, per Chad —
-// so anyone can read the report without help). Opens a pop-up over the page
-// (close with ✕, Esc or a click outside) so it never takes up room on screen.
-function HowToRead({ view, chain, dist, asOf }: { view: "store" | "item"; chain: string; dist: string; asOf: string | null }) {
+// "? How to read this" button (added 2026-10-20, per Chad — so anyone can
+// read the page without help). Opens a pop-up over the page (close with ✕,
+// Esc or a click outside) so it never takes up room on screen. Used by the
+// Gap Report and Action Items.
+export function HelpButton({ id, title, featureId, children }: { id: string; title: string; featureId?: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
-  const helpNew = useNewFeature("feature:gap-report-help");
+  const helpNew = useNewFeature(featureId ?? "");
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -109,39 +123,51 @@ function HowToRead({ view, chain, dist, asOf }: { view: "store" | "item"; chain:
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
-  const ch = chain || "the chain";
-  const sameDist = dist ? ` (${dist})` : "";
-  const since = asOf ? ` (the ${CARRIED_DAYS} days up to ${fdate(asOf)}, the newest sales data we have)` : "";
   return (
     <>
       <button
-        id="gap-help"
+        id={id}
         type="button"
         onClick={() => {
-          helpNew.dismiss();
+          if (featureId) helpNew.dismiss();
           setOpen(true);
         }}
         className="inline-flex items-center gap-1.5 rounded-md border border-sky-500/50 px-3 py-1.5 text-sm text-sky-200 hover:bg-sky-500/10"
       >
         <span className="flex h-4 w-4 items-center justify-center rounded-full border border-sky-400 text-[10px] font-bold">?</span>
         How to read this
-        {helpNew.isNew && <NewBadge inline />}
+        {featureId && helpNew.isNew && <NewBadge inline />}
       </button>
       {open && (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 pt-16" onClick={() => setOpen(false)}>
           <div
             role="dialog"
             aria-modal="true"
-            aria-label="How to read this"
+            aria-label={title}
             className="w-full max-w-3xl rounded-lg border border-neutral-700 bg-neutral-900 p-4 text-sm text-neutral-300 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center gap-2">
-              <h2 className="text-base font-semibold text-neutral-100">How to read the Gap Report</h2>
+              <h2 className="text-base font-semibold text-neutral-100">{title}</h2>
               <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="ml-auto rounded px-2 text-lg leading-none text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100">
                 ✕
               </button>
             </div>
+            {children}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// The Gap Report's help pop-up.
+function HowToRead({ view, chain, dist, asOf }: { view: "store" | "item"; chain: string; dist: string; asOf: string | null }) {
+  const ch = chain || "the chain";
+  const sameDist = dist ? ` (${dist})` : "";
+  const since = asOf ? ` (the ${CARRIED_DAYS} days up to ${fdate(asOf)}, the newest sales data we have)` : "";
+  return (
+    <HelpButton id="gap-help" title="How to read the Gap Report" featureId="feature:gap-report-help">
             <div className="grid gap-4 md:grid-cols-2">
           {view === "store" ? (
             <ul className="list-disc space-y-1 pl-5">
@@ -194,10 +220,7 @@ function HowToRead({ view, chain, dist, asOf }: { view: "store" | "item"; chain:
             </p>
           </div>
             </div>
-          </div>
-        </div>
-      )}
-    </>
+    </HelpButton>
   );
 }
 
@@ -206,7 +229,10 @@ export default function SalesDashboardClient() {
   const [ov, setOv] = useState<DashOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
-  const [tab, setTab] = useState<"gap" | "setup" | "off">("gap");
+  const [tab, setTab] = useState<"actions" | "gap" | "setup" | "off">("actions");
+  // Clicking a store on Action Items opens it in the Gap Report.
+  const [jump, setJump] = useState<GapJump | null>(null);
+  const actionsNew = useNewFeature("feature:sales-action-items");
   const [setupStart, setSetupStart] = useState<"chains" | "items">("chains");
   const [version, setVersion] = useState(0); // bumps when anything changes → reports reload
 
@@ -246,8 +272,10 @@ export default function SalesDashboardClient() {
   }, [supabase, loadOverview]);
 
   const resolved = useMemo(() => (ov ? resolveLists(ov) : null), [ov]);
+  const actions = useActionItems(supabase, ov, resolved, version);
 
   const TABS = [
+    ["actions", actions.rows ? `Action Items (${actions.rows.length})` : "Action Items"],
     ["gap", "Gap Report"],
     ["setup", "Chain setup"],
     ["off", "Turned off accounts"],
@@ -271,17 +299,31 @@ export default function SalesDashboardClient() {
             type="button"
             onClick={() => {
               setSetupStart("chains");
+              setJump(null);
+              if (k === "actions") actionsNew.dismiss();
               setTab(k);
             }}
             className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${tab === k ? "border-[#6abc46] text-neutral-100" : "border-transparent text-neutral-400 hover:text-neutral-200"}`}
           >
             {label}
+            {k === "actions" && actionsNew.isNew && <NewBadge inline />}
           </button>
         ))}
       </div>
       {error && <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>}
+      {ov && tab === "actions" && (
+        <SalesActionItems
+          data={actions}
+          onOpenStore={(r: ActionRow) => {
+            actionsNew.dismiss();
+            setJump({ chain: r.chain, dist: r.store.distributor, q: r.store.name, outlet: r.store.outlet_id, n: Date.now() });
+            setTab("gap");
+          }}
+        />
+      )}
       {ov && resolved && tab === "gap" && (
         <GapReport
+          jump={jump}
           supabase={supabase}
           ov={ov}
           resolved={resolved}
@@ -362,6 +404,7 @@ function GapReport({
   version,
   onChanged,
   onFixMatching,
+  jump,
 }: {
   supabase: Supa;
   ov: DashOverview;
@@ -370,6 +413,7 @@ function GapReport({
   version: number;
   onChanged: () => void;
   onFixMatching: () => void;
+  jump: GapJump | null;
 }) {
   const [view, setView] = useState<"store" | "item">("store");
   const [dist, setDist] = useState("");
@@ -389,6 +433,14 @@ function GapReport({
       // ignore
     }
   }, []);
+  // Opened from Action Items: that store's chain + distributor, searched and opened.
+  useEffect(() => {
+    if (!jump) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time jump from the Action Items tab
+    setView("store");
+    setDist(jump.dist);
+    setChain(jump.chain);
+  }, [jump]);
   const pickDist = (d: string) => {
     setDist(d);
     try {
@@ -551,6 +603,7 @@ function GapReport({
               rules={resolved.rules.get(chain)}
               unmatched={unmatched}
               onFixMatching={onFixMatching}
+              focus={jump && jump.chain === chain ? jump : null}
               onChanged={onChanged}
             />
           )
@@ -572,6 +625,7 @@ function ByStoreView({
   rules,
   unmatched,
   onFixMatching,
+  focus,
   onChanged,
 }: {
   supabase: Supa;
@@ -582,6 +636,7 @@ function ByStoreView({
   rules: ChainRules | undefined;
   unmatched: Unmatched[];
   onFixMatching: () => void;
+  focus: GapJump | null;
   onChanged: () => void;
 }) {
   const reports = useMemo(() => buildStoreReports(data, rules), [data, rules]);
@@ -589,6 +644,13 @@ function ByStoreView({
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [statusErr, setStatusErr] = useState<string | null>(null);
+  // Opened from Action Items: search for that store and open it.
+  useEffect(() => {
+    if (!focus) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time jump from the Action Items tab
+    setQ(focus.q);
+    setOpen(new Set([focus.outlet]));
+  }, [focus]);
 
   const shown = useMemo(() => {
     const qq = q.trim().toLowerCase();

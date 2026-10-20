@@ -29,7 +29,7 @@ export type BrandTree = {
 export const MAIN_LINKS: AppLink<SectionKey | typeof ERNIE_SECTION | null>[] = [
   { href: "/dashboard", label: "Dashboard", section: null, about: "Admin overview of the current week: inventory, orders, purchase orders and other live blocks." },
   { href: "/tanks", label: "Tanks", section: "tanks", about: "3D view of every fermenter with its live Ekos batch, stage and temperature, plus pallets of kegs, cans, lids and label rolls on hand." },
-  { href: "/sales-dashboard", label: "Sales Dashboard", section: "sales_dashboard", about: "Chain gap report (which chain stores carry / don't carry each product, by distributor), chain setup, turned-off accounts." },
+  { href: "/sales-dashboard", label: "Sales Dashboard", section: "sales_dashboard", about: "Action Items (every chain store not buying a Mandate / must-carry item, with rep, phone and last check-in), chain gap report (which chain stores carry / don't carry each product, by distributor), chain setup, turned-off accounts." },
   { href: "/ernie", label: "My Ernie AI", section: ERNIE_SECTION, about: "This chat." },
   { href: "/ernie/projects", label: "Projects", section: ERNIE_SECTION, about: "Ernie Projects: shared rooms with their own file library." },
   { href: "/tasks", label: "Tasks", section: "tasks", about: "Company task tracker: tasks by category with status, due dates, assignees and comments." },

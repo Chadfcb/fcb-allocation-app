@@ -31,6 +31,12 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    id: "feature:sales-action-items",
+    page: "/sales-dashboard",
+    label: "Action Items tab on Sales Dashboard (every store missing a Mandate / must-carry item)",
+    added: "2026-10-20",
+  },
+  {
     id: "feature:gap-report-help",
     page: "/sales-dashboard",
     label: "How to read this box on Sales Dashboard > Gap Report (what Carries, Gaps, Mandate, Flex and Not set mean)",
