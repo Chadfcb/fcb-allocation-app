@@ -24,14 +24,16 @@ export default function SalesDashboardSetup({
   resolved,
   userId,
   onChanged,
+  startOn = "chains",
 }: {
   supabase: Supa;
   ov: DashOverview;
   resolved: Resolved;
   userId: string | null;
   onChanged: () => void;
+  startOn?: "chains" | "items"; // the Gap Report's "not matched" button opens Item matching
 }) {
-  const [sub, setSub] = useState<"chains" | "items">("chains");
+  const [sub, setSub] = useState<"chains" | "items">(startOn);
   return (
     <div className="flex flex-col gap-3">
       <div className="flex overflow-hidden self-start rounded-md border border-neutral-700">

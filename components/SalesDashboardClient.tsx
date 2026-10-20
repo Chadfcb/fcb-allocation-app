@@ -95,45 +95,54 @@ function StatusLegend() {
   );
 }
 
-// "How to read this" box on the Gap Report (added 2026-10-20, per Chad — so
-// anyone can read the report without help). Open by default;
-// Hide is remembered per browser.
-const HELP_KEY = "fcb-sales-dash-help-hidden";
+// "How to read this" button on the Gap Report (added 2026-10-20, per Chad —
+// so anyone can read the report without help). Opens a pop-up over the page
+// (close with ✕, Esc or a click outside) so it never takes up room on screen.
 function HowToRead({ view, chain, dist, asOf }: { view: "store" | "item"; chain: string; dist: string; asOf: string | null }) {
-  const [hidden, setHidden] = useState(false);
+  const [open, setOpen] = useState(false);
   const helpNew = useNewFeature("feature:gap-report-help");
   useEffect(() => {
-    try {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- remembered choice (per browser), read after load
-      setHidden(localStorage.getItem(HELP_KEY) === "1");
-    } catch {
-      // ignore
-    }
-  }, []);
-  const toggle = () => {
-    helpNew.dismiss();
-    const next = !hidden;
-    setHidden(next);
-    try {
-      localStorage.setItem(HELP_KEY, next ? "1" : "0");
-    } catch {
-      // ignore
-    }
-  };
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
   const ch = chain || "the chain";
   const sameDist = dist ? ` (${dist})` : "";
   const since = asOf ? ` (the ${CARRIED_DAYS} days up to ${fdate(asOf)}, the newest sales data we have)` : "";
   return (
-    <div className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-3 text-sm text-neutral-300">
-      <div className="flex items-center gap-2">
-        <h2 className="font-semibold text-sky-200">How to read this</h2>
+    <>
+      <button
+        id="gap-help"
+        type="button"
+        onClick={() => {
+          helpNew.dismiss();
+          setOpen(true);
+        }}
+        className="inline-flex items-center gap-1.5 rounded-md border border-sky-500/50 px-3 py-1.5 text-sm text-sky-200 hover:bg-sky-500/10"
+      >
+        <span className="flex h-4 w-4 items-center justify-center rounded-full border border-sky-400 text-[10px] font-bold">?</span>
+        How to read this
         {helpNew.isNew && <NewBadge inline />}
-        <button type="button" onClick={toggle} className="ml-auto text-xs text-sky-300 hover:text-sky-100">
-          {hidden ? "Show" : "Hide"}
-        </button>
-      </div>
-      {!hidden && (
-        <div className="mt-2 grid gap-3 lg:grid-cols-2">
+      </button>
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 pt-16" onClick={() => setOpen(false)}>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="How to read this"
+            className="w-full max-w-3xl rounded-lg border border-neutral-700 bg-neutral-900 p-4 text-sm text-neutral-300 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center gap-2">
+              <h2 className="text-base font-semibold text-neutral-100">How to read the Gap Report</h2>
+              <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="ml-auto rounded px-2 text-lg leading-none text-neutral-400 hover:bg-neutral-800 hover:text-neutral-100">
+                ✕
+              </button>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
           {view === "store" ? (
             <ul className="list-disc space-y-1 pl-5">
               <li>
@@ -184,9 +193,11 @@ function HowToRead({ view, chain, dist, asOf }: { view: "store" | "item"; chain:
               When Chain Mandates lists specific store numbers for an item, it&apos;s Mandate for those stores only and Flex for the rest of the chain.
             </p>
           </div>
+            </div>
+          </div>
         </div>
       )}
-    </div>
+    </>
   );
 }
 
@@ -196,6 +207,7 @@ export default function SalesDashboardClient() {
   const [error, setError] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [tab, setTab] = useState<"gap" | "setup" | "off">("gap");
+  const [setupStart, setSetupStart] = useState<"chains" | "items">("chains");
   const [version, setVersion] = useState(0); // bumps when anything changes → reports reload
 
   const loadOverview = useCallback(async () => {
@@ -257,7 +269,10 @@ export default function SalesDashboardClient() {
             key={k}
             id={`dash-tab-${k}`}
             type="button"
-            onClick={() => setTab(k)}
+            onClick={() => {
+              setSetupStart("chains");
+              setTab(k);
+            }}
             className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${tab === k ? "border-[#6abc46] text-neutral-100" : "border-transparent text-neutral-400 hover:text-neutral-200"}`}
           >
             {label}
@@ -266,10 +281,21 @@ export default function SalesDashboardClient() {
       </div>
       {error && <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>}
       {ov && resolved && tab === "gap" && (
-        <GapReport supabase={supabase} ov={ov} resolved={resolved} userId={userId} version={version} onChanged={loadOverview} />
+        <GapReport
+          supabase={supabase}
+          ov={ov}
+          resolved={resolved}
+          userId={userId}
+          version={version}
+          onChanged={loadOverview}
+          onFixMatching={() => {
+            setSetupStart("items");
+            setTab("setup");
+          }}
+        />
       )}
       {ov && resolved && tab === "setup" && (
-        <SalesDashboardSetup supabase={supabase} ov={ov} resolved={resolved} userId={userId} onChanged={loadOverview} />
+        <SalesDashboardSetup supabase={supabase} ov={ov} resolved={resolved} userId={userId} onChanged={loadOverview} startOn={setupStart} />
       )}
       {ov && tab === "off" && <TurnedOff supabase={supabase} userId={userId} version={version} onChanged={loadOverview} />}
     </div>
@@ -335,6 +361,7 @@ function GapReport({
   userId,
   version,
   onChanged,
+  onFixMatching,
 }: {
   supabase: Supa;
   ov: DashOverview;
@@ -342,6 +369,7 @@ function GapReport({
   userId: string | null;
   version: number;
   onChanged: () => void;
+  onFixMatching: () => void;
 }) {
   const [view, setView] = useState<"store" | "item">("store");
   const [dist, setDist] = useState("");
@@ -502,9 +530,11 @@ function GapReport({
             </select>
           </label>
         )}
-        {busy && <span className="ml-auto text-xs text-neutral-400">Loading…</span>}
+        <div className="ml-auto flex items-center gap-3">
+          {busy && <span className="text-xs text-neutral-400">Loading…</span>}
+          <HowToRead view={view} chain={chainOk ? chain : ""} dist={dist} asOf={ov.as_of} />
+        </div>
       </div>
-      <HowToRead view={view} chain={chainOk ? chain : ""} dist={dist} asOf={ov.as_of} />
       {err && <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{err}</p>}
       {view === "store" &&
         (!chain || !chainOk ? (
@@ -520,6 +550,7 @@ function GapReport({
               dist={dist}
               rules={resolved.rules.get(chain)}
               unmatched={unmatched}
+              onFixMatching={onFixMatching}
               onChanged={onChanged}
             />
           )
@@ -540,6 +571,7 @@ function ByStoreView({
   dist,
   rules,
   unmatched,
+  onFixMatching,
   onChanged,
 }: {
   supabase: Supa;
@@ -549,6 +581,7 @@ function ByStoreView({
   dist: string;
   rules: ChainRules | undefined;
   unmatched: string[];
+  onFixMatching: () => void;
   onChanged: () => void;
 }) {
   const reports = useMemo(() => buildStoreReports(data, rules), [data, rules]);
@@ -710,12 +743,7 @@ function ByStoreView({
             Only change a label if that list is wrong — your pick applies to <b className="text-neutral-400">every {chain} store, for every distributor</b>, not just the one
             you&apos;ve filtered to.
           </p>
-          {unmatched.length > 0 && (
-            <p className="text-xs text-amber-300/90">
-              {unmatched.length} item{unmatched.length === 1 ? "" : "s"} on {chain}&apos;s lists couldn&apos;t be matched to one of our products, so {unmatched.length === 1 ? "it isn't" : "they aren't"}{" "}
-              shown here: {unmatched.join("; ")}. Fix on the Chain setup tab → Item matching.
-            </p>
-          )}
+          {unmatched.length > 0 && <UnmatchedButton chain={chain} items={unmatched} onFix={onFixMatching} />}
         </div>
         {statusErr && <p className="mb-2 text-sm text-red-300">{statusErr}</p>}
         {items.length === 0 ? (
@@ -833,6 +861,45 @@ function ByStoreView({
         })}
         {shown.length === 0 && <p className="text-sm text-neutral-500">No stores.</p>}
       </div>
+    </div>
+  );
+}
+
+// "⚠ N list items not matched" — a button instead of a block of text. Opens a
+// small panel listing them, with a button straight to Chain setup → Item matching.
+function UnmatchedButton({ chain, items, onFix }: { chain: string; items: string[]; onFix: () => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative self-start">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/60 bg-amber-500/10 px-2.5 py-1 text-xs font-semibold text-amber-200 hover:bg-amber-500/20"
+      >
+        ⚠ {items.length} list item{items.length === 1 ? "" : "s"} not matched {open ? "▴" : "▾"}
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-1 w-[26rem] max-w-[90vw] rounded-lg border border-amber-500/40 bg-neutral-900 p-3 text-xs text-neutral-300 shadow-2xl">
+          <p className="mb-2">
+            {items.length === 1 ? "This item is" : "These items are"} on {chain}&apos;s Chain Mandates / Chain Authorizations list, but couldn&apos;t be matched to one of our
+            products, so {items.length === 1 ? "it doesn't" : "they don't"} show on this report:
+          </p>
+          <ul className="mb-3 list-disc space-y-0.5 pl-5 text-neutral-200">
+            {items.map((t, i) => (
+              <li key={i}>{t}</li>
+            ))}
+          </ul>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={onFix} className="rounded-md bg-amber-500 px-3 py-1 font-semibold text-neutral-950 hover:bg-amber-400">
+              Fix in Chain setup → Item matching
+            </button>
+            <button type="button" onClick={() => setOpen(false)} className="px-2 text-neutral-400 hover:text-neutral-100">
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
