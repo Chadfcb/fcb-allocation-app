@@ -424,12 +424,12 @@ function GapReport({
   // Lines on this chain's Chain Mandates / Chain Authorizations lists that
   // couldn't be matched to one of our products — they can't show a label.
   const unmatched = useMemo(() => {
-    const out: string[] = [];
+    const out: Unmatched[] = [];
     const add = (type: "mandate" | "auth", items: { id: string; chain_id: string; text: string }[]) => {
       for (const it of items) {
         if (resolved.chainOf.get(`${type}:${it.chain_id}`)?.chain !== chain) continue;
         const l = resolved.links.get(`${type}:${it.id}`);
-        if (!l?.product || !l.size) out.push(it.text);
+        if (!l?.product || !l.size) out.push({ text: it.text, list: type });
       }
     };
     add("mandate", ov.mandate_items);
@@ -580,7 +580,7 @@ function ByStoreView({
   chain: string;
   dist: string;
   rules: ChainRules | undefined;
-  unmatched: string[];
+  unmatched: Unmatched[];
   onFixMatching: () => void;
   onChanged: () => void;
 }) {
@@ -865,10 +865,25 @@ function ByStoreView({
   );
 }
 
+// A line on a chain's Chain Mandates or Chain Authorizations page that
+// couldn't be matched to one of our products.
+interface Unmatched {
+  text: string;
+  list: "mandate" | "auth";
+}
+
 // "⚠ N list items not matched" — a button instead of a block of text. Opens a
-// small panel listing them, with a button straight to Chain setup → Item matching.
-function UnmatchedButton({ chain, items, onFix }: { chain: string; items: string[]; onFix: () => void }) {
+// small panel listing them, grouped by WHICH page each is on (Chad: "we need
+// to know exactly which list"), with a button straight to Chain setup → Item
+// matching.
+function UnmatchedButton({ chain, items, onFix }: { chain: string; items: Unmatched[]; onFix: () => void }) {
   const [open, setOpen] = useState(false);
+  const groups = [
+    { list: "mandate" as const, title: "On Sales → Chain Mandates", note: "would be Mandate (must carry)" },
+    { list: "auth" as const, title: "On Sales → Chain Authorizations", note: "would be Flex (allowed)" },
+  ]
+    .map((g) => ({ ...g, rows: items.filter((i) => i.list === g.list) }))
+    .filter((g) => g.rows.length > 0);
   return (
     <div className="relative self-start">
       <button
@@ -880,17 +895,24 @@ function UnmatchedButton({ chain, items, onFix }: { chain: string; items: string
         ⚠ {items.length} list item{items.length === 1 ? "" : "s"} not matched {open ? "▴" : "▾"}
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-[26rem] max-w-[90vw] rounded-lg border border-amber-500/40 bg-neutral-900 p-3 text-xs text-neutral-300 shadow-2xl">
+        <div className="absolute left-0 top-full z-30 mt-1 w-[28rem] max-w-[90vw] rounded-lg border border-amber-500/40 bg-neutral-900 p-3 text-xs text-neutral-300 shadow-2xl">
           <p className="mb-2">
-            {items.length === 1 ? "This item is" : "These items are"} on {chain}&apos;s Chain Mandates / Chain Authorizations list, but couldn&apos;t be matched to one of our
-            products, so {items.length === 1 ? "it doesn't" : "they don't"} show on this report:
+            {items.length === 1 ? "This line is" : "These lines are"} on {chain}&apos;s list but couldn&apos;t be matched to one of our products, so{" "}
+            {items.length === 1 ? "it doesn't" : "they don't"} show on this report:
           </p>
-          <ul className="mb-3 list-disc space-y-0.5 pl-5 text-neutral-200">
-            {items.map((t, i) => (
-              <li key={i}>{t}</li>
-            ))}
-          </ul>
-          <div className="flex items-center gap-2">
+          {groups.map((g) => (
+            <div key={g.list} className="mb-2">
+              <div className="font-semibold text-neutral-100">
+                {g.title} ({g.rows.length}) <span className="font-normal text-neutral-500">· {g.note}</span>
+              </div>
+              <ul className="mt-0.5 list-disc space-y-0.5 pl-5 text-neutral-200">
+                {g.rows.map((r, i) => (
+                  <li key={i}>{r.text}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+          <div className="mt-3 flex items-center gap-2">
             <button type="button" onClick={onFix} className="rounded-md bg-amber-500 px-3 py-1 font-semibold text-neutral-950 hover:bg-amber-400">
               Fix in Chain setup → Item matching
             </button>
