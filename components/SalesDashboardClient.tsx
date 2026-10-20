@@ -47,6 +47,9 @@ import {
 
 export type Supa = ReturnType<typeof createClient>;
 
+// Gap Report block a store falls in: Mandate / Chain Authorizations / Nothing set.
+type StoreCat = "mandate" | "flex" | "none";
+
 // Action Items → "open this store in the Gap Report".
 interface GapJump {
   chain: string;
@@ -173,6 +176,10 @@ function HowToRead({ view, chain, dist, asOf }: { view: "store" | "item"; chain:
             <ul className="list-disc space-y-1 pl-5">
               <li>
                 Pick a <b>Distributor</b> and a <b>Chain</b>. You&apos;ll see every store in that chain that distributor services, one row per store.
+              </li>
+              <li>
+                The <b>blocks at the top</b> count stores: <b>Mandate</b> = stores with at least one must-carry item, <b>Chain Authorizations</b> = stores with no must-carry
+                item but with approved (Flex) items, <b>Nothing set</b> = stores with nothing on either list. Click a block to list only those stores.
               </li>
               <li>
                 <b>Carries</b> = how many of our items that store bought in the last {CARRIED_DAYS} days{since}.
@@ -642,6 +649,7 @@ function ByStoreView({
   const reports = useMemo(() => buildStoreReports(data, rules), [data, rules]);
   const [sort, setSort] = useState<"gaps" | "name" | "ce">("gaps");
   const [q, setQ] = useState("");
+  const [cat, setCat] = useState<StoreCat | null>(null); // block clicked above the list
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [statusErr, setStatusErr] = useState<string | null>(null);
   // Opened from Action Items: search for that store and open it.
@@ -652,9 +660,48 @@ function ByStoreView({
     setOpen(new Set([focus.outlet]));
   }, [focus]);
 
+  // Which kind of store each one is (added 2026-10-20, per Chad — store
+  // counts, not item counts): Mandate = at least one must-carry item for this
+  // store; Chain Authorizations = no must-carry item but at least one Flex
+  // item; Nothing set = nothing on either list for this store. Plus whether
+  // the store is short (missing a must-carry item / not buying every approved
+  // item / has gaps).
+  const storeCat = useMemo(() => {
+    const keys = new Set<string>();
+    if (rules) {
+      for (const k of rules.mandate.keys()) keys.add(k);
+      for (const k of rules.flex) keys.add(k);
+      for (const k of rules.picked.keys()) keys.add(k);
+    }
+    const m = new Map<string, { cat: StoreCat; short: boolean }>();
+    for (const r of reports) {
+      const st = [...keys].map((k) => ({ k, s: statusFor(rules, k, r.store.store_no) }));
+      const carried = new Set(r.carried.map((l) => l.key));
+      let c: StoreCat = "none";
+      if (st.some((x) => x.s === "mandate")) c = "mandate";
+      else if (st.some((x) => x.s === "flex")) c = "flex";
+      const short =
+        c === "mandate" ? r.mandateGaps > 0 : c === "flex" ? st.some((x) => x.s === "flex" && !carried.has(x.k)) : r.gaps.length > 0;
+      m.set(r.store.outlet_id, { cat: c, short });
+    }
+    return m;
+  }, [reports, rules]);
+  const catCounts = useMemo(() => {
+    const out: Record<StoreCat, { stores: number; short: number }> = { mandate: { stores: 0, short: 0 }, flex: { stores: 0, short: 0 }, none: { stores: 0, short: 0 } };
+    for (const v of storeCat.values()) {
+      out[v.cat].stores++;
+      if (v.short) out[v.cat].short++;
+    }
+    return out;
+  }, [storeCat]);
+
   const shown = useMemo(() => {
     const qq = q.trim().toLowerCase();
-    const list = reports.filter((r) => !qq || `${r.store.name} ${r.store.city ?? ""} ${r.store.address ?? ""} ${r.store.outlet_id}`.toLowerCase().includes(qq));
+    const list = reports.filter(
+      (r) =>
+        (!cat || storeCat.get(r.store.outlet_id)?.cat === cat) &&
+        (!qq || `${r.store.name} ${r.store.city ?? ""} ${r.store.address ?? ""} ${r.store.outlet_id}`.toLowerCase().includes(qq)),
+    );
     const ce = (r: StoreReport) => r.carried.reduce((t, l) => t + l.ce90, 0);
     list.sort((a, b) =>
       sort === "name"
@@ -664,7 +711,7 @@ function ByStoreView({
           : b.mandateGaps - a.mandateGaps || b.gaps.length - a.gaps.length || a.store.name.localeCompare(b.store.name, undefined, { numeric: true }),
     );
     return list;
-  }, [reports, sort, q]);
+  }, [reports, sort, q, cat, storeCat]);
 
   // Every item that shows up for this chain, with how many stores carry it.
   const items = useMemo(() => {
@@ -686,16 +733,7 @@ function ByStoreView({
     return [...m.values()].sort((a, b) => order(a.key) - order(b.key) || b.carried - a.carried);
   }, [reports, rules]);
 
-  const totals = useMemo(
-    () => ({
-      stores: reports.length,
-      withMandateGaps: reports.filter((r) => r.mandateGaps > 0).length,
-      gaps: reports.reduce((t, r) => t + r.gaps.length, 0),
-      carriedAvg: reports.length ? reports.reduce((t, r) => t + r.carried.length, 0) / reports.length : 0,
-      ce: reports.reduce((t, r) => t + r.carried.reduce((s, l) => s + l.ce90, 0), 0),
-    }),
-    [reports],
-  );
+  const totals = useMemo(() => ({ stores: reports.length }), [reports]);
 
   async function setStatus(key: string, value: ItemStatus | "auto") {
     setStatusErr(null);
@@ -775,20 +813,41 @@ function ByStoreView({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-        {[
-          ["Stores", fmt(totals.stores), `${chain} stores${dist ? ` ${dist} services` : ""}, listed below`],
-          ["Stores missing a Mandate item", fmt(totals.withMandateGaps), "Stores not buying at least one must-carry item — fix these first"],
-          ["Total gaps", fmt(totals.gaps), "Every missing item, added up across all these stores"],
-          ["Items carried per store", fmt(totals.carriedAvg), `On average, how many of our items each store bought in the last ${CARRIED_DAYS} days`],
-          [`CE, last ${CARRIED_DAYS} days`, fmt(totals.ce), `Case equivalents these stores bought in the last ${CARRIED_DAYS} days, all items together`],
-        ].map(([label, v, help]) => (
-          <div key={label} className="rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2">
-            <div className="text-xs text-neutral-500">{label}</div>
-            <div className="text-xl font-semibold text-neutral-100">{v}</div>
-            <div className="mt-0.5 text-[11px] leading-snug text-neutral-500">{help}</div>
-          </div>
-        ))}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {(
+          [
+            [null, "All stores", totals.stores, `${chain} stores${dist ? ` ${dist} services` : ""}`, "#a3a3a3"],
+            ["mandate", "Mandate", catCounts.mandate.stores, `${catCounts.mandate.short} not buying a must-carry item`, STATUS_INFO.mandate.color],
+            ["flex", "Chain Authorizations", catCounts.flex.stores, `${catCounts.flex.short} not buying every approved item`, STATUS_INFO.flex.color],
+            ["none", "Nothing set", catCounts.none.stores, `${catCounts.none.short} not buying items other stores sell`, STATUS_INFO.none.color],
+          ] as [StoreCat | null, string, number, string, string][]
+        ).map(([k, label, n, sub, color]) => {
+          const on = cat === k;
+          return (
+            <button
+              key={label}
+              type="button"
+              onClick={() => setCat(on || k === null ? null : k)}
+              title={
+                k === "mandate"
+                  ? "Stores with at least one must-carry item (Sales → Chain Mandates). Click to show only these stores."
+                  : k === "flex"
+                    ? "Stores with no must-carry item, but with approved items (Sales → Chain Authorizations). Click to show only these stores."
+                    : k === "none"
+                      ? "Stores with nothing on either list. Click to show only these stores."
+                      : "Show every store"
+              }
+              className={`rounded-lg border px-3 py-2 text-left transition ${on ? "bg-neutral-800" : "bg-neutral-900 hover:bg-neutral-800/60"}`}
+              style={{ borderColor: on ? color : "#262626", boxShadow: `inset 3px 0 0 ${color}` }}
+            >
+              <div className="text-xs text-neutral-400">{label}</div>
+              <div className="text-xl font-semibold text-neutral-100">
+                {fmt(n)} <span className="text-xs font-normal text-neutral-500">store{n === 1 ? "" : "s"}</span>
+              </div>
+              <div className={`mt-0.5 text-[11px] leading-snug ${k === "mandate" && catCounts.mandate.short > 0 ? "font-semibold text-red-300" : "text-neutral-500"}`}>{sub}</div>
+            </button>
+          );
+        })}
       </div>
 
       <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-3">
