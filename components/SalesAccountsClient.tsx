@@ -22,7 +22,7 @@ import { createClient } from "@/lib/supabase/client";
 import NewBadge from "@/components/NewBadge";
 import SalesProductLookup from "@/components/SalesProductLookup";
 import { useNewFeature } from "@/lib/newFeatures";
-import { downloadAccountsXlsx, exportFileName } from "@/lib/accountsExport";
+import { downloadAccountsXlsx, exportFileName, fetchPurchases } from "@/lib/accountsExport";
 import {
   BIG_LOST_CE,
   HANDLED_CHOICES,
@@ -575,6 +575,8 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
       if (f.hasContact) parts.push("Has a contact");
       if (query.trim()) parts.push(`"${query.trim()}"`);
       const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date());
+      // What each account bought and when (sheet 2 + "Items bought" column).
+      const purchases = await fetchPurchases(supabase, filtered.map((a) => a.outlet_id));
       await downloadAccountsXlsx(
         filtered.map((a) => ({
           outlet_id: a.outlet_id,
@@ -602,6 +604,7 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
           filterLine: parts.length ? `Filters: ${parts.join(" · ")}` : "All accounts (no filters)",
           asOf: asOf ? fdate(asOf) : null,
           fileName: exportFileName(parts.length ? parts : ["All"], today),
+          purchases,
         },
       );
     } catch (e) {
