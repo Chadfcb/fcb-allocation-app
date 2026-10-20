@@ -25,6 +25,23 @@ export const STATUS_INFO: Record<ItemStatus, { label: string; color: string; sho
   none: { label: "Not set", short: "–", color: "#737373" },
 };
 
+// Plain-English meaning of each label, shown on the Gap Report (added
+// 2026-10-20, per Chad — anyone should be able to read the report without help).
+export const STATUS_HELP: Record<ItemStatus, { plain: string; text: string }> = {
+  mandate: {
+    plain: "Must carry",
+    text: "The chain requires these stores to stock it (from Sales → Chain Mandates). A store without it is a must-fix.",
+  },
+  flex: {
+    plain: "Allowed, not required",
+    text: "The chain approved it, but each store decides whether to stock it (from Sales → Chain Authorizations). A store without it is a sales opportunity.",
+  },
+  none: {
+    plain: "Not on either list",
+    text: "It isn't on the chain's Mandate or Authorization list. It only counts as a gap when other stores in the chain are buying it.",
+  },
+};
+
 export interface DashChain {
   chain: string;
   stores: number;

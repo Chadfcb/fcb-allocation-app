@@ -18,9 +18,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import SalesDashboardSetup from "@/components/SalesDashboardSetup";
+import NewBadge from "@/components/NewBadge";
+import { useNewFeature } from "@/lib/newFeatures";
 import { isFormerDistributor } from "@/lib/salesAccounts";
 import {
   CARRIED_DAYS,
+  STATUS_HELP,
   STATUS_INFO,
   buildStoreReports,
   itemKey,
@@ -69,12 +72,121 @@ export function StatusPill({ status, small }: { status: ItemStatus; small?: bool
   const c = STATUS_INFO[status].color;
   return (
     <span
-      className={`inline-flex items-center gap-1 whitespace-nowrap rounded font-semibold text-neutral-100 ${small ? "px-1.5 py-px text-[10px]" : "px-2 py-0.5 text-xs"}`}
+      title={`${STATUS_INFO[status].label} = ${STATUS_HELP[status].plain}. ${STATUS_HELP[status].text}`}
+      className={`inline-flex cursor-help items-center gap-1 whitespace-nowrap rounded font-semibold text-neutral-100 ${small ? "px-1.5 py-px text-[10px]" : "px-2 py-0.5 text-xs"}`}
       style={{ background: `${c}2e`, border: `1px solid ${c}80` }}
     >
       <span className="h-1.5 w-1.5 rounded-full" style={{ background: c }} />
       {STATUS_INFO[status].label}
     </span>
+  );
+}
+
+// The three labels side by side (hover each for what it means).
+function StatusLegend() {
+  return (
+    <span className="flex items-center gap-2 text-xs text-neutral-500">
+      Labels:
+      {(["mandate", "flex", "none"] as const).map((s) => (
+        <StatusPill key={s} status={s} small />
+      ))}
+      <span className="text-neutral-600">(hover for meaning)</span>
+    </span>
+  );
+}
+
+// "How to read this" box on the Gap Report (added 2026-10-20, per Chad — so
+// anyone can read the report without help). Open by default;
+// Hide is remembered per browser.
+const HELP_KEY = "fcb-sales-dash-help-hidden";
+function HowToRead({ view, chain, dist, asOf }: { view: "store" | "item"; chain: string; dist: string; asOf: string | null }) {
+  const [hidden, setHidden] = useState(false);
+  const helpNew = useNewFeature("feature:gap-report-help");
+  useEffect(() => {
+    try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- remembered choice (per browser), read after load
+      setHidden(localStorage.getItem(HELP_KEY) === "1");
+    } catch {
+      // ignore
+    }
+  }, []);
+  const toggle = () => {
+    helpNew.dismiss();
+    const next = !hidden;
+    setHidden(next);
+    try {
+      localStorage.setItem(HELP_KEY, next ? "1" : "0");
+    } catch {
+      // ignore
+    }
+  };
+  const ch = chain || "the chain";
+  const sameDist = dist ? ` (${dist})` : "";
+  const since = asOf ? ` (the ${CARRIED_DAYS} days up to ${fdate(asOf)}, the newest sales data we have)` : "";
+  return (
+    <div className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-3 text-sm text-neutral-300">
+      <div className="flex items-center gap-2">
+        <h2 className="font-semibold text-sky-200">How to read this</h2>
+        {helpNew.isNew && <NewBadge inline />}
+        <button type="button" onClick={toggle} className="ml-auto text-xs text-sky-300 hover:text-sky-100">
+          {hidden ? "Show" : "Hide"}
+        </button>
+      </div>
+      {!hidden && (
+        <div className="mt-2 grid gap-3 lg:grid-cols-2">
+          {view === "store" ? (
+            <ul className="list-disc space-y-1 pl-5">
+              <li>
+                Pick a <b>Distributor</b> and a <b>Chain</b>. You&apos;ll see every store in that chain that distributor services, one row per store.
+              </li>
+              <li>
+                <b>Carries</b> = how many of our items that store bought in the last {CARRIED_DAYS} days{since}.
+              </li>
+              <li>
+                <b>Gaps</b> = items that store is <i>not</i> buying but should be: anything the chain says it must carry (Mandate), or anything other {ch} stores
+                {sameDist} are buying.
+              </li>
+              <li>
+                Example: <b>Carries 0 · Gaps 4</b> means the store bought nothing from us in {CARRIED_DAYS} days, and there are 4 items other {ch} stores are buying. If any of the
+                4 were must-carry, you&apos;d also see <span className="font-semibold text-red-400">(1 Mandate)</span> in red.
+              </li>
+              <li>
+                <b>Click a store</b> to see exactly which items it buys and which it&apos;s missing. Sorted by <b>Most gaps first</b>, the stores missing must-carry items are at the top.
+              </li>
+            </ul>
+          ) : (
+            <ul className="list-disc space-y-1 pl-5">
+              <li>
+                Each <b>row</b> is one of our items. Each <b>column</b> is a chain{dist ? ` (only stores ${dist} services)` : ""}.
+              </li>
+              <li>
+                A cell like <b>3/12 25%</b> means 3 of that chain&apos;s 12 stores bought the item in the last {CARRIED_DAYS} days{since}.
+              </li>
+              <li>
+                A <span className="font-semibold text-red-300">red 0</span> means the chain has the item on its list (Mandate or Flex) but none of its stores are buying it.
+              </li>
+              <li>A colored cell means the item is on that chain&apos;s list; no color means it isn&apos;t.</li>
+            </ul>
+          )}
+          <div className="space-y-1.5">
+            <div className="text-xs font-semibold uppercase tracking-wide text-neutral-500">What the labels mean</div>
+            {(["mandate", "flex", "none"] as const).map((s) => (
+              <div key={s} className="flex items-start gap-2">
+                <span className="mt-0.5 shrink-0">
+                  <StatusPill status={s} small />
+                </span>
+                <span>
+                  <b>{STATUS_HELP[s].plain}.</b> {STATUS_HELP[s].text}
+                </span>
+              </div>
+            ))}
+            <p className="text-xs text-neutral-500">
+              When Chain Mandates lists specific store numbers for an item, it&apos;s Mandate for those stores only and Flex for the rest of the chain.
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -135,7 +247,7 @@ export default function SalesDashboardClient() {
         <div>
           <h1 className="text-2xl font-bold text-neutral-100">Sales Dashboard</h1>
           <p className="text-sm text-neutral-500">
-            {ov?.as_of ? `Sales data as of ${fdate(ov.as_of)} · carried = bought in the last ${CARRIED_DAYS} days` : "Loading…"}
+            {ov?.as_of ? `Sales data as of ${fdate(ov.as_of)} · a store "carries" an item if it bought it in the last ${CARRIED_DAYS} days` : "Loading…"}
           </p>
         </div>
       </div>
@@ -281,6 +393,22 @@ function GapReport({
   );
   const chainOk = chainOptions.some((c) => c.chain === chain);
 
+  // Lines on this chain's Chain Mandates / Chain Authorizations lists that
+  // couldn't be matched to one of our products — they can't show a label.
+  const unmatched = useMemo(() => {
+    const out: string[] = [];
+    const add = (type: "mandate" | "auth", items: { id: string; chain_id: string; text: string }[]) => {
+      for (const it of items) {
+        if (resolved.chainOf.get(`${type}:${it.chain_id}`)?.chain !== chain) continue;
+        const l = resolved.links.get(`${type}:${it.id}`);
+        if (!l?.product || !l.size) out.push(it.text);
+      }
+    };
+    add("mandate", ov.mandate_items);
+    add("auth", ov.auth_items);
+    return out;
+  }, [ov, resolved, chain]);
+
   useEffect(() => {
     if (view !== "store" || !chain || !chainOk) return;
     let cancelled = false;
@@ -374,13 +502,9 @@ function GapReport({
             </select>
           </label>
         )}
-        <div className="ml-auto flex items-center gap-3 text-xs text-neutral-400">
-          {(["mandate", "flex", "none"] as const).map((s) => (
-            <StatusPill key={s} status={s} small />
-          ))}
-          {busy && <span>Loading…</span>}
-        </div>
+        {busy && <span className="ml-auto text-xs text-neutral-400">Loading…</span>}
       </div>
+      <HowToRead view={view} chain={chainOk ? chain : ""} dist={dist} asOf={ov.as_of} />
       {err && <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{err}</p>}
       {view === "store" &&
         (!chain || !chainOk ? (
@@ -395,6 +519,7 @@ function GapReport({
               chain={chain}
               dist={dist}
               rules={resolved.rules.get(chain)}
+              unmatched={unmatched}
               onChanged={onChanged}
             />
           )
@@ -414,6 +539,7 @@ function ByStoreView({
   chain,
   dist,
   rules,
+  unmatched,
   onChanged,
 }: {
   supabase: Supa;
@@ -422,6 +548,7 @@ function ByStoreView({
   chain: string;
   dist: string;
   rules: ChainRules | undefined;
+  unmatched: string[];
   onChanged: () => void;
 }) {
   const reports = useMemo(() => buildStoreReports(data, rules), [data, rules]);
@@ -555,24 +682,40 @@ function ByStoreView({
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         {[
-          ["Stores", fmt(totals.stores)],
-          ["Stores missing a Mandate item", fmt(totals.withMandateGaps)],
-          ["Total gaps", fmt(totals.gaps)],
-          ["Items carried per store", fmt(totals.carriedAvg)],
-          [`CE, last ${CARRIED_DAYS} days`, fmt(totals.ce)],
-        ].map(([label, v]) => (
+          ["Stores", fmt(totals.stores), `${chain} stores${dist ? ` ${dist} services` : ""}, listed below`],
+          ["Stores missing a Mandate item", fmt(totals.withMandateGaps), "Stores not buying at least one must-carry item — fix these first"],
+          ["Total gaps", fmt(totals.gaps), "Every missing item, added up across all these stores"],
+          ["Items carried per store", fmt(totals.carriedAvg), `On average, how many of our items each store bought in the last ${CARRIED_DAYS} days`],
+          [`CE, last ${CARRIED_DAYS} days`, fmt(totals.ce), `Case equivalents these stores bought in the last ${CARRIED_DAYS} days, all items together`],
+        ].map(([label, v, help]) => (
           <div key={label} className="rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2">
             <div className="text-xs text-neutral-500">{label}</div>
             <div className="text-xl font-semibold text-neutral-100">{v}</div>
+            <div className="mt-0.5 text-[11px] leading-snug text-neutral-500">{help}</div>
           </div>
         ))}
       </div>
 
       <div className="rounded-lg border border-neutral-800 bg-neutral-900 p-3">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-neutral-200">
-            Items for {chain} <span className="font-normal text-neutral-500">· set Flex / Mandate for this chain (all distributors)</span>
-          </h2>
+        <div className="mb-2 flex flex-col gap-1">
+          <h2 className="text-sm font-semibold text-neutral-200">Items for {chain}</h2>
+          <p className="text-xs text-neutral-400">
+            Every item these stores buy, plus every item on {chain}&apos;s lists. The label shows whether {chain} requires it (Mandate), allows it (Flex), or neither (Not set).
+          </p>
+          <p className="text-xs text-neutral-500">
+            <b className="text-neutral-400">Auto</b> means the label comes from Sales → Chain Mandates or Chain Authorizations
+            {rules && (rules.mandate.size > 0 || rules.flex.size > 0)
+              ? "."
+              : `. ${chain} isn't on either page, so everything shows Not set until it's added there.`}{" "}
+            Only change a label if that list is wrong — your pick applies to <b className="text-neutral-400">every {chain} store, for every distributor</b>, not just the one
+            you&apos;ve filtered to.
+          </p>
+          {unmatched.length > 0 && (
+            <p className="text-xs text-amber-300/90">
+              {unmatched.length} item{unmatched.length === 1 ? "" : "s"} on {chain}&apos;s lists couldn&apos;t be matched to one of our products, so {unmatched.length === 1 ? "it isn't" : "they aren't"}{" "}
+              shown here: {unmatched.join("; ")}. Fix on the Chain setup tab → Item matching.
+            </p>
+          )}
         </div>
         {statusErr && <p className="mb-2 text-sm text-red-300">{statusErr}</p>}
         {items.length === 0 ? (
@@ -591,7 +734,7 @@ function ByStoreView({
                       {product} <span className="text-neutral-500">· {size}</span>
                     </div>
                     <div className="text-[11px] text-neutral-500">
-                      {it.carried} of {totals.stores} stores carry{src ? ` · ${src}` : ""}
+                      {it.carried} of {totals.stores} stores buying it{src ? ` · from ${src}` : ""}
                     </div>
                   </div>
                   <select
@@ -626,6 +769,7 @@ function ByStoreView({
         <button type="button" onClick={() => setOpen(allOpen ? new Set() : new Set(shown.map((r) => r.store.outlet_id)))} className={BTN}>
           {allOpen ? "Collapse all" : "Expand all"}
         </button>
+        <StatusLegend />
         <button id="gap-export" type="button" onClick={exportExcel} className={`${BTN} ml-auto`}>
           Export to Excel
         </button>
@@ -656,10 +800,22 @@ function ByStoreView({
                     </span>
                   </span>
                 </button>
-                <span className="text-xs text-neutral-400">
+                <span
+                  className="cursor-help text-xs text-neutral-400"
+                  title={`This store bought ${r.carried.length} of our item${r.carried.length === 1 ? "" : "s"} in the last ${CARRIED_DAYS} days.`}
+                >
                   Carries <b className="text-neutral-100">{r.carried.length}</b>
                 </span>
-                <span className="text-xs text-neutral-400">
+                <span
+                  className="cursor-help text-xs text-neutral-400"
+                  title={
+                    r.gaps.length === 0
+                      ? "No gaps — this store buys everything it should."
+                      : `${r.gaps.length} item${r.gaps.length === 1 ? "" : "s"} this store isn't buying: ${
+                          r.mandateGaps > 0 ? `${r.mandateGaps} must-carry (Mandate)` : "none of them must-carry"
+                        }${r.gaps.length - r.mandateGaps > 0 ? `, ${r.gaps.length - r.mandateGaps} that other ${chain} stores${dist ? ` (${dist})` : ""} are buying` : ""}. Click the store to see them.`
+                  }
+                >
                   Gaps <b className={r.gaps.length ? "text-amber-300" : "text-neutral-100"}>{r.gaps.length}</b>
                   {r.mandateGaps > 0 && <span className="ml-1 font-semibold text-red-400">({r.mandateGaps} Mandate)</span>}
                 </span>
@@ -668,8 +824,8 @@ function ByStoreView({
               </div>
               {isOpen && (
                 <div className="grid gap-3 border-t border-neutral-800 p-3 lg:grid-cols-2">
-                  <LineTable title="Carried" lines={r.carried} kind="carried" />
-                  <LineTable title="Gaps" lines={r.gaps} kind="gap" />
+                  <LineTable title="Carried" lines={r.carried} kind="carried" chain={chain} dist={dist} />
+                  <LineTable title="Gaps" lines={r.gaps} kind="gap" chain={chain} dist={dist} />
                 </div>
               )}
             </div>
@@ -681,22 +837,37 @@ function ByStoreView({
   );
 }
 
-function LineTable({ title, lines, kind }: { title: string; lines: StoreLine[]; kind: "carried" | "gap" }) {
+function LineTable({ title, lines, kind, chain, dist }: { title: string; lines: StoreLine[]; kind: "carried" | "gap"; chain: string; dist: string }) {
   return (
     <div>
-      <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
         {title} ({lines.length})
       </h3>
+      <p className="mb-1 text-[11px] text-neutral-500">
+        {kind === "carried"
+          ? `Items this store bought in the last ${CARRIED_DAYS} days.`
+          : `Items this store isn't buying: must-carry (Mandate) items first, then items other ${chain} stores${dist ? ` (${dist})` : ""} are buying.`}
+      </p>
       {lines.length === 0 ? (
-        <p className="text-sm text-neutral-500">{kind === "gap" ? "No gaps." : "Nothing bought in the last 90 days."}</p>
+        <p className="text-sm text-neutral-500">{kind === "gap" ? "No gaps." : `Nothing bought in the last ${CARRIED_DAYS} days.`}</p>
       ) : (
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-neutral-500">
               <th className="py-1 font-medium">Item</th>
-              <th className="py-1 font-medium" />
-              {kind === "carried" ? <th className="py-1 text-right font-medium">CE (90 days)</th> : <th className="py-1 text-right font-medium">Other stores carry</th>}
-              <th className="py-1 text-right font-medium">Last sold</th>
+              <th className="py-1 font-medium">Label</th>
+              {kind === "carried" ? (
+                <th className="py-1 text-right font-medium" title="Case equivalents this store bought in the last 90 days">
+                  Cases bought ({CARRIED_DAYS} days)
+                </th>
+              ) : (
+                <th className="py-1 text-right font-medium" title={`How many other ${chain} stores${dist ? ` (${dist})` : ""} bought this item in the last ${CARRIED_DAYS} days`}>
+                  Other {chain} stores buying it
+                </th>
+              )}
+              <th className="py-1 text-right font-medium" title="The last time this store bought this item (Never = it never has)">
+                Store last bought it
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -780,8 +951,9 @@ function ByItemView({ data, dist, resolved }: { data: GapByItemResult; dist: str
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-3 text-sm text-neutral-400">
         <span>
-          Each cell = stores in that chain{dist ? ` (${dist})` : ""} that carry the item, out of all its stores. Colored = Mandate / Flex for that chain.
+          Each cell = how many of that chain&apos;s stores{dist ? ` (${dist})` : ""} bought the item in the last {CARRIED_DAYS} days, out of all its stores.
         </span>
+        <StatusLegend />
         <label className="flex items-center gap-1.5 text-xs">
           Chains with at least
           <select value={minStores} onChange={(e) => setMinStores(Number(e.target.value))} className={SEL}>

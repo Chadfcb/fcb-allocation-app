@@ -31,6 +31,12 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    id: "feature:gap-report-help",
+    page: "/sales-dashboard",
+    label: "How to read this box on Sales Dashboard > Gap Report (what Carries, Gaps, Mandate, Flex and Not set mean)",
+    added: "2026-10-20",
+  },
+  {
     id: "feature:accounts-export",
     page: "/sales/accounts",
     label: "Export report button on Sales > Accounts > Overview (every filtered account as a spreadsheet)",
