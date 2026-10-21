@@ -22,6 +22,10 @@
 -- Only current distributors (p_current) count; turned-off accounts and
 -- hidden products are left out.
 --
+-- Custom dates (added 2026-10-21, per Chad): pass p_from / p_to and the
+-- numbers come back for that range too (period key 'custom'), compared with
+-- the same dates a year earlier.
+--
 -- Run this in Supabase's SQL Editor BEFORE pushing the code.
 -- Idempotent — safe to run more than once. No new tables.
 
@@ -41,7 +45,10 @@ begin
   end if;
 end $$;
 
-create or replace function public.sales_dash_home(p_current text[], p_big numeric default 50)
+-- (The first version took only p_current / p_big — replaced by the one below.)
+drop function if exists public.sales_dash_home(text[], numeric);
+
+create or replace function public.sales_dash_home(p_current text[], p_big numeric default 50, p_from date default null, p_to date default null)
 returns json
 language plpgsql
 stable
@@ -51,6 +58,9 @@ as $$
 declare
   a date;          -- the data's as-of date
   y0 date;         -- Jan 1 of that year
+  c0 date;         -- custom range start (null = none)
+  c1 date;         -- custom range end
+  back date;       -- earliest day any period needs (this year)
   v_acc boolean;   -- can this person see Sales → Accounts (phones, check-ins)?
   result json;
 begin
@@ -63,15 +73,23 @@ begin
     return json_build_object('as_of', null);
   end if;
   y0 := date_trunc('year', a)::date;
+  if p_from is not null and p_to is not null then
+    c0 := least(p_from, p_to);
+    c1 := least(greatest(p_from, p_to), a);
+    if c0 > c1 then c0 := c1; end if;
+  end if;
+  back := least(y0, a - 89, coalesce(c0, a));
 
   with
   -- The three periods, this year (ty) and the same days last year (ly).
   win as (
     select v.p, 'ty'::text as yr, v.ws, v.we
-    from (values ('30', a - 29, a), ('90', a - 89, a), ('ytd', y0, a)) v(p, ws, we)
+    from (values ('30', a - 29, a), ('90', a - 89, a), ('ytd', y0, a), ('custom', c0, c1)) v(p, ws, we)
+    where v.ws is not null
     union all
     select v.p, 'ly', (v.ws - interval '1 year')::date, (v.we - interval '1 year')::date
-    from (values ('30', a - 29, a), ('90', a - 89, a), ('ytd', y0, a)) v(p, ws, we)
+    from (values ('30', a - 29, a), ('90', a - 89, a), ('ytd', y0, a), ('custom', c0, c1)) v(p, ws, we)
+    where v.ws is not null
   ),
   acc as (
     select x.outlet_id, x.name, x.city, x.phone, x.distributor, x.last_buy_date as lb,
@@ -93,7 +111,8 @@ begin
                else least((r.month + interval '1 month' - interval '1 day')::date, a)
              end) as hi
     from public.sales_account_sales r
-    where r.month >= (date_trunc('month', a) - interval '25 months')::date
+    where r.month >= least((date_trunc('month', a) - interval '25 months')::date,
+                           date_trunc('month', back - interval '1 year')::date)
       and r.distributor = any(p_current)
       and not exists (select 1 from public.sales_account_off o where o.outlet_id = r.outlet_id)
       and not exists (select 1 from public.sales_product_hidden h where h.product = r.product)
@@ -123,7 +142,7 @@ begin
     from public.sales_account_sales r
     cross join lateral (values (coalesce(r.first_buy_in_month, r.last_buy_date, r.month)),
                                (coalesce(r.last_buy_date, r.month))) v(d)
-    where r.month >= (y0 - interval '4 years')::date
+    where r.month >= (back - interval '4 years')::date
       and r.outlet_id in (select outlet_id from acc)
       and v.d <= a
   ),
@@ -158,7 +177,9 @@ begin
     'sizes', (select coalesce(json_agg(c), '[]'::json) from (
         select p, dist, size, round(sum(ce), 1) as ce from part where yr = 'ty' group by p, dist, size having sum(ce) > 0) c),
     'monthly', (select coalesce(json_agg(c order by c.month), '[]'::json) from (
-        select s.month, s.dist, round(sum(s.ce), 1) as ce from s group by s.month, s.dist) c),
+        select s.month, s.dist, round(sum(s.ce), 1) as ce from s
+        where s.month >= (date_trunc('month', a) - interval '25 months')::date
+        group by s.month, s.dist) c),
     -- Account stages per distributor (+ cases a year at stake)
     'stages', (select coalesce(json_agg(c), '[]'::json) from (
         select st.distributor as dist, st.stage, count(*)::int as n, round(sum(st.ce12), 1) as ce12
@@ -199,7 +220,7 @@ begin
              where k.outlet_id = wb.outlet_id and k.checkin_date between wb.prev and wb.d
              order by k.checkin_date desc limit 1) end as checkin
         from wb join acc ac on ac.outlet_id = wb.outlet_id
-        where wb.d >= least(y0, a - 89)
+        where wb.d >= back
         order by wb.outlet_id, wb.d) c),
     -- Slipping now (Potential lost) and big losses (lost in the last year, p_big+ lifetime cases)
     'attention', (select coalesce(json_agg(c order by c.ce12 desc), '[]'::json) from (
@@ -231,7 +252,7 @@ begin
 end;
 $$;
 
-revoke all on function public.sales_dash_home(text[], numeric) from public, anon;
-grant execute on function public.sales_dash_home(text[], numeric) to authenticated;
+revoke all on function public.sales_dash_home(text[], numeric, date, date) from public, anon;
+grant execute on function public.sales_dash_home(text[], numeric, date, date) to authenticated;
 
-comment on function public.sales_dash_home(text[], numeric) is $c$[needs:sales_dashboard] Sales Dashboard home numbers for the current distributors (pass their names): cases by period (last 30 / 90 days / year to date) vs the same days last year per distributor, by brand and size, cases by month, account stages per distributor (Active/New/Re-Activated/Potential lost/Lost in the last year), new accounts, win backs (ordered again after 61+ quiet days), accounts that went lost, slipping and big-loss accounts, chains with stores gone quiet, and check-ins per person.$c$;
+comment on function public.sales_dash_home(text[], numeric, date, date) is $c$[needs:sales_dashboard] Sales Dashboard home numbers for the current distributors (pass their names): cases by period (last 30 / 90 days / year to date, plus a custom p_from–p_to range as 'custom') vs the same days last year per distributor, by brand and size, cases by month, account stages per distributor (Active/New/Re-Activated/Potential lost/Lost in the last year), new accounts, win backs (ordered again after 61+ quiet days), accounts that went lost, slipping and big-loss accounts, chains with stores gone quiet, and check-ins per person.$c$;

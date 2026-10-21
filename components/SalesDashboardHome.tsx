@@ -6,10 +6,12 @@
 // Approved mockup: claude/sales-dashboard-plan.md (Design canvas "Sales
 // Dashboard Redesign Mockup").
 //
-// Top to bottom: period + distributor filters · Needs attention + Win backs ·
+// Top to bottom: period (30 / 90 days / Year to date / Custom dates) and
+// distributor filters · Needs attention + Win backs ·
 // Distributors (click one → its biggest immediate impacts) · headline numbers ·
 // cases by month + account health · what's selling, chain coverage, rep
-// activity. Every list exports to Excel; "See all" goes to Sales → Accounts
+// activity. Lists you drill into export to Excel (Chad 10/21: no whole-dashboard
+// export, no help button); "See all" goes to Sales → Accounts
 // (filters set) or the Action Items / Gap Report tools.
 //
 // Live: everything is worked out from the sales data when the page opens, and
@@ -19,16 +21,15 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import NewBadge from "@/components/NewBadge";
-import { HelpButton, downloadWorkbook, type Supa } from "@/components/SalesDashboardClient";
+import { downloadWorkbook, type Supa } from "@/components/SalesDashboardClient";
 import type { ActionData, ActionRow } from "@/components/SalesActionItems";
 import { coverageFor, useChainCoverage } from "@/lib/chainCoverage";
-import { useNewFeature } from "@/lib/newFeatures";
 import { BIG_LOST_CE } from "@/lib/salesAccounts";
 import type { DashOverview, resolveLists } from "@/lib/salesDashboard";
 import {
   PERIODS,
   STAGE_COLORS,
+  addDaysIso,
   brands,
   distColor,
   distributorsWithData,
@@ -46,6 +47,7 @@ import {
   stageCounts,
   trend,
   winbacksIn,
+  type DateRange,
   type HomeAttention,
   type HomeData,
   type HomeWinback,
@@ -338,23 +340,32 @@ export default function SalesDashboardHome({
   const [openDist, setOpenDist] = useState<string | null>(null);
   const [allWb, setAllWb] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const homeNew = useNewFeature("feature:sales-dash-home");
+  // Custom dates: `custom` is the applied range (loaded from the database);
+  // the From / To boxes edit `draft` until Apply.
+  const [custom, setCustom] = useState<DateRange | null>(null);
+  const [showCustom, setShowCustom] = useState(false);
+  const [draft, setDraft] = useState<DateRange>({ from: "", to: "" });
   const coverage = useChainCoverage(supabase, ov, resolved, version);
 
   // Remembered period / distributor (this browser only).
   useEffect(() => {
     try {
-      const s = JSON.parse(localStorage.getItem(PREF_KEY) ?? "{}") as { period?: Period; dist?: string };
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- restore this viewer's last choice
-      if (s.period && PERIODS.some((p) => p.key === s.period)) setPeriod(s.period);
+      const s = JSON.parse(localStorage.getItem(PREF_KEY) ?? "{}") as { period?: Period; dist?: string; custom?: DateRange };
+      if (s.period === "custom" && s.custom?.from && s.custom?.to) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- restore this viewer's last choice
+        setCustom(s.custom);
+        setDraft(s.custom);
+        setShowCustom(true);
+        setPeriod("custom");
+      } else if (s.period && PERIODS.some((p) => p.key === s.period)) setPeriod(s.period);
       if (typeof s.dist === "string") setDist(s.dist);
     } catch {
       // ignore
     }
   }, []);
-  const remember = (p: Period, d: string) => {
+  const remember = (p: Period, d: string, c: DateRange | null = custom) => {
     try {
-      localStorage.setItem(PREF_KEY, JSON.stringify({ period: p, dist: d }));
+      localStorage.setItem(PREF_KEY, JSON.stringify({ period: p, dist: d, custom: p === "custom" ? c : undefined }));
     } catch {
       // ignore
     }
@@ -363,7 +374,7 @@ export default function SalesDashboardHome({
   // Load (and reload whenever the parent's version bumps — e.g. a LilyPad sync finished).
   useEffect(() => {
     let cancelled = false;
-    supabase.rpc("sales_dash_home", loadArgs()).then(({ data, error }) => {
+    supabase.rpc("sales_dash_home", loadArgs(custom)).then(({ data, error }) => {
       if (cancelled) return;
       if (error) setErr(error.message);
       else {
@@ -374,15 +385,19 @@ export default function SalesDashboardHome({
     return () => {
       cancelled = true;
     };
-  }, [supabase, version]);
+  }, [supabase, version, custom]);
 
-  const pLabel = PERIODS.find((p) => p.key === period)!.long;
+  // Custom period chosen but its numbers not loaded yet → show the last 90 days meanwhile.
+  const customReady = !!home?.periods?.some((x) => x.p === "custom");
+  const shown: Period = period === "custom" && !customReady ? "90" : period;
+  const pLabel =
+    shown === "custom" && custom ? `${fmtDay(custom.from)} – ${fmtDay(custom.to)}` : PERIODS.find((p) => p.key === shown)!.long;
   const scope = dist || "All distributors";
   const actionRows = useMemo(() => (actions.rows ?? []).filter((r) => !dist || r.store.distributor === dist).sort((a, b) => b.impact - a.impact), [actions.rows, dist]);
 
   const v = useMemo(() => {
     if (!home || !home.as_of) return null;
-    const k = kpis(home, period, dist);
+    const k = kpis(home, shown, dist);
     const t = trend(home, dist);
     const dd = distributorsWithData(home);
     const att = (home.attention ?? []).filter((a) => !dist || a.dist === dist);
@@ -393,13 +408,13 @@ export default function SalesDashboardHome({
       health: stageCounts(home, dist),
       slip: att.filter((a) => a.stage === "plost"),
       lost: att.filter((a) => a.stage === "lost"),
-      wins: winbacksIn(home, period, dist),
-      brands: brands(home, period, dist),
-      sizes: sizes(home, period, dist),
-      reps: repActivity(home, period, dist),
-      range: periodRange(home, period),
+      wins: winbacksIn(home, shown, dist),
+      brands: brands(home, shown, dist),
+      sizes: sizes(home, shown, dist),
+      reps: repActivity(home, shown, dist),
+      range: periodRange(home, shown),
     };
-  }, [home, period, dist]);
+  }, [home, shown, dist]);
 
   if (err) return <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{err}</p>;
   if (!home || !v) return <p className={`text-sm ${MUTED}`}>{home && !home.as_of ? "No sales data yet." : "Loading the dashboard…"}</p>;
@@ -496,91 +511,6 @@ export default function SalesDashboardHome({
 
   const cov = coverage.rows ? coverageFor(coverage.rows, dist) : null;
 
-  const exportAll = async () => {
-    setBusy("all");
-    try {
-      const summary = [
-        { what: "Cases sold", now: Math.round(k.cases), ly: Math.round(k.casesLy) },
-        { what: "Buying accounts (last 60 days)", now: k.buying, ly: k.buyingLy },
-        { what: "New accounts", now: k.newA, ly: k.newLy },
-        { what: "Won back", now: k.won, ly: k.wonLy },
-        { what: "At risk (61–90 days)", now: k.atRisk, ly: "" },
-        { what: "Went lost", now: k.wentLost, ly: k.wentLostLy },
-      ];
-      await exportSheets(`Sales dashboard - ${scope} - ${pLabel} - ${home.as_of}.xlsx`, [
-        {
-          name: "Headline numbers",
-          title: `Sales Dashboard — ${scope} — ${pLabel} · data as of ${fmtDay(home.as_of)}`,
-          cols: [
-            { header: "", key: "what", width: 34 },
-            { header: pLabel, key: "now" },
-            { header: "Same days last year", key: "ly" },
-          ],
-          rows: summary,
-        },
-        {
-          name: "Distributors",
-          title: `Distributors — ${pLabel}`,
-          cols: [
-            { header: "Distributor", key: "d", width: 16 },
-            { header: "Rep", key: "rep", width: 10 },
-            { header: "Cases", key: "ce" },
-            { header: "Same days last year", key: "ly" },
-            { header: "Buying accounts", key: "buying" },
-            { header: "At risk", key: "risk" },
-            { header: "Stores missing must-carry", key: "gaps" },
-          ],
-          rows: v.dd.withData
-            .filter((d) => !dist || d === dist)
-            .map((d) => {
-              const kd = kpis(home, period, d);
-              return { d, rep: repName(d), ce: Math.round(kd.cases), ly: Math.round(kd.casesLy), buying: kd.buying, risk: kd.atRisk, gaps: (actions.rows ?? []).filter((r) => r.store.distributor === d).length };
-            }),
-        },
-        { name: "Must-carry gaps", title: `Must-carry gaps — ${scope}`, cols: COLS_GAPS, rows: gapRows(actionRows) },
-        { name: "Slipping", title: `Slipping now — ${scope}`, cols: COLS_ACCOUNTS, rows: accountRows(v.slip) },
-        { name: "Big losses", title: `Big losses — ${scope}`, cols: COLS_ACCOUNTS, rows: accountRows(v.lost) },
-        { name: "Win backs", title: `Win backs — ${scope} — ${pLabel}`, cols: COLS_WB, rows: wbRows(v.wins) },
-        {
-          name: "Brands",
-          title: `Cases by brand — ${scope} — ${pLabel}`,
-          cols: [
-            { header: "Brand", key: "b", width: 34 },
-            { header: "Cases", key: "ce" },
-            { header: "Change vs last year", key: "chg" },
-          ],
-          rows: brands(home, period, dist, 100).map((b) => ({ b: b.product, ce: Math.round(b.ce), chg: fmtPct(b.chg) })),
-        },
-        {
-          name: "Chain coverage",
-          title: `Chain coverage — ${scope} (stores buying each listed item in the last 90 days)`,
-          cols: [
-            { header: "Chain", key: "c", width: 20 },
-            { header: "List", key: "s" },
-            { header: "Item", key: "i", width: 36 },
-            { header: "Stores buying", key: "b" },
-            { header: "Stores", key: "n" },
-          ],
-          rows: (cov ?? []).map((c) => ({ c: c.chain, s: c.status === "mandate" ? "Mandate" : "Flex", i: `${c.product} ${c.size}`, b: c.buying, n: c.stores })),
-        },
-        {
-          name: "Reps",
-          title: `Rep activity — ${pLabel}`,
-          cols: [
-            { header: "Rep", key: "rep" },
-            { header: "Territory", key: "territory", width: 22 },
-            { header: "Check-ins", key: "checkins" },
-            { header: "New accounts", key: "newA" },
-            { header: "Won back", key: "won" },
-          ],
-          rows: v.reps.map((r) => ({ ...r, checkins: r.checkins ?? "" })),
-        },
-      ]);
-    } finally {
-      setBusy(null);
-    }
-  };
-
   // Trend chart geometry.
   const W = 760;
   const H = 230;
@@ -615,7 +545,7 @@ export default function SalesDashboardHome({
   const tiles = v.dd.withData
     .filter((d) => !dist || d === dist)
     .map((d) => {
-      const kd = kpis(home, period, d);
+      const kd = kpis(home, shown, d);
       const gaps = (actions.rows ?? []).filter((r) => r.store.distributor === d).length;
       const slipping = kd.atRisk >= Math.max(3, kd.buying * 0.1);
       return {
@@ -666,30 +596,84 @@ export default function SalesDashboardHome({
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Filters */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className={`text-[13px] ${MUTED}`}>
-          <span className="mr-2 inline-block h-2 w-2 rounded-full bg-[#6abc46] align-middle shadow-[0_0_10px_#6abc46]" />
-          Live · sales data as of <span className="font-mono text-neutral-200">{fmtDay(home.as_of)}</span> · updates on its own after every LilyPad sync
-        </p>
-        <div className="flex flex-wrap items-center gap-2">
-          {PERIODS.map((p) => (
-            <Pill
-              key={p.key}
-              on={period === p.key}
-              onClick={() => {
-                setPeriod(p.key);
-                remember(p.key, dist);
-              }}
+      {/* Data date, then the period (Chad 10/21: under the sync status, above the distributors), then distributors */}
+      <p className={`text-[13px] ${MUTED}`}>
+        <span className="mr-2 inline-block h-2 w-2 rounded-full bg-[#6abc46] align-middle shadow-[0_0_10px_#6abc46]" />
+        Live · sales data as of <span className="font-mono text-neutral-200">{fmtDay(home.as_of)}</span> · updates on its own after every LilyPad sync
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        {PERIODS.map((p) => (
+          <Pill
+            key={p.key}
+            on={period === p.key}
+            onClick={() => {
+              setPeriod(p.key);
+              setShowCustom(false);
+              remember(p.key, dist);
+            }}
+          >
+            {p.label}
+          </Pill>
+        ))}
+        <Pill
+          on={period === "custom" || showCustom}
+          onClick={() => {
+            if (!showCustom && !draft.from) {
+              const to = home.as_of ?? "";
+              setDraft({ from: to ? addDaysIso(to, -29) : "", to });
+            }
+            setShowCustom(!showCustom);
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="18" rx="2" />
+            <path d="M16 2v4M8 2v4M3 10h18" />
+          </svg>
+          {period === "custom" && custom ? `${fmtDay(custom.from)} – ${fmtDay(custom.to)}` : "Custom dates"}
+        </Pill>
+        {showCustom && (
+          <form
+            className="flex flex-wrap items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!draft.from || !draft.to) return;
+              const r = draft.from <= draft.to ? draft : { from: draft.to, to: draft.from };
+              setDraft(r);
+              setCustom(r);
+              setPeriod("custom");
+              remember("custom", dist, r);
+            }}
+          >
+            <label className={`flex items-center gap-1.5 text-[13px] ${MUTED}`}>
+              From
+              <input
+                type="date"
+                value={draft.from}
+                max={home.as_of ?? undefined}
+                onChange={(e) => setDraft({ ...draft, from: e.target.value })}
+                className="min-h-9 rounded-full border border-neutral-700 bg-neutral-950 px-3 text-[13px] text-neutral-100 [color-scheme:dark]"
+              />
+            </label>
+            <label className={`flex items-center gap-1.5 text-[13px] ${MUTED}`}>
+              To
+              <input
+                type="date"
+                value={draft.to}
+                max={home.as_of ?? undefined}
+                onChange={(e) => setDraft({ ...draft, to: e.target.value })}
+                className="min-h-9 rounded-full border border-neutral-700 bg-neutral-950 px-3 text-[13px] text-neutral-100 [color-scheme:dark]"
+              />
+            </label>
+            <button
+              type="submit"
+              disabled={!draft.from || !draft.to}
+              className="inline-flex min-h-9 items-center rounded-full border border-[#6abc46]/45 bg-[#6abc46]/15 px-3.5 text-[13px] font-semibold text-neutral-50 hover:bg-[#6abc46]/25 disabled:opacity-50"
             >
-              {p.label}
-            </Pill>
-          ))}
-          <HelpButton id="home-help" title="How to read the Sales Dashboard" featureId="feature:sales-dash-home">
-            <HomeHelp />
-          </HelpButton>
-          <ExportButton label="Export dashboard" onClick={exportAll} busy={busy === "all"} />
-        </div>
+              Apply
+            </button>
+            {period === "custom" && !customReady && <span className={`text-xs ${MUTED}`}>Loading…</span>}
+          </form>
+        )}
       </div>
       <div className="flex gap-2 overflow-x-auto pb-0.5">
         {["", ...v.dd.withData].map((d) => (
@@ -705,7 +689,6 @@ export default function SalesDashboardHome({
             {d || "All distributors"}
           </Pill>
         ))}
-        {homeNew.isNew && <NewBadge inline />}
       </div>
 
       {/* Needs attention + Win backs */}
@@ -1121,45 +1104,6 @@ function Stat({ value, label, color }: { value: string; label: string; color?: s
         {value}
       </span>
       <span className="text-[11px] text-neutral-500">{label}</span>
-    </div>
-  );
-}
-
-function HomeHelp() {
-  return (
-    <div className="grid gap-4 md:grid-cols-2">
-      <ul className="list-disc space-y-1 pl-5">
-        <li>
-          Everything follows the <b>period</b> (30 days, 90 days, Year to date) and the <b>distributor</b> you pick at the top. Changes are compared with the <b>same days last year</b>.
-        </li>
-        <li>
-          The numbers come straight from the LilyPad sales data and <b>update on their own</b> after every sync — the date at the top says how current they are.
-        </li>
-        <li>
-          <b>Needs attention</b>: stores missing a <b>must-carry</b> item (Chain Mandates), accounts <b>slipping</b> (61–90 days since their last order) and <b>big losses</b> (90+ days, {BIG_LOST_CE}+ cases all time).
-        </li>
-        <li>
-          <b>Win backs</b>: accounts that ordered again after going 61+ days without an order — <b>from Lost</b> if they were gone 90+ days, <b>from Potential lost</b> if 61–90.
-        </li>
-        <li>
-          <b>Distributors</b>: click one for its <b>biggest immediate impacts</b>, ranked by the cases a year at stake. The tag says what to look at first: red = a must-carry gap, amber = 10%+ of its accounts slipping, green = on track.
-        </li>
-      </ul>
-      <ul className="list-disc space-y-1 pl-5">
-        <li>
-          <b>Cases a year at stake</b>: for a slipping or lost account, what it bought in the last 12 months. For a must-carry gap, what the chain&apos;s other stores that carry the item sell of it in a year.
-        </li>
-        <li>
-          <b>Buying accounts</b> = ordered in the last 60 days (Active + New + Re-Activated). <b>Went lost</b> = hit 90 days without an order during the period — fewer is better.
-        </li>
-        <li>
-          Sales come in as monthly totals, so a month that&apos;s only partly in the period is split by days.
-        </li>
-        <li>
-          <b>Click</b> any number, color or account to open it in <b>Sales → Accounts</b> — that&apos;s where to dig into the details. <b>Export</b> buttons give a spreadsheet to hand to a rep or distributor.
-        </li>
-        <li>The Action Items, Gap Report, Chain setup and Turned off tools are at the bottom of the page.</li>
-      </ul>
     </div>
   );
 }

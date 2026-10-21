@@ -6,8 +6,9 @@
 
 import { BIG_LOST_CE, CURRENT_DISTRIBUTORS, REP_BY_DISTRIBUTOR, REPS } from "@/lib/salesAccounts";
 
-export type Period = "30" | "90" | "ytd";
-export const PERIODS: { key: Period; label: string; long: string }[] = [
+export type Period = "30" | "90" | "ytd" | "custom";
+// The quick picks; "custom" (a From–To range, added 2026-10-21) is its own control.
+export const PERIODS: { key: Exclude<Period, "custom">; label: string; long: string }[] = [
   { key: "30", label: "30 days", long: "Last 30 days" },
   { key: "90", label: "90 days", long: "Last 90 days" },
   { key: "ytd", label: "Year to date", long: "Year to date" },
@@ -91,8 +92,17 @@ export interface HomeData {
   checkins: { p: Period; rep: string; n: number }[] | null;
 }
 
-export function loadArgs() {
-  return { p_current: CURRENT_DISTRIBUTORS, p_big: BIG_LOST_CE };
+export interface DateRange {
+  from: string; // YYYY-MM-DD
+  to: string;
+}
+export function loadArgs(custom: DateRange | null) {
+  return { p_current: CURRENT_DISTRIBUTORS, p_big: BIG_LOST_CE, p_from: custom?.from ?? null, p_to: custom?.to ?? null };
+}
+export function addDaysIso(iso: string, days: number): string {
+  const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
 }
 
 // ---- small helpers ----
