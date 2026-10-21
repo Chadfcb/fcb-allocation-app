@@ -625,9 +625,11 @@ export default function SalesDashboardHome({
           </>
         )}
       </p>
-      {/* How to use it, step by step (Chad 10/21: "so people understand how the dashboard works") */}
-      <div className="flex flex-col gap-2">
-        <Step n={1}>Pick a time frame</Step>
+      {/* How to use it (Chad 10/21: instructions right under the data line, "so people understand how the dashboard works") */}
+      <div className="-mt-2 flex flex-col gap-1.5">
+        <Step n={1}>First, select your time frame</Step>
+        <Step n={2}>Second, select your distributor</Step>
+      </div>
       <div className="flex flex-wrap items-center gap-2">
         {PERIODS.map((p) => (
           <Pill
@@ -702,9 +704,6 @@ export default function SalesDashboardHome({
           </form>
         )}
       </div>
-      </div>
-      <div className="flex flex-col gap-2">
-        <Step n={2}>Pick a distributor (or all of them)</Step>
       <div className="flex gap-2 overflow-x-auto pb-0.5">
         {["", ...v.dd.withData].map((d) => (
           <Pill
@@ -720,8 +719,6 @@ export default function SalesDashboardHome({
           </Pill>
         ))}
       </div>
-      </div>
-      <Step n={3}>Click any block, number or account to see the details — Export hands a list to a rep or distributor</Step>
 
       {/* Needs attention + Win backs */}
       <div className="flex flex-wrap gap-4">
