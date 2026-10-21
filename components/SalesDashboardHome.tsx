@@ -345,6 +345,13 @@ export default function SalesDashboardHome({
   const [custom, setCustom] = useState<DateRange | null>(null);
   const [showCustom, setShowCustom] = useState(false);
   const [draft, setDraft] = useState<DateRange>({ from: "", to: "" });
+  // When the app last pulled from LilyPad (sales_data_meta.imported_at — stamped
+  // by every sync even when LilyPad had nothing newer). Chad 10/21: the as-of
+  // date alone read like the data was stale.
+  const [checkedAt, setCheckedAt] = useState<string | null>(null);
+  // Month under the mouse on the Cases sold by month chart (Chad 10/21: hover a
+  // peak or valley to see what it is).
+  const [hoverMonth, setHoverMonth] = useState<number | null>(null);
   const coverage = useChainCoverage(supabase, ov, resolved, version);
 
   // Remembered period / distributor (this browser only).
@@ -374,6 +381,14 @@ export default function SalesDashboardHome({
   // Load (and reload whenever the parent's version bumps — e.g. a LilyPad sync finished).
   useEffect(() => {
     let cancelled = false;
+    supabase
+      .from("sales_data_meta")
+      .select("imported_at")
+      .eq("id", 1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled) setCheckedAt((data?.imported_at as string | null) ?? null);
+      });
     supabase.rpc("sales_dash_home", loadArgs(custom)).then(({ data, error }) => {
       if (cancelled) return;
       if (error) setErr(error.message);
@@ -597,10 +612,22 @@ export default function SalesDashboardHome({
   return (
     <div className="flex flex-col gap-5">
       {/* Data date, then the period (Chad 10/21: under the sync status, above the distributors), then distributors */}
-      <p className={`text-[13px] ${MUTED}`}>
+      <p
+        className={`text-[13px] ${MUTED}`}
+        title="Distributors report their sales to LilyPad a few days behind, so the latest sales date usually trails today. The app checks LilyPad for new sales every weekday morning and this page updates on its own."
+      >
         <span className="mr-2 inline-block h-2 w-2 rounded-full bg-[#6abc46] align-middle shadow-[0_0_10px_#6abc46]" />
-        Live · sales data as of <span className="font-mono text-neutral-200">{fmtDay(home.as_of)}</span> · updates on its own after every LilyPad sync
+        Latest sales in LilyPad: <span className="text-neutral-200">{fmtWeekdayDay(home.as_of)}</span>
+        {checkedAt && (
+          <>
+            {" "}
+            · Last checked for new sales: <span className="text-neutral-200">{fmtChecked(checkedAt)}</span>
+          </>
+        )}
       </p>
+      {/* How to use it, step by step (Chad 10/21: "so people understand how the dashboard works") */}
+      <div className="flex flex-col gap-2">
+        <Step n={1}>Pick a time frame</Step>
       <div className="flex flex-wrap items-center gap-2">
         {PERIODS.map((p) => (
           <Pill
@@ -675,6 +702,9 @@ export default function SalesDashboardHome({
           </form>
         )}
       </div>
+      </div>
+      <div className="flex flex-col gap-2">
+        <Step n={2}>Pick a distributor (or all of them)</Step>
       <div className="flex gap-2 overflow-x-auto pb-0.5">
         {["", ...v.dd.withData].map((d) => (
           <Pill
@@ -690,6 +720,8 @@ export default function SalesDashboardHome({
           </Pill>
         ))}
       </div>
+      </div>
+      <Step n={3}>Click any block, number or account to see the details — Export hands a list to a rep or distributor</Step>
 
       {/* Needs attention + Win backs */}
       <div className="flex flex-wrap gap-4">
@@ -836,26 +868,92 @@ export default function SalesDashboardHome({
               </span>
             </div>
           </div>
-          <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block h-[230px] w-full" role="img" aria-label={`Cases sold by month, this year versus last year, ${scope}`}>
-            <defs>
-              <linearGradient id="home-tyfill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stopColor="#6abc46" stopOpacity="0.28" />
-                <stop offset="1" stopColor="#6abc46" stopOpacity="0" />
-              </linearGradient>
-            </defs>
-            {[20, 85, 150].map((y) => (
-              <line key={y} x1="0" y1={y} x2={W} y2={y} stroke="#1b2420" strokeWidth="1" />
-            ))}
-            <line x1="0" y1="215" x2={W} y2="215" stroke="#24302a" strokeWidth="1" />
-            <path d={`M0,215 L${tyPts.split(" ").join(" L")} L${W},215 Z`} fill="url(#home-tyfill)" />
-            <polyline points={lyPts} fill="none" stroke="#6f7f77" strokeWidth="2" strokeDasharray="5 5" vectorEffect="non-scaling-stroke" />
-            <polyline points={tyPts} fill="none" stroke="#6abc46" strokeWidth="2.5" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-            {t.ty.map((val, i) => (
-              <circle key={i} cx={X(i)} cy={Y(val)} r="9" fill="transparent">
-                <title>{`${monthLabel(t.months[i])} ${t.months[i].slice(0, 4)}: ${fmtN(val)} cases (last year ${fmtN(t.ly[i])})`}</title>
-              </circle>
-            ))}
-          </svg>
+          <div className="relative h-[230px]" onMouseLeave={() => setHoverMonth(null)}>
+            <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="absolute inset-0 block h-[230px] w-full" role="img" aria-label={`Cases sold by month, this year versus last year, ${scope}`}>
+              <defs>
+                <linearGradient id="home-tyfill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stopColor="#6abc46" stopOpacity="0.28" />
+                  <stop offset="1" stopColor="#6abc46" stopOpacity="0" />
+                </linearGradient>
+              </defs>
+              {[20, 85, 150].map((y) => (
+                <line key={y} x1="0" y1={y} x2={W} y2={y} stroke="#1b2420" strokeWidth="1" />
+              ))}
+              <line x1="0" y1="215" x2={W} y2="215" stroke="#24302a" strokeWidth="1" />
+              <path d={`M0,215 L${tyPts.split(" ").join(" L")} L${W},215 Z`} fill="url(#home-tyfill)" />
+              <polyline points={lyPts} fill="none" stroke="#6f7f77" strokeWidth="2" strokeDasharray="5 5" vectorEffect="non-scaling-stroke" />
+              <polyline points={tyPts} fill="none" stroke="#6abc46" strokeWidth="2.5" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+              {hoverMonth !== null && <line x1={X(hoverMonth)} y1="10" x2={X(hoverMonth)} y2="215" stroke="#8fd16f" strokeOpacity="0.45" strokeWidth="1" strokeDasharray="3 4" vectorEffect="non-scaling-stroke" />}
+            </svg>
+            {/* Hover zones, one per month, plus the dots and the pop-up */}
+            <div className="absolute inset-0 overflow-hidden">
+              {t.months.map((m, i) => (
+                <div
+                  key={m}
+                  className="h-full cursor-crosshair"
+                  style={{ position: "absolute", left: `${((i - 0.5) / 11) * 100}%`, width: `${100 / 11}%` }}
+                  onMouseEnter={() => setHoverMonth(i)}
+                  onClick={() => setHoverMonth(i)}
+                />
+              ))}
+            </div>
+            {hoverMonth !== null && (
+              <>
+                <span className="pointer-events-none absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-neutral-950 bg-[#6abc46] shadow-[0_0_10px_#6abc46]" style={{ left: `${(hoverMonth / 11) * 100}%`, top: Y(t.ty[hoverMonth]) }} />
+                <span className="pointer-events-none absolute h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-neutral-400" style={{ left: `${(hoverMonth / 11) * 100}%`, top: Y(t.ly[hoverMonth]) }} />
+                <div
+                  className="pointer-events-none absolute top-1 z-10 w-max min-w-[190px] rounded-xl border border-[#6abc46]/40 bg-neutral-950/95 px-3.5 py-2.5 text-[12.5px] shadow-xl"
+                  style={{
+                    left: `${(hoverMonth / 11) * 100}%`,
+                    // Beside the point, never on top of it.
+                    transform: `translateX(${hoverMonth <= 5 ? "14px" : "calc(-100% - 14px)"})`,
+                  }}
+                >
+                  {(() => {
+                    const m = t.months[hoverMonth];
+                    const lyMonth = `${+m.slice(0, 4) - 1}${m.slice(4)}`;
+                    const tyV = t.ty[hoverMonth];
+                    // The month still going is compared with the same days last year
+                    // (last year's month, split by days — it's a monthly total).
+                    const partial = hoverMonth === 11 && t.partial;
+                    const asOfDay = home.as_of ? +home.as_of.slice(8, 10) : 0;
+                    const monthDays = new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).getUTCDate();
+                    const lyV = partial ? (t.ly[hoverMonth] * asOfDay) / monthDays : t.ly[hoverMonth];
+                    const isBest = hoverMonth === bestIdx;
+                    const isLow = tyV === Math.min(...t.ty);
+                    return (
+                      <>
+                        <div className="mb-1 flex items-center gap-2 font-semibold text-neutral-100">
+                          {monthLabel(m)} {m.slice(0, 4)}
+                          {hoverMonth === 11 && t.partial && <span className="font-normal text-neutral-500">so far (through {fmtDay(home.as_of)})</span>}
+                        </div>
+                        <div className="flex items-center justify-between gap-4">
+                          <span className="flex items-center gap-1.5 text-neutral-300">
+                            <span className="inline-block h-[3px] w-3 rounded bg-[#6abc46]" />
+                            Cases sold
+                          </span>
+                          <span className="font-mono text-neutral-50">{fmtN(tyV)}</span>
+                        </div>
+                        <div className="flex items-center justify-between gap-4">
+                          <span className="flex items-center gap-1.5 text-neutral-400">
+                            <span className="inline-block w-3 border-t-2 border-dashed border-neutral-500" />
+                            {partial ? `${monthLabel(lyMonth)} 1–${asOfDay}, ${lyMonth.slice(0, 4)} (est.)` : `${monthLabel(lyMonth)} ${lyMonth.slice(0, 4)}`}
+                          </span>
+                          <span className="font-mono text-neutral-300">{fmtN(lyV)}</span>
+                        </div>
+                        <div className="mt-1.5 flex items-center gap-2">
+                          <Change value={pctChange(tyV, lyV)} />
+                          <span className="text-neutral-500">vs last year</span>
+                          {isBest && <span className="rounded-full bg-[#6abc46]/15 px-2 py-0.5 text-[11px] font-semibold text-[#9edc7f]">Best month</span>}
+                          {isLow && !isBest && !partial && <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-semibold text-[#ffab9c]">Lowest month</span>}
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              </>
+            )}
+          </div>
           <div className="flex justify-between text-[11px] text-neutral-500">
             {t.months.map((m, i) => (
               <span key={m}>
@@ -1092,6 +1190,35 @@ export default function SalesDashboardHome({
         </Modal>
       )}
     </div>
+  );
+}
+
+// "Fri 10/16/26"
+function fmtWeekdayDay(iso: string | null): string {
+  if (!iso) return "—";
+  const d = new Date(`${iso.slice(0, 10)}T12:00:00Z`);
+  return `${d.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" })} ${fmtDay(iso)}`;
+}
+
+// "today, 4:12 AM" / "yesterday, 4:12 AM" / "Mon 10/19, 4:12 AM" — Pacific time.
+function fmtChecked(ts: string): string {
+  const tz = "America/Los_Angeles";
+  const when = new Date(ts);
+  const dayKey = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: tz });
+  const time = when.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: tz });
+  const now = new Date();
+  if (dayKey(when) === dayKey(now)) return `today, ${time}`;
+  if (dayKey(when) === dayKey(new Date(now.getTime() - 86400000))) return `yesterday, ${time}`;
+  const label = when.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric", timeZone: tz });
+  return `${label.replace(",", "")}, ${time}`;
+}
+
+function Step({ n, children }: { n: number; children: React.ReactNode }) {
+  return (
+    <p className="flex items-center gap-2 text-[13px] text-neutral-300">
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[#6abc46]/50 bg-[#6abc46]/10 text-[11px] font-semibold text-[#9edc7f]">{n}</span>
+      {children}
+    </p>
   );
 }
 
