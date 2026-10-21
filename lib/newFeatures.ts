@@ -31,6 +31,12 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    id: "feature:sales-dash-home",
+    page: "/sales-dashboard",
+    label: "Sales Dashboard home (at-a-glance blocks: needs attention, win backs, distributors, headline numbers, trends) — cleared by its How to read this button",
+    added: "2026-10-21",
+  },
+  {
     id: "feature:sales-action-items",
     page: "/sales-dashboard",
     label: "Action Items tab on Sales Dashboard (every store missing a Mandate / must-carry item)",

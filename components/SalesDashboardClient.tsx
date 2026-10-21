@@ -1,7 +1,11 @@
 "use client";
 
 // Sales Dashboard (Main → Sales Dashboard), added 2026-10-08, per Chad.
-// Four tabs:
+// Opens on the dashboard home (added 2026-10-21, components/SalesDashboardHome.tsx):
+// the at-a-glance page. The four tools below sit in a Tools row at its bottom;
+// opening one shows the tool tabs with Dashboard first. The home reloads on
+// its own when a LilyPad sync finishes (sales_data_meta in the live feed).
+// Tools:
 //   Action Items — opens first (added 2026-10-20): every store not buying a
 //                 Mandate item, across all chains/distributors
 //                 (components/SalesActionItems.tsx).
@@ -22,6 +26,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import SalesDashboardSetup from "@/components/SalesDashboardSetup";
 import SalesActionItems, { useActionItems, type ActionRow } from "@/components/SalesActionItems";
+import SalesDashboardHome from "@/components/SalesDashboardHome";
 import NewBadge from "@/components/NewBadge";
 import { useNewFeature } from "@/lib/newFeatures";
 import { isFormerDistributor } from "@/lib/salesAccounts";
@@ -236,7 +241,7 @@ export default function SalesDashboardClient() {
   const [ov, setOv] = useState<DashOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
-  const [tab, setTab] = useState<"actions" | "gap" | "setup" | "off">("actions");
+  const [tab, setTab] = useState<"home" | "actions" | "gap" | "setup" | "off">("home");
   // Clicking a store on Action Items opens it in the Gap Report.
   const [jump, setJump] = useState<GapJump | null>(null);
   const actionsNew = useNewFeature("feature:sales-action-items");
@@ -268,7 +273,8 @@ export default function SalesDashboardClient() {
       t = setTimeout(() => loadOverview(), 600);
     };
     let ch = supabase.channel("sales-dashboard");
-    for (const table of ["sales_account_off", "sales_chain_names", "sales_chain_store", "sales_chain_list_link", "sales_chain_item_link", "sales_chain_item_status"]) {
+    // sales_data_meta: stamped when a LilyPad sync finishes → the dashboard home reloads.
+    for (const table of ["sales_account_off", "sales_chain_names", "sales_chain_store", "sales_chain_list_link", "sales_chain_item_link", "sales_chain_item_status", "sales_data_meta"]) {
       ch = ch.on("postgres_changes", { event: "*", schema: "public", table }, bump);
     }
     ch.subscribe();
@@ -282,6 +288,7 @@ export default function SalesDashboardClient() {
   const actions = useActionItems(supabase, ov, resolved, version);
 
   const TABS = [
+    ["home", "Dashboard"],
     ["actions", actions.rows ? `Action Items (${actions.rows.length})` : "Action Items"],
     ["gap", "Gap Report"],
     ["setup", "Chain setup"],
@@ -293,11 +300,14 @@ export default function SalesDashboardClient() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-neutral-100">Sales Dashboard</h1>
-          <p className="text-sm text-neutral-500">
-            {ov?.as_of ? `Sales data as of ${fdate(ov.as_of)} · a store "carries" an item if it bought it in the last ${CARRIED_DAYS} days` : "Loading…"}
-          </p>
+          {tab !== "home" && (
+            <p className="text-sm text-neutral-500">
+              {ov?.as_of ? `Sales data as of ${fdate(ov.as_of)} · a store "carries" an item if it bought it in the last ${CARRIED_DAYS} days` : "Loading…"}
+            </p>
+          )}
         </div>
       </div>
+      {tab !== "home" && (
       <div className="flex gap-1 border-b border-neutral-800">
         {TABS.map(([k, label]) => (
           <button
@@ -317,7 +327,49 @@ export default function SalesDashboardClient() {
           </button>
         ))}
       </div>
+      )}
       {error && <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</p>}
+      {tab === "home" && (
+        <>
+          <SalesDashboardHome
+            supabase={supabase}
+            ov={ov}
+            resolved={resolved}
+            version={version}
+            actions={actions}
+            onOpenStore={(r: ActionRow) => {
+              setJump({ chain: r.chain, dist: r.store.distributor, q: r.store.name, outlet: r.store.outlet_id, n: Date.now() });
+              setTab("gap");
+            }}
+            onOpenTool={(t) => {
+              setJump(null);
+              if (t === "actions") actionsNew.dismiss();
+              setTab(t);
+            }}
+          />
+          {/* Tools row (the old tabs) */}
+          <div className="flex flex-wrap items-center gap-2 border-t border-neutral-800 pt-4">
+            <span className="mr-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Tools</span>
+            {TABS.filter(([k]) => k !== "home").map(([k, label]) => (
+              <button
+                key={k}
+                id={`dash-tool-${k}`}
+                type="button"
+                onClick={() => {
+                  setSetupStart("chains");
+                  setJump(null);
+                  if (k === "actions") actionsNew.dismiss();
+                  setTab(k);
+                }}
+                className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-neutral-700 px-3.5 text-[13px] font-medium text-neutral-300 hover:border-[#6abc46]/40 hover:text-neutral-100"
+              >
+                {label}
+                {k === "actions" && actionsNew.isNew && <NewBadge inline />}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
       {ov && tab === "actions" && (
         <SalesActionItems
           data={actions}

@@ -26,6 +26,10 @@ export interface ActionRow {
   store: GapStore;
   rep: string | null;
   missing: StoreLine[]; // Mandate items this store isn't buying
+  // Cases a year at stake (added 2026-10-21 for the dashboard home): for each
+  // missing item, the average 12-month cases of the chain's stores (same
+  // distributor; else any distributor) that do carry it, added up.
+  impact: number;
   phone: string | null;
   lastCheckin: string | null;
   lastCheckinBy: string | null;
@@ -67,13 +71,34 @@ export function useActionItems(supabase: Supa, ov: DashOverview | null, resolved
           return;
         }
         asOf = res.as_of;
-        for (const r of buildStoreReports(res, resolved.rules.get(chain))) {
+        const reports = buildStoreReports(res, resolved.rules.get(chain));
+        // Average 12-month cases of the stores carrying each item.
+        const sums = new Map<string, { t: number; n: number }>();
+        const addSum = (k: string, v: number) => {
+          const cur = sums.get(k) ?? { t: 0, n: 0 };
+          cur.t += v;
+          cur.n += 1;
+          sums.set(k, cur);
+        };
+        for (const r of reports) {
+          for (const l of r.carried) {
+            addSum(`${r.store.distributor}\u0002${l.key}`, l.ce12);
+            addSum(`*\u0002${l.key}`, l.ce12);
+          }
+        }
+        const avg = (k: string) => {
+          const v = sums.get(k);
+          return v && v.n ? v.t / v.n : 0;
+        };
+        for (const r of reports) {
           if (r.mandateGaps === 0) continue;
+          const missing = r.gaps.filter((g) => g.status === "mandate");
           rows.push({
             chain,
             store: r.store,
             rep: repFor(r.store.distributor),
-            missing: r.gaps.filter((g) => g.status === "mandate"),
+            missing,
+            impact: missing.reduce((t, g) => t + (avg(`${r.store.distributor}\u0002${g.key}`) || avg(`*\u0002${g.key}`)), 0),
             phone: null,
             lastCheckin: null,
             lastCheckinBy: null,

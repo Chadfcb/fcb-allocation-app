@@ -86,6 +86,7 @@ type SortKey =
   | "ce_12mo"
   | "lifetime_ce"
   | "premise";
+const SORT_KEYS: SortKey[] = ["name", "distributor", "rep", "stage", "owner", "tier", "handled", "lastCheckin", "last_buy_date", "daysDark", "ce_12mo", "lifetime_ce", "premise"];
 
 interface Filters {
   stage: AccountStage | null;
@@ -259,6 +260,28 @@ export default function SalesAccountsClient({ isAdmin }: { isAdmin: boolean }) {
   // Remembered filters (per browser)
   useEffect(() => {
     try {
+      // Links from the Sales Dashboard (added 2026-10-21) set the filters
+      // instead: ?stage=plost&dist=Matagrano&big=1&sort=last_buy_date, or
+      // ?open=<outlet id> to open one account. Then the address is cleaned up.
+      const q = new URLSearchParams(window.location.search);
+      if (["stage", "dist", "big", "sort", "open"].some((k) => q.has(k))) {
+        const stage = q.get("stage");
+        const sort = q.get("sort");
+        const next: Filters = {
+          ...DEFAULT_FILTERS,
+          stage: stage && (STAGE_ORDER as string[]).includes(stage) ? (stage as AccountStage) : null,
+          dist: q.get("dist") ?? "",
+          big: q.get("big") === "1",
+          sort: sort && (SORT_KEYS as string[]).includes(sort) ? (sort as SortKey) : DEFAULT_FILTERS.sort,
+          asc: false,
+        };
+        setFilters(next);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+        if (q.get("open")) setOpenId(q.get("open"));
+        setView("overview");
+        window.history.replaceState(null, "", window.location.pathname);
+        return;
+      }
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) setFilters({ ...DEFAULT_FILTERS, ...(JSON.parse(saved) as Partial<Filters>) });
     } catch {
