@@ -26,6 +26,12 @@ import { isoDate, num, pick, readSheets, text, type Row } from "@/lib/syncs/lily
 // Safety: if a finished month comes back with less than half the rows the
 // app already has for it, nothing is written and the run reports why — a
 // LilyPad hiccup can never wipe good data.
+//
+// Since 2026-10-21 the months are replaced in ONE database step
+// (sql/sales_replace_months.sql → sales_account_sales_replace): the old
+// months are deleted and the new rows saved together, all or nothing. Before,
+// they were two steps; on 2026-10-20 the save failed after the delete and
+// Aug–Oct were left empty until the next run.
 
 const MIN_RATIO = 0.5;
 
@@ -286,17 +292,12 @@ export async function syncLilypadSales(admin: SupabaseClient): Promise<SalesSync
     if (error) throw new Error(`Saving new accounts failed: ${error.message}`);
   }
 
-  // Replace the window's months.
-  const { error: delError } = await admin.from("sales_account_sales").delete().gte("month", windowStart);
-  if (delError) throw new Error(`Clearing ${windowStart.slice(0, 7)} on failed: ${delError.message}`);
-  for (let i = 0; i < rows.length; i += 1000) {
-    const { error } = await admin.from("sales_account_sales").insert(rows.slice(i, i + 1000));
-    if (error) {
-      throw new Error(
-        `Saving sales failed part-way (${i} of ${rows.length} saved): ${error.message}. The next run re-does these months.`,
-      );
-    }
+  // Replace the window's months — delete + save in one step, all or nothing.
+  const { data: saved, error: saveError } = await admin.rpc("sales_account_sales_replace", { p_from: windowStart, p_rows: rows });
+  if (saveError) {
+    throw new Error(`Saving sales failed: ${saveError.message}. Nothing was changed — the sales already in the app are untouched; the next run tries again.`);
   }
+  if (saved !== rows.length) issues.push(`Saved ${saved} sales rows, expected ${rows.length}.`);
 
   const newAsOf = maxDate > asOf ? maxDate : asOf;
   const { error: refreshError } = await admin.rpc("sales_accounts_refresh", { p_as_of: newAsOf });
