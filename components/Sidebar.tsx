@@ -877,19 +877,9 @@ export default function Sidebar({
                   {role === "admin" && (
                     <Link href="/dashboard" className={topLinkClass("/dashboard")} onClick={() => dismissNew("/dashboard")}>
                       <IconHome />
-                      Dashboard
+                      {/* Renamed from "Dashboard" 2026-10-22, per Chad; address stays /dashboard. */}
+                      Operations Dashboard
                       {showsNew("/dashboard") && <NewBadge />}
-                    </Link>
-                  )}
-
-                  {/* Tanks (2026-10-03) — 3D x-ray view of every unitank.
-                      Gated by its own "Tanks" access (Admin → Users), same
-                      as every other section. */}
-                  {can("tanks") && (
-                    <Link href="/tanks" className={topLinkClass("/tanks")} onClick={() => dismissNew("/tanks")}>
-                      <IconTank />
-                      Tanks
-                      {showsNew("/tanks") && <NewBadge />}
                     </Link>
                   )}
 
@@ -901,6 +891,18 @@ export default function Sidebar({
                       <IconChart />
                       Sales Dashboard
                       {showsNew("/sales-dashboard") && <NewBadge />}
+                    </Link>
+                  )}
+
+                  {/* Tanks (2026-10-03) — 3D x-ray view of every unitank.
+                      Gated by its own "Tanks" access (Admin → Users), same
+                      as every other section. Moved below Sales Dashboard
+                      2026-10-22, per Chad. */}
+                  {can("tanks") && (
+                    <Link href="/tanks" className={topLinkClass("/tanks")} onClick={() => dismissNew("/tanks")}>
+                      <IconTank />
+                      Tanks
+                      {showsNew("/tanks") && <NewBadge />}
                     </Link>
                   )}
 
