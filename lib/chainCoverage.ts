@@ -9,6 +9,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { createClient } from "@/lib/supabase/client";
+import { loadGapStores } from "@/lib/salesGapMany";
 import { buildStoreReports, splitKey, statusFor, type DashOverview, type GapByStoreResult, type resolveLists } from "@/lib/salesDashboard";
 
 type Supa = ReturnType<typeof createClient>;
@@ -41,17 +42,20 @@ export function useChainCoverage(supabase: Supa, ov: DashOverview | null, resolv
     (async () => {
       const list = chainsKey ? chainsKey.split("\u0001") : [];
       const out: CoverageRow[] = [];
-      // A few chains at a time.
-      for (let i = 0; i < list.length; i += 4) {
-        const part = list.slice(i, i + 4);
-        const results = await Promise.all(part.map((chain) => supabase.rpc("sales_gap_by_store", { p_chain: chain, p_distributor: null })));
-        if (cancelled) return;
+      // All chains in one call (2026-10-22 — was one call per chain, which
+      // overloaded the database; see lib/salesGapMany.ts).
+      const all = list.length ? await loadGapStores(supabase, list, null) : {};
+      if (cancelled) return;
+      setErr(null);
+      {
+        const part = list;
         for (let j = 0; j < part.length; j++) {
-          const { data, error } = results[j];
+          const { data, error } = all[part[j]] ?? { data: null, error: null };
           if (error) {
-            setErr(error.message);
+            setErr(error);
             continue;
           }
+          if (!data) continue;
           const chain = part[j];
           const rules = resolved.rules.get(chain);
           if (!rules) continue;

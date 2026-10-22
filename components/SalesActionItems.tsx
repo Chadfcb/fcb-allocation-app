@@ -18,6 +18,7 @@ import { useEffect, useMemo, useState } from "react";
 import { HelpButton, SEL, StatusPill, downloadWorkbook, fdate, type Supa } from "@/components/SalesDashboardClient";
 import { repFor } from "@/lib/salesAccounts";
 import { CARRIED_DAYS, buildStoreReports, type DashOverview, type GapStore, type StoreLine, type resolveLists } from "@/lib/salesDashboard";
+import { loadGapStores } from "@/lib/salesGapMany";
 
 type Resolved = ReturnType<typeof resolveLists>;
 
@@ -65,13 +66,18 @@ export function useActionItems(supabase: Supa, ov: DashOverview | null, resolved
     (async () => {
       const rows: ActionRow[] = [];
       let asOf: string | null = null;
-      for (const chain of chainsKey ? chainsKey.split("\u0001") : []) {
-        const { data: res, error } = await supabase.rpc("sales_gap_by_store", { p_chain: chain, p_distributor: onlyDist });
-        if (cancelled) return;
+      // All chains in one call (2026-10-22 — was one call per chain, which
+      // overloaded the database; see lib/salesGapMany.ts).
+      const list = chainsKey ? chainsKey.split("\u0001") : [];
+      const all = list.length ? await loadGapStores(supabase, list, onlyDist) : {};
+      if (cancelled) return;
+      for (const chain of list) {
+        const { data: res, error } = all[chain] ?? { data: null, error: null };
         if (error) {
-          setData({ rows: [], asOf: null, err: error.message });
+          setData({ rows: [], asOf: null, err: error });
           return;
         }
+        if (!res) continue;
         asOf = res.as_of;
         const reports = buildStoreReports(res, resolved.rules.get(chain));
         // Average 12-month cases of the stores carrying each item.
