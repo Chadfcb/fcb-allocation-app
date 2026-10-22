@@ -31,6 +31,12 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    id: "feature:dashboard-order-popup",
+    page: "/dashboard",
+    label: "Dashboard > Distributor Order Values: click an order to see its items and amounts (delivered orders also show their delivery date)",
+    added: "2026-10-22",
+  },
+  {
     id: "feature:rep-route-column",
     page: "/sales-dashboard",
     label: "Route column on Sales Dashboard > Rep activity (maintenance route: accounts checked in this two-month period out of the total)",

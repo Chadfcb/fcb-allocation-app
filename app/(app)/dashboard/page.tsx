@@ -50,9 +50,6 @@ export default async function DashboardPage() {
           Welcome, {profile ? firstNameFor(profile) : ""}
         </h1>
         <p className="text-sm text-neutral-400">
-          Current week: <span className="font-medium text-neutral-300">{currentWeek?.label ?? "No week started yet"}</span>
-        </p>
-        <p className="text-sm text-neutral-400">
           Last Ekos sync:{" "}
           <span className="font-medium text-neutral-300">
             {lastSyncLabel ? `${lastSyncLabel} PT` : "Never synced yet"}
@@ -90,7 +87,7 @@ export default async function DashboardPage() {
       */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <PurchaseOrdersDashboardCard />
-        <DashboardLiveBlocks weekId={currentWeek?.id ?? null} />
+        <DashboardLiveBlocks weekId={currentWeek?.id ?? null} weekLabel={currentWeek?.label ?? null} />
       </div>
     </div>
   );
