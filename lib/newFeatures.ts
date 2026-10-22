@@ -33,6 +33,13 @@ export interface NewFeature {
 export const NEW_FEATURES: NewFeature[] = [
   // Account search on every distributor page (one entry per page, so each
   // page's sidebar link lights up).
+  // All Chain Mandates / Chain Authorizations buttons on every distributor page.
+  ...DISTRIBUTOR_PAGES.map((d) => ({
+    id: `feature:dist-chain-lists-${d.slug}`,
+    page: distributorHref(d.slug),
+    label: `${d.name} page: All Chain Mandates / Chain Authorizations buttons (stores, buying vs missing, export)`,
+    added: "2026-10-22",
+  })),
   ...DISTRIBUTOR_PAGES.map((d) => ({
     id: `feature:dist-account-search-${d.slug}`,
     page: distributorHref(d.slug),

@@ -49,7 +49,8 @@ import {
 } from "@/components/SalesDashboardHome";
 import { REP_BY_DISTRIBUTOR } from "@/lib/salesAccounts";
 import { FILE_INVENTORY_DISTRIBUTORS, NO_INVENTORY_DISTRIBUTORS } from "@/lib/distributorPages";
-import { resolveLists, type DashOverview } from "@/lib/salesDashboard";
+import { CARRIED_DAYS, buildStoreReports, resolveLists, splitKey, statusFor, type DashOverview, type GapStore } from "@/lib/salesDashboard";
+import { loadGapStores } from "@/lib/salesGapMany";
 import { PERIODS, addDaysIso, brands, distColor, fmtDay, fmtN, kpis, pctChange, winbacksIn, type DateRange, type HomeData, type Period } from "@/lib/salesDashHome";
 
 interface StockData {
@@ -176,6 +177,9 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
   const [att, setAtt] = useState<"gaps" | "slip" | "lost">("gaps");
   const [follow, setFollow] = useState<"won" | "new">("won");
   const [openId, setOpenId] = useState<string | null>(null);
+  // Chain list pop-ups (2026-10-22, per Chad): All Chain Mandates / Chain Authorizations.
+  const [chainList, setChainList] = useState<"mandate" | "flex" | null>(null);
+  const chainListsNew = useNewFeature(`feature:dist-chain-lists-${dist.toLowerCase().trim().replace(/\s+/g, "-")}`);
   const [busy, setBusy] = useState<string | null>(null);
 
   const [checkins, setCheckins] = useState<CheckinData | null>(null);
@@ -422,7 +426,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
 
   return (
     <div className="flex flex-col gap-5 p-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex flex-wrap items-end gap-x-12 gap-y-3">
         <div className="flex flex-col gap-1.5">
           <h1 className="flex items-center gap-2.5 text-2xl font-bold text-neutral-100">
             <Dot color={distColor(dist)} glow />
@@ -438,6 +442,24 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
               </>
             )}
           </p>
+        </div>
+        {/* All Chain Mandates / Chain Authorizations (2026-10-22, per Chad — spots
+            marked on his screenshot: right of the greeting line). */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          {(["mandate", "flex"] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => {
+                setChainList(k);
+                chainListsNew.dismiss();
+              }}
+              className="flex items-center gap-1.5 rounded-lg border border-[#6abc46]/40 bg-[#6abc46]/10 px-3.5 py-2 text-sm font-semibold text-neutral-100 hover:bg-[#6abc46]/20"
+            >
+              {k === "mandate" ? "All Chain Mandates" : "Chain Authorizations"}
+              {k === "mandate" && chainListsNew.isNew && <NewBadge inline />}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -844,12 +866,221 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
         </>
       )}
 
+      {chainList && (
+        <ChainListPopup
+          supabase={supabase}
+          dist={dist}
+          kind={chainList}
+          ov={ov}
+          resolved={resolved}
+          premise={premise}
+          onOpen={(id) => setOpenId(id)}
+          onClose={() => setChainList(null)}
+        />
+      )}
       {openId && <AccountPopup supabase={supabase} outletId={openId} onClose={() => setOpenId(null)} />}
     </div>
   );
 }
 
 // One account's details (reps don't have Sales → Accounts).
+// All Chain Mandates / Chain Authorizations (2026-10-22, per Chad): every one
+// of this distributor's chain stores that has items on that kind of list
+// (Mandate = Chain Mandates must-carry, Flex = Chain Authorizations), how many
+// it's buying (last 90 days — the Gap Report rule) and which are missing.
+// Same rules and numbers as the Gap Report / Chain coverage; one database call
+// for all chains (lib/salesGapMany.ts), limited to this distributor.
+interface ChainListLine {
+  product: string;
+  size: string;
+  buying: boolean;
+  lastBuy: string | null;
+  ce90: number;
+  ce12: number;
+}
+interface ChainListRow {
+  chain: string;
+  store: GapStore;
+  lines: ChainListLine[];
+  buying: number;
+}
+
+function ChainListPopup({
+  supabase,
+  dist,
+  kind,
+  ov,
+  resolved,
+  premise,
+  onOpen,
+  onClose,
+}: {
+  supabase: ReturnType<typeof createClient>;
+  dist: string;
+  kind: "mandate" | "flex";
+  ov: DashOverview | null;
+  resolved: ReturnType<typeof resolveLists> | null;
+  premise: Record<string, string>;
+  onOpen: (outletId: string) => void;
+  onClose: () => void;
+}) {
+  const title = kind === "mandate" ? "All Chain Mandates" : "Chain Authorizations";
+  const what = kind === "mandate" ? "must-carry (Chain Mandates)" : "authorized (Chain Authorizations)";
+  const [rows, setRows] = useState<ChainListRow[] | null>(null);
+  const [asOf, setAsOf] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!ov || !resolved) return;
+    let cancelled = false;
+    (async () => {
+      const ours = new Set(ov.chains.map((c) => c.chain));
+      const chains = [...resolved.rules.keys()].filter((c) => ours.has(c)).sort();
+      const all = chains.length ? await loadGapStores(supabase, chains, dist) : {};
+      if (cancelled) return;
+      const out: ChainListRow[] = [];
+      let as: string | null = null;
+      for (const chain of chains) {
+        const { data, error } = all[chain] ?? { data: null, error: null };
+        if (error) {
+          setErr(error);
+          setRows([]);
+          return;
+        }
+        if (!data) continue;
+        as = data.as_of;
+        const rules = resolved.rules.get(chain);
+        if (!rules) continue;
+        const keys = new Set<string>([...rules.mandate.keys(), ...rules.flex, ...rules.picked.keys()]);
+        for (const r of buildStoreReports(data, rules)) {
+          const byKey = new Map([...r.carried, ...r.gaps].map((l) => [l.key, l]));
+          const lines: ChainListLine[] = [];
+          for (const k of keys) {
+            if (statusFor(rules, k, r.store.store_no) !== kind) continue;
+            const l = byKey.get(k);
+            const { product, size } = splitKey(k);
+            lines.push({ product, size, buying: !!l?.carried, lastBuy: l?.lastBuy ?? null, ce90: l?.ce90 ?? 0, ce12: l?.ce12 ?? 0 });
+          }
+          if (!lines.length) continue;
+          lines.sort((a, b) => Number(a.buying) - Number(b.buying) || a.product.localeCompare(b.product));
+          out.push({ chain, store: r.store, lines, buying: lines.filter((l) => l.buying).length });
+        }
+      }
+      out.sort((a, b) => b.lines.length - b.buying - (a.lines.length - a.buying) || a.store.name.localeCompare(b.store.name));
+      setErr(null);
+      setAsOf(as);
+      setRows(out);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, dist, kind, ov, resolved]);
+
+  const prem = (id: string) => (premise[id] === "On" ? "On-premise" : premise[id] === "Off" ? "Off-premise" : "");
+  const totalItems = (rows ?? []).reduce((t, r) => t + r.lines.length, 0);
+  const totalBuying = (rows ?? []).reduce((t, r) => t + r.buying, 0);
+
+  const doExport = async () => {
+    if (!rows) return;
+    setBusy(true);
+    try {
+      await exportSheets(`${dist} - ${title} - ${asOf ?? ""}.xlsx`, [
+        {
+          name: title,
+          title: `${dist} — ${title} (buying = bought in the last ${CARRIED_DAYS} days${asOf ? `, sales through ${asOf}` : ""})`,
+          cols: [
+            { header: "Chain", key: "chain", width: 18 },
+            { header: "Store", key: "store", width: 32 },
+            { header: "City", key: "city", width: 18 },
+            { header: "Premise", key: "premise", width: 12 },
+            { header: "Item", key: "item", width: 34 },
+            { header: "Status", key: "status", width: 10 },
+            { header: "Last buy", key: "last_buy", width: 12 },
+            { header: "Cases last 90 days", key: "ce90" },
+            { header: "Cases last 12 months", key: "ce12" },
+          ],
+          rows: rows.flatMap((r) =>
+            r.lines.map((l) => ({
+              chain: r.chain,
+              store: r.store.name,
+              city: r.store.city ?? "",
+              premise: prem(r.store.outlet_id),
+              item: `${l.product} ${l.size}`.trim(),
+              status: l.buying ? "Buying" : "Missing",
+              last_buy: l.lastBuy ?? "",
+              ce90: l.ce90,
+              ce12: l.ce12,
+            })),
+          ),
+        },
+      ]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={`${title} · ${dist}`}
+      sub={`${dist} chain stores with ${what} items — buying = bought in the last ${CARRIED_DAYS} days. Click a store for its details.`}
+      onClose={onClose}
+      actions={rows && rows.length > 0 ? <ExportButton onClick={doExport} busy={busy} /> : undefined}
+    >
+      {err ? (
+        <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{err}</p>
+      ) : !rows ? (
+        <p className={`py-4 text-sm ${MUTED}`}>Checking chain stores…</p>
+      ) : rows.length === 0 ? (
+        <p className={`py-4 text-sm ${MUTED}`}>No {dist} chain stores have {what} items.</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <p className="text-[13px] text-neutral-300">
+            {rows.length} {rows.length === 1 ? "store" : "stores"} · buying {totalBuying} of {totalItems} listed items · missing {totalItems - totalBuying}
+          </p>
+          <div className="flex max-h-[60vh] flex-col divide-y divide-neutral-900 overflow-y-auto rounded-lg border border-neutral-800">
+            {rows.map((r) => {
+              const missing = r.lines.filter((l) => !l.buying);
+              return (
+                <button
+                  key={`${r.chain}|${r.store.outlet_id}`}
+                  type="button"
+                  onClick={() => onOpen(r.store.outlet_id)}
+                  className="flex w-full items-start justify-between gap-3 px-3 py-2.5 text-left hover:bg-neutral-900"
+                >
+                  <span className="flex min-w-0 flex-col gap-0.5">
+                    <span className="text-sm text-neutral-100">
+                      {r.store.name}
+                      {r.store.city ? <span className={MUTED}> · {r.store.city}</span> : null}
+                    </span>
+                    <span className={`text-[12px] ${MUTED}`}>
+                      {[r.chain, prem(r.store.outlet_id)].filter(Boolean).join(" · ")}
+                      {missing.length ? (
+                        <>
+                          {" · "}
+                          <span className="text-[#ffab9c]">Missing: {missing.map((l) => `${l.product} ${l.size}`.trim()).join(", ")}</span>
+                        </>
+                      ) : (
+                        <span className="text-[#9edc7f]"> · Buying everything listed</span>
+                      )}
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 flex-col items-end">
+                    <span className={`text-sm font-semibold ${missing.length ? "text-[#ffab9c]" : "text-[#9edc7f]"}`}>
+                      {r.buying} / {r.lines.length}
+                    </span>
+                    <span className={`text-[11px] ${MUTED}`}>buying</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 // Account search (2026-10-22, per Chad): type part of an account name, store
 // number ("#667"), city or address → this distributor's matching accounts →
 // pick one → the same account pop-up as anywhere else on the page. Searches
