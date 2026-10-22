@@ -1021,7 +1021,14 @@ Call this proactively when it's clearly warranted (someone states a preference d
 // already have. Basic users get everything else: list_weeks,
 // get_inventory_and_allocations, and get_distributors all read tables any
 // signed-in user can already see on the Inventory & Allocation page.
+// 2026-10-22 (access lockdown): list_weeks, get_inventory_and_allocations
+// and get_distributors are section-gated too now — those tables are no
+// longer readable by every signed-in person (sql/access_lockdown.sql), and
+// Slack's fallback mode (master key) must not hand them to anyone with Ernie.
 const ADMIN_ONLY_TOOL_NAMES = new Set([
+  "list_weeks",
+  "get_inventory_and_allocations",
+  "get_distributors",
   "get_distributor_inventory",
   "get_build_orders",
   "get_purchase_orders",
@@ -1064,6 +1071,20 @@ const ADMIN_ONLY_TOOL_NAMES = new Set([
 // Manager without a Finance grant from getting this tool, even though
 // every other admin-only tool here stays automatic for them.
 const TOOL_SECTIONS: Record<string, AnySectionKey[] | null> = {
+  // Same section lists as the matching table rules in sql/access_lockdown.sql.
+  list_weeks: ["inventory_allocation", "weeks", "build_orders", "distributor_inventory", "tanks", "cashflow_dashboard"],
+  get_inventory_and_allocations: ["inventory_allocation", "weeks"],
+  get_distributors: [
+    "inventory_allocation",
+    "distributor_inventory",
+    "build_orders",
+    "distributor_pricing",
+    "weeks",
+    "price_list",
+    "cashflow_dashboard",
+    "distributor_data",
+    "events_calendar",
+  ],
   get_distributor_inventory: ["distributor_inventory", "build_orders"],
   get_build_orders: ["build_orders"],
   get_purchase_orders: ["purchase_orders"],

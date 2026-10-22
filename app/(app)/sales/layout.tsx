@@ -18,9 +18,14 @@ export default async function SalesLayout({ children }: { children: React.ReactN
       "cost_per_case",
       "contribution_margin",
       "accounts",
+      // Added 2026-10-22: these two pages live under /sales too, and someone
+      // with only one of them was bounced out (and, with the access lockdown,
+      // would loop between here and their home page).
+      "chain_authorizations",
+      "chain_mandates",
     ])
   ) {
-    redirect("/inventory");
+    redirect("/");
   }
 
   return <>{children}</>;

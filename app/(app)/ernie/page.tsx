@@ -2,7 +2,8 @@ import { redirect } from "next/navigation";
 import { getProfile } from "@/lib/getProfile";
 import ErnieChatClient from "@/components/ErnieChatClient";
 
-// Ernie is available to every signed-in user, Basic or admin — the chat
+// Ernie needs the "Ernie AI" section (gated in ./layout.tsx since
+// 2026-10-22, access lockdown). Originally open to every signed-in user — the chat
 // route and its tools (app/api/ernie/*, lib/ernie/tools.ts) are what
 // actually restrict a Basic user to only the app data they can already see
 // elsewhere. This page just requires being signed in at all.

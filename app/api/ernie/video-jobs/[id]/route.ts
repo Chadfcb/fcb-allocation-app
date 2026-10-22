@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { apiHasAccess } from "@/lib/access";
+import { ERNIE_SECTION } from "@/lib/permissions";
 import { checkVideoJob } from "@/lib/ernie/files";
 
 // Checks on one animate_image render (see lib/ernie/tools.ts, lib/ernie/
@@ -26,6 +28,13 @@ export async function GET(
 
   if (!user) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  }
+  // Ernie AI access required to read any Ernie data (2026-10-22, access lockdown).
+  if (!(await apiHasAccess([ERNIE_SECTION]))) {
+    return NextResponse.json(
+      { error: "Ernie isn't available on your account — ask an admin to grant Ernie AI access from Users." },
+      { status: 403 },
+    );
   }
 
   try {

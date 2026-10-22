@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { apiHasAccess } from "@/lib/access";
+import { ERNIE_SECTION } from "@/lib/permissions";
 
 // Lists the signed-in user's own Ernie conversations, most recently
 // updated first — powers the history list in the Ernie chat UI. Open to
@@ -19,6 +21,13 @@ export async function GET(req: NextRequest) {
 
   if (!user) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  }
+  // Ernie AI access required to read any Ernie data (2026-10-22, access lockdown).
+  if (!(await apiHasAccess([ERNIE_SECTION]))) {
+    return NextResponse.json(
+      { error: "Ernie isn't available on your account — ask an admin to grant Ernie AI access from Users." },
+      { status: 403 },
+    );
   }
 
   const projectId = req.nextUrl.searchParams.get("projectId");

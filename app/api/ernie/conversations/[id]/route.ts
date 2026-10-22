@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { apiHasAccess } from "@/lib/access";
+import { ERNIE_SECTION } from "@/lib/permissions";
 
 // Loads one Ernie conversation's full message history — used both to
 // restore "the conversation I was just in" after navigating back to /ernie,
@@ -28,6 +30,13 @@ export async function GET(
 
   if (!user) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  }
+  // Ernie AI access required to read any Ernie data (2026-10-22, access lockdown).
+  if (!(await apiHasAccess([ERNIE_SECTION]))) {
+    return NextResponse.json(
+      { error: "Ernie isn't available on your account — ask an admin to grant Ernie AI access from Users." },
+      { status: 403 },
+    );
   }
 
   const { data: conversation, error: convErr } = await supabase

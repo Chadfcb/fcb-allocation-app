@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getProfile } from "@/lib/getProfile";
-import { hasSection } from "@/lib/permissions";
+import { hasAnySection, hasSection } from "@/lib/permissions";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { parseSpreadsheet } from "@/lib/parseSpreadsheet";
 import { DISTRIBUTOR_PAGES, FILE_INVENTORY_DISTRIBUTORS } from "@/lib/distributorPages";
@@ -117,9 +117,24 @@ export async function POST(req: NextRequest) {
       updated_by: profile.id,
     }));
   if (toSave.length) {
-    const { error } = await admin.from("ekos_name_map").upsert(toSave, { onConflict: "kind,ekos_name" });
+    // The name list is shared with the Ekos sync for the whole app. Someone
+    // with only a distributor page can ADD a match for a name that isn't on
+    // the list yet, but only people with Distributor Inventory or Inventory &
+    // Allocation (or admins) can change an existing one (2026-10-22, access
+    // lockdown).
+    const canChangeExisting = hasAnySection(
+      profile.role,
+      profile.sections,
+      ["distributor_inventory", "inventory_allocation"],
+      profile.is_super_admin,
+    );
+    const { error } = await admin
+      .from("ekos_name_map")
+      .upsert(toSave, { onConflict: "kind,ekos_name", ignoreDuplicates: !canChangeExisting });
     if (error) return NextResponse.json({ error: `Couldn't save the matches: ${error.message}` }, { status: 500 });
-    for (const r of toSave) nameMap.set(r.ekos_name, { app_name: r.app_name, skip: r.skip });
+    for (const r of toSave) {
+      if (canChangeExisting || !nameMap.has(r.ekos_name)) nameMap.set(r.ekos_name, { app_name: r.app_name, skip: r.skip });
+    }
   }
 
   const needs: string[] = [];

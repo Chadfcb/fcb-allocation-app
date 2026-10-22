@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { apiHasAccess } from "@/lib/access";
 import { getErnieTools, buildErnieSystemPrompt, runErnieTool } from "@/lib/ernie/tools";
 import { buildErnieMaps } from "@/lib/ernie/dataMap";
 import { hasSection, getUserSections, ERNIE_SECTION } from "@/lib/permissions";
@@ -98,6 +99,13 @@ export async function GET(req: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  // Ernie AI access required to read any Ernie data (2026-10-22, access lockdown).
+  if (!(await apiHasAccess([ERNIE_SECTION]))) {
+    return NextResponse.json(
+      { error: "Ernie isn't available on your account — ask an admin to grant Ernie AI access from Users." },
+      { status: 403 },
+    );
+  }
 
   const projectId = req.nextUrl.searchParams.get("projectId");
   if (!projectId) return NextResponse.json({ error: "projectId is required" }, { status: 400 });

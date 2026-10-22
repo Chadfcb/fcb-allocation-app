@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { apiHasAccess } from "@/lib/access";
+import { ERNIE_SECTION } from "@/lib/permissions";
 
 // A Project's file library (see sql/ernie_projects.sql). GET is open to
 // anyone with access to the project (RLS on ernie_project_files handles
@@ -39,6 +41,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
+  }
+  // Ernie AI access required to read any Ernie data (2026-10-22, access lockdown).
+  if (!(await apiHasAccess([ERNIE_SECTION]))) {
+    return NextResponse.json(
+      { error: "Ernie isn't available on your account — ask an admin to grant Ernie AI access from Users." },
+      { status: 403 },
+    );
   }
 
   const { data, error } = await supabase
