@@ -9,7 +9,7 @@
 // Top to bottom: today's priorities (must-carry gaps, slipping accounts, big
 // losses) + the distributor's inventory (on hand, per week, weeks left, and
 // when it was last updated — from Ekos, or the uploaded file for Superior) ·
-// period buttons · check-ins (overall, maintenance route progress, accounts
+// period buttons (30 / 90 / YTD / custom dates) · check-ins (overall, maintenance route progress, accounts
 // checked in with notes, route accounts not checked in yet) · follow-ups (win
 // backs, new accounts) · at a glance · cases by month · what's selling. Click
 // an account → its details in a pop-up. Lists export to Excel.
@@ -48,7 +48,7 @@ import {
 import { BIG_LOST_CE, REP_BY_DISTRIBUTOR } from "@/lib/salesAccounts";
 import { FILE_INVENTORY_DISTRIBUTORS, NO_INVENTORY_DISTRIBUTORS } from "@/lib/distributorPages";
 import { resolveLists, type DashOverview } from "@/lib/salesDashboard";
-import { PERIODS, brands, distColor, fmtDay, fmtN, kpis, pctChange, winbacksIn, type HomeData, type Period } from "@/lib/salesDashHome";
+import { PERIODS, addDaysIso, brands, distColor, fmtDay, fmtN, kpis, pctChange, winbacksIn, type DateRange, type HomeData, type Period } from "@/lib/salesDashHome";
 
 interface StockData {
   updated_at: string | null;
@@ -61,6 +61,7 @@ interface CheckinRow {
   activity: string | null;
   notes: string | null;
   brands: string | null;
+  contact: string | null;
   outlet_id: string;
   name: string;
   city: string | null;
@@ -111,7 +112,8 @@ interface AccountDetail {
   } | null;
   as_of: string | null;
   sales: { month: string; product: string; size: string; ce: number; last_buy: string | null }[];
-  checkins: { checkin_date: string; rep: string | null; activity: string | null; notes: string | null; brands: string | null }[];
+  checkins: { checkin_date: string; rep: string | null; activity: string | null; notes: string | null; brands: string | null; contact?: string | null }[];
+  contacts?: { name: string | null; title: string | null; phone: string | null; mobile: string | null; email: string | null; notes: string | null }[];
 }
 
 // "Thu 10/22/26, 4:12 AM" — Pacific time.
@@ -134,7 +136,33 @@ const daysBetween = (a: string, b: string) => Math.round((Date.parse(`${b}T12:00
 
 export default function DistributorPageClient({ dist, viewerName }: { dist: string; viewerName: string | null }) {
   const supabase = useMemo(() => createClient(), []);
-  const [period, setPeriod] = useState<Exclude<Period, "custom">>("30");
+  const [period, setPeriod] = useState<Period>("30");
+  // Custom dates (2026-10-22, per Chad): `custom` is the applied range, the
+  // From / To boxes edit `draft` until Apply. Remembered per browser, per page.
+  const [custom, setCustom] = useState<DateRange | null>(null);
+  const [draft, setDraft] = useState<DateRange>({ from: "", to: "" });
+  const [showCustom, setShowCustom] = useState(false);
+  const prefKey = `fcb-dist-period-${dist}`;
+  useEffect(() => {
+    try {
+      const s = JSON.parse(localStorage.getItem(prefKey) ?? "{}") as { period?: Period; custom?: DateRange };
+      if (s.period === "custom" && s.custom?.from && s.custom?.to) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- restore the remembered choice
+        setCustom(s.custom);
+        setDraft(s.custom);
+        setPeriod("custom");
+      } else if (s.period && s.period !== "custom") setPeriod(s.period);
+    } catch {
+      // ignore
+    }
+  }, [prefKey]);
+  const remember = (p: Period, c: DateRange | null) => {
+    try {
+      localStorage.setItem(prefKey, JSON.stringify({ period: p, custom: p === "custom" ? c : undefined }));
+    } catch {
+      // ignore
+    }
+  };
   const [ov, setOv] = useState<DashOverview | null>(null);
   const [home, setHome] = useState<HomeData | null>(null);
   const [stock, setStock] = useState<StockData | null>(null);
@@ -151,7 +179,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
 
   const load = useCallback(async () => {
     const [h, s, o, m] = await Promise.all([
-      supabase.rpc("sales_dash_home", { p_current: [dist], p_big: BIG_LOST_CE, p_from: null, p_to: null }),
+      supabase.rpc("sales_dash_home", { p_current: [dist], p_big: BIG_LOST_CE, p_from: custom?.from ?? null, p_to: custom?.to ?? null }),
       supabase.rpc("sales_territory_stock", { p_dist: dist }),
       supabase.rpc("sales_dash_overview"),
       supabase.from("sales_data_meta").select("imported_at").eq("id", 1).maybeSingle(),
@@ -167,7 +195,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
     setOv(o.data as DashOverview);
     setCheckedAt((m.data?.imported_at as string | null) ?? null);
     setVersion((v) => v + 1);
-  }, [supabase, dist]);
+  }, [supabase, dist, custom]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- load from the database
@@ -192,10 +220,15 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
 
   // Check-ins follow the period buttons (counted back from today).
   const loadCheckins = useCallback(async () => {
-    const { data, error } = await supabase.rpc("sales_territory_checkins", { p_dist: dist, p_from: periodStart(period) });
+    if (period === "custom" && !custom) return;
+    const args =
+      period === "custom" && custom
+        ? { p_dist: dist, p_from: custom.from, p_to: custom.to }
+        : { p_dist: dist, p_from: periodStart(period as Exclude<Period, "custom">), p_to: null };
+    const { data, error } = await supabase.rpc("sales_territory_checkins", args);
     if (error) setErr(error.message);
     else setCheckins(data as CheckinData);
-  }, [supabase, dist, period]);
+  }, [supabase, dist, period, custom]);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- load from the database
     loadCheckins();
@@ -210,14 +243,17 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
   const attention = (home?.attention ?? []).filter((a) => a.dist === dist);
   const slip = attention.filter((a) => a.stage === "plost");
   const lost = attention.filter((a) => a.stage === "lost");
-  const k = home?.as_of ? kpis(home, period, dist) : null;
-  const wins = home?.as_of ? winbacksIn(home, period, dist) : [];
+  // Sales numbers: while the custom range is still loading, show 30 days.
+  const customReady = !!home?.periods?.some((x) => x.p === "custom");
+  const shown: Period = period === "custom" && !customReady ? "30" : period;
+  const k = home?.as_of ? kpis(home, shown, dist) : null;
+  const wins = home?.as_of ? winbacksIn(home, shown, dist) : [];
   const newAccts = (((home as (HomeData & { new_accounts?: NewAccount[] }) | null)?.new_accounts ?? []) as NewAccount[]).filter((a) => a.dist === dist);
-  const pLabel = PERIODS.find((p) => p.key === period)!.long;
-  const topBrands = home?.as_of ? brands(home, period, dist, 8) : [];
+  const pLabel = shown === "custom" && custom ? `${fmtDay(custom.from)} – ${fmtDay(custom.to)}` : PERIODS.find((p) => p.key === shown)!.long;
+  const topBrands = home?.as_of ? brands(home, shown, dist, 8) : [];
   const myCheckins =
     home?.checkins && rep
-      ? home.checkins.filter((c) => c.p === period && (c.rep ?? "").trim().toLowerCase().split(/\s+/)[0] === rep.toLowerCase()).reduce((t, c) => t + (Number(c.n) || 0), 0)
+      ? home.checkins.filter((c) => c.p === shown && (c.rep ?? "").trim().toLowerCase().split(/\s+/)[0] === rep.toLowerCase()).reduce((t, c) => t + (Number(c.n) || 0), 0)
       : null;
 
   const low = (stock?.inventory ?? []).filter((i) => i.per_week > 0 && (i.on_hand <= 0 || (i.weeks_left ?? 99) < 2));
@@ -225,7 +261,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
   const ATT = {
     gaps: { label: "Must-carry gaps", count: actions.rows ? gaps.length : null, rule: "Stores not buying an item their chain says they must carry. Biggest first." },
     slip: { label: "Slipping now", count: slip.length, rule: "61–90 days since their last order — still saveable. Biggest 12-month buyers first." },
-    lost: { label: "Win back", count: lost.length, rule: `Lost in the last year (90+ days quiet), ${BIG_LOST_CE}+ cases all time. Biggest first.` },
+    lost: { label: "Must win back", count: lost.length, rule: `Lost in the last year (90+ days quiet), ${BIG_LOST_CE}+ cases all time. Biggest first.` },
   } as const;
 
   const exportAtt = async () => {
@@ -282,7 +318,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
             { header: "Product", key: "product", width: 44 },
             { header: "On hand", key: "on_hand" },
             { header: "Sells per week", key: "per_week" },
-            { header: "Weeks left", key: "weeks_left" },
+            { header: "Weeks on hand", key: "weeks_left" },
           ],
           rows: (stock?.inventory ?? []).map((i) => ({ ...i, weeks_left: i.weeks_left ?? "" })),
         },
@@ -465,7 +501,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
                   <span className="text-[11px] text-neutral-500">Product</span>
                   <span className="text-right text-[11px] text-neutral-500">On hand</span>
                   <span className="text-right text-[11px] text-neutral-500">Per week</span>
-                  <span className="text-right text-[11px] text-neutral-500">Weeks</span>
+                  <span className="text-right text-[11px] text-neutral-500">Weeks on hand</span>
                   {(stock?.inventory ?? []).map((i) => (
                     <span key={i.product} className="contents">
                       <span className="min-w-0 truncate text-neutral-200">{i.product}</span>
@@ -483,10 +519,80 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
           {/* Period + follow-ups */}
           <div className="flex flex-wrap items-center gap-2">
             {PERIODS.map((p) => (
-              <Pill key={p.key} on={period === p.key} onClick={() => setPeriod(p.key)}>
+              <Pill
+                key={p.key}
+                on={period === p.key}
+                onClick={() => {
+                  setPeriod(p.key);
+                  setShowCustom(false);
+                  remember(p.key, null);
+                }}
+              >
                 {p.label}
               </Pill>
             ))}
+            <Pill
+              on={period === "custom" || showCustom}
+              onClick={() => {
+                if (!showCustom && !draft.from) {
+                  const to = home.as_of ?? "";
+                  setDraft({ from: to ? addDaysIso(to, -29) : "", to });
+                }
+                setShowCustom(!showCustom);
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="18" rx="2" />
+                <path d="M16 2v4M8 2v4M3 10h18" />
+              </svg>
+              {period === "custom" && custom ? `${fmtDay(custom.from)} – ${fmtDay(custom.to)}` : "Custom dates"}
+            </Pill>
+            {showCustom && (
+              <form
+                className="flex flex-wrap items-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!draft.from || !draft.to) return;
+                  const r = draft.from <= draft.to ? draft : { from: draft.to, to: draft.from };
+                  setDraft(r);
+                  setCustom(r);
+                  setPeriod("custom");
+                  remember("custom", r);
+                }}
+              >
+                <label className={`flex items-center gap-1.5 text-[13px] ${MUTED}`}>
+                  From
+                  <input
+                    type="date"
+                    value={draft.from}
+                    onChange={(e) => setDraft({ ...draft, from: e.target.value })}
+                    className="min-h-9 rounded-full border border-neutral-700 bg-neutral-950 px-3 text-[13px] text-neutral-100 [color-scheme:dark]"
+                  />
+                </label>
+                <label className={`flex items-center gap-1.5 text-[13px] ${MUTED}`}>
+                  To
+                  <input
+                    type="date"
+                    value={draft.to}
+                    onChange={(e) => setDraft({ ...draft, to: e.target.value })}
+                    className="min-h-9 rounded-full border border-neutral-700 bg-neutral-950 px-3 text-[13px] text-neutral-100 [color-scheme:dark]"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  disabled={!draft.from || !draft.to}
+                  className="inline-flex min-h-9 items-center rounded-full border border-[#6abc46]/45 bg-[#6abc46]/15 px-3.5 text-[13px] font-semibold text-neutral-50 hover:bg-[#6abc46]/25 disabled:opacity-50"
+                >
+                  Apply
+                </button>
+                {period === "custom" && !customReady && <span className={`text-xs ${MUTED}`}>Loading…</span>}
+              </form>
+            )}
+            {period === "custom" && custom && home.as_of && custom.to > home.as_of && (
+              <span className="basis-full text-[11.5px] text-neutral-500">
+                Sales numbers go through {fmtDay(home.as_of)} (latest sales in LilyPad); check-ins go through {fmtDay(custom.to)}.
+              </span>
+            )}
           </div>
 
           {/* Check-ins (2026-10-22): overall + maintenance route */}
@@ -506,8 +612,16 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
             ) : (
               <>
                 <div className="flex flex-wrap gap-x-8 gap-y-3">
-                  <Stat value={fmtN(checkins.total)} label="Check-ins" />
-                  <Stat value={fmtN(checkins.accounts)} label="Accounts checked in" />
+                  <Stat value={fmtN(checkins.total)} label="Total check-ins" />
+                  <div className="flex flex-col gap-0.5">
+                    <span className="font-mono text-2xl font-light text-[#f2f7f0]">{fmtN(checkins.accounts)}</span>
+                    <span className="text-[11px] text-neutral-500">Unique accounts</span>
+                    {checkins.total > checkins.accounts && (
+                      <span className="text-[11px] text-neutral-500">
+                        {fmtN(checkins.total - checkins.accounts)} were repeat check-ins at the same accounts
+                      </span>
+                    )}
+                  </div>
                   <Stat value={fmtN(checkins.with_notes)} label="With notes" />
                   {checkins.by_rep.slice(0, 4).map((r) => (
                     <Stat key={r.rep} value={fmtN(r.n)} label={r.rep} color="#9edc7f" />
@@ -578,6 +692,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
                             {fmtWeekdayDay(c.checkin_date)}
                             {c.activity ? ` · ${c.activity}` : ""}
                             {c.rep ? ` · ${c.rep}` : ""}
+                            {c.contact ? ` · spoke with ${c.contact}` : ""}
                           </span>
                           {c.notes ? <span className="text-[13px] text-neutral-300">{c.notes}</span> : <span className="text-[12px] text-neutral-600">No notes</span>}
                           {c.brands && <span className="text-[12px] text-neutral-500">Sampled: {c.brands}</span>}
@@ -763,8 +878,44 @@ function AccountPopup({ supabase, outletId, onClose }: { supabase: ReturnType<ty
                 <a href={`tel:${a.phone}`} className="font-mono text-2xl font-light text-[#9edc7f]">
                   {a.phone}
                 </a>
-                <span className="text-[11px] text-neutral-500">Phone</span>
+                <span className="text-[11px] text-neutral-500">Store phone</span>
               </div>
+            )}
+          </div>
+          {/* Contacts (2026-10-22, per Chad) — same list as Sales → Accounts. */}
+          <div>
+            <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">Contacts</h3>
+            {(d.contacts ?? []).length ? (
+              <div className="flex flex-col">
+                {(d.contacts ?? []).map((c, i) => (
+                  <div key={i} className="flex flex-col gap-0.5 border-t border-neutral-800/70 py-2 text-[13px] first:border-t-0">
+                    <span className="font-semibold text-neutral-100">
+                      {c.name ?? "(no name)"}
+                      {c.title && <span className="font-normal text-neutral-400"> · {c.title}</span>}
+                    </span>
+                    <span className="flex flex-wrap gap-x-4 gap-y-0.5">
+                      {c.phone && (
+                        <a href={`tel:${c.phone}`} className="text-[#9edc7f]">
+                          Phone {c.phone}
+                        </a>
+                      )}
+                      {c.mobile && (
+                        <a href={`tel:${c.mobile}`} className="text-[#9edc7f]">
+                          Mobile {c.mobile}
+                        </a>
+                      )}
+                      {c.email && (
+                        <a href={`mailto:${c.email}`} className="text-[#9edc7f]">
+                          {c.email}
+                        </a>
+                      )}
+                    </span>
+                    {c.notes && <span className="text-[12px] text-neutral-400">{c.notes}</span>}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className={`text-sm ${MUTED}`}>No contacts on file.</p>
             )}
           </div>
           <div>
@@ -793,6 +944,7 @@ function AccountPopup({ supabase, outletId, onClose }: { supabase: ReturnType<ty
                       <span className="text-neutral-200">{fmtDay(c.checkin_date)}</span>
                       {c.activity && <span>· {c.activity}</span>}
                       {c.rep && <span>· {c.rep}</span>}
+                      {c.contact && <span>· Spoke with: {c.contact}</span>}
                     </div>
                     {c.notes && <p className="mt-0.5 text-neutral-300">{c.notes}</p>}
                     {c.brands && <p className="text-[12px] text-neutral-500">Sampled: {c.brands}</p>}

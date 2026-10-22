@@ -70,7 +70,7 @@ export const DISTRIBUTOR_LINKS: AppLink[] = DISTRIBUTOR_PAGES.map((d) => ({
   href: distributorHref(d.slug),
   label: d.name,
   section: d.section,
-  about: `${d.name}'s daily dashboard: today's priorities (stores missing must-carry items, accounts slipping, big losses to win back), ${d.name}'s inventory (on hand, weeks of supply, when it was last updated), check-ins (overall, maintenance route progress for the current two-month period, accounts checked in with notes, route accounts not yet visited), recent win backs and new accounts, cases vs last year, cases by month and top brands. Click any account for its details.`,
+  about: `${d.name}'s daily dashboard: today's priorities (stores missing must-carry items, accounts slipping, big losses to win back), ${d.name}'s inventory (on hand, weeks of supply, when it was last updated), check-ins (overall, maintenance route progress for the current two-month period, accounts checked in with notes, route accounts not yet visited), recent win backs and new accounts, cases vs last year, cases by month and top brands — for the last 30 / 90 days, year to date or custom dates. Click any account for its details (store phone, contacts, what they buy, last check-ins with who the rep spoke with).`,
 }));
 
 export const CALENDARS_LINKS: AppLink[] = [
