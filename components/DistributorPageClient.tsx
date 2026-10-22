@@ -45,7 +45,7 @@ import {
   gapRows,
   wbRows,
 } from "@/components/SalesDashboardHome";
-import { BIG_LOST_CE, REP_BY_DISTRIBUTOR } from "@/lib/salesAccounts";
+import { REP_BY_DISTRIBUTOR } from "@/lib/salesAccounts";
 import { FILE_INVENTORY_DISTRIBUTORS, NO_INVENTORY_DISTRIBUTORS } from "@/lib/distributorPages";
 import { resolveLists, type DashOverview } from "@/lib/salesDashboard";
 import { PERIODS, addDaysIso, brands, distColor, fmtDay, fmtN, kpis, pctChange, winbacksIn, type DateRange, type HomeData, type Period } from "@/lib/salesDashHome";
@@ -166,6 +166,8 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
   const [ov, setOv] = useState<DashOverview | null>(null);
   const [home, setHome] = useState<HomeData | null>(null);
   const [stock, setStock] = useState<StockData | null>(null);
+  // outlet_id → "On" / "Off" premise (2026-10-22, per Chad).
+  const [premise, setPremise] = useState<Record<string, string>>({});
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
@@ -178,11 +180,14 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
   const [ckTab, setCkTab] = useState<"in" | "not">("in");
 
   const load = useCallback(async () => {
-    const [h, s, o, m] = await Promise.all([
-      supabase.rpc("sales_dash_home", { p_current: [dist], p_big: BIG_LOST_CE, p_from: custom?.from ?? null, p_to: custom?.to ?? null }),
+    // p_big 0: Must win back lists EVERY account lost in the last year (Chad,
+    // 2026-10-22: "90+ day lost, all accounts"), not just 50+ case ones.
+    const [h, s, o, m, pr] = await Promise.all([
+      supabase.rpc("sales_dash_home", { p_current: [dist], p_big: 0, p_from: custom?.from ?? null, p_to: custom?.to ?? null }),
       supabase.rpc("sales_territory_stock", { p_dist: dist }),
       supabase.rpc("sales_dash_overview"),
       supabase.from("sales_data_meta").select("imported_at").eq("id", 1).maybeSingle(),
+      supabase.rpc("sales_territory_premise", { p_dist: dist }),
     ]);
     const e = h.error ?? s.error ?? o.error;
     if (e) {
@@ -192,6 +197,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
     setErr(null);
     setHome(h.data as HomeData);
     setStock(s.data as StockData);
+    setPremise(((pr.data as Record<string, string> | null) ?? {}));
     setOv(o.data as DashOverview);
     setCheckedAt((m.data?.imported_at as string | null) ?? null);
     setVersion((v) => v + 1);
@@ -250,7 +256,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
   const wins = home?.as_of ? winbacksIn(home, shown, dist) : [];
   const newAccts = (((home as (HomeData & { new_accounts?: NewAccount[] }) | null)?.new_accounts ?? []) as NewAccount[]).filter((a) => a.dist === dist);
   const pLabel = shown === "custom" && custom ? `${fmtDay(custom.from)} – ${fmtDay(custom.to)}` : PERIODS.find((p) => p.key === shown)!.long;
-  const topBrands = home?.as_of ? brands(home, shown, dist, 8) : [];
+  const topBrands = home?.as_of ? brands(home, shown, dist, 999) : [];
   const myCheckins =
     home?.checkins && rep
       ? home.checkins.filter((c) => c.p === shown && (c.rep ?? "").trim().toLowerCase().split(/\s+/)[0] === rep.toLowerCase()).reduce((t, c) => t + (Number(c.n) || 0), 0)
@@ -259,9 +265,9 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
   const low = (stock?.inventory ?? []).filter((i) => i.per_week > 0 && (i.on_hand <= 0 || (i.weeks_left ?? 99) < 2));
 
   const ATT = {
-    gaps: { label: "Must-carry gaps", count: actions.rows ? gaps.length : null, rule: "Stores not buying an item their chain says they must carry. Biggest first." },
-    slip: { label: "Slipping now", count: slip.length, rule: "61–90 days since their last order — still saveable. Biggest 12-month buyers first." },
-    lost: { label: "Must win back", count: lost.length, rule: `Lost in the last year (90+ days quiet), ${BIG_LOST_CE}+ cases all time. Biggest first.` },
+    gaps: { label: "Must-carry gaps", desc: "Chain stores not buying a must-carry item", count: actions.rows ? gaps.length : null, rule: "Stores not buying an item their chain says they must carry. Biggest first." },
+    slip: { label: "Slipping now", desc: "61–90 day non-buy, all accounts", count: slip.length, rule: "61–90 days since their last order — still saveable. Biggest 12-month buyers first." },
+    lost: { label: "Must win back", desc: "90+ day lost, all accounts", count: lost.length, rule: "Lost in the last year (90+ days quiet). Biggest 12-month buyers first." },
   } as const;
 
   const exportAtt = async () => {
@@ -388,23 +394,24 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
     }
   };
 
-  const gapRowsView = gaps.slice(0, 6).map((r: ActionRow) => (
+  const prem = (id: string) => (premise[id] === "On" ? "On-premise · " : premise[id] === "Off" ? "Off-premise · " : "");
+  const gapRowsView = gaps.map((r: ActionRow) => (
     <Row
       key={r.store.outlet_id}
       left={<Dot color="#ef6a55" />}
       title={`${r.store.name}${r.store.city ? ` · ${r.store.city}` : ""}`}
-      sub={`Not buying ${r.missing.map((m) => `${m.product} ${m.size}`).join(", ")} (${r.chain} must-carry)`}
+      sub={`${prem(r.store.outlet_id)}Not buying ${r.missing.map((m) => `${m.product} ${m.size}`).join(", ")} (${r.chain} must-carry)`}
       value={fmtN(r.impact)}
       valueLabel="cases / yr at stake"
       onClick={() => setOpenId(r.store.outlet_id)}
     />
   ));
-  const acctRowsView = (att === "slip" ? slip : lost).slice(0, 6).map((a) => (
+  const acctRowsView = (att === "slip" ? slip : lost).map((a) => (
     <Row
       key={a.outlet_id}
       left={<Dot color={att === "slip" ? "#f0a63c" : "#ef6a55"} />}
       title={`${a.name}${a.city ? ` · ${a.city}` : ""}`}
-      sub={`${a.dark} days since the last order (${fmtDay(a.lb)})${a.checkin ? ` · last check-in ${fmtDay(a.checkin.date)}` : " · no check-in on record"}`}
+      sub={`${prem(a.outlet_id)}${a.dark} days since the last order (${fmtDay(a.lb)})${a.checkin ? ` · last check-in ${fmtDay(a.checkin.date)}` : " · no check-in on record"}`}
       value={fmtN(a.ce12)}
       valueLabel="cases last 12 mo"
       onClick={() => setOpenId(a.outlet_id)}
@@ -455,12 +462,17 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
               <div className="flex flex-wrap gap-2">
                 {(Object.keys(ATT) as (keyof typeof ATT)[]).map((key) => (
                   <Pill key={key} on={att === key} onClick={() => setAtt(key)}>
-                    {ATT[key].label} <span className="font-mono opacity-80">{ATT[key].count ?? "…"}</span>
+                    <span className="flex flex-col items-start py-1 leading-tight">
+                      <span>
+                        {ATT[key].label} <span className="font-mono opacity-80">{ATT[key].count ?? "…"}</span>
+                      </span>
+                      <span className="text-[10.5px] font-normal opacity-70">{ATT[key].desc}</span>
+                    </span>
                   </Pill>
                 ))}
               </div>
               <p className="text-xs text-neutral-500">{ATT[att].rule}</p>
-              <div className="flex flex-col">
+              <div className="flex max-h-[380px] flex-col overflow-y-auto pr-1">
                 {att === "gaps" && !actions.rows ? (
                   <p className={`py-4 text-sm ${MUTED}`}>Checking chain stores…</p>
                 ) : (att === "gaps" ? gapRowsView : acctRowsView).length ? (
@@ -469,9 +481,6 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
                   <p className={`py-4 text-sm ${MUTED}`}>Nothing here right now.</p>
                 )}
               </div>
-              {(att === "gaps" ? gaps.length : att === "slip" ? slip.length : lost.length) > 6 && (
-                <p className="text-xs text-neutral-500">Top 6 shown — Export has all {att === "gaps" ? gaps.length : att === "slip" ? slip.length : lost.length}.</p>
-              )}
             </section>
 
             <section className={`${CARD} flex min-w-0 flex-[1_1_420px] flex-col gap-3`}>
@@ -738,9 +747,9 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
                   New this year <span className="font-mono opacity-80">{newAccts.length}</span>
                 </Pill>
               </div>
-              <div className="flex flex-col">
+              <div className="flex max-h-[380px] flex-col overflow-y-auto pr-1">
                 {follow === "won"
-                  ? wins.slice(0, 6).map((w) => (
+                  ? wins.map((w) => (
                       <Row
                         key={`${w.outlet_id}-${w.d}`}
                         left={<Tag kind={w.gap > 90 ? "wl" : "wp"}>{w.gap > 90 ? "From Lost" : "From Pot. lost"}</Tag>}
@@ -751,7 +760,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
                         onClick={() => setOpenId(w.outlet_id)}
                       />
                     ))
-                  : newAccts.slice(0, 6).map((a) => (
+                  : newAccts.map((a) => (
                       <Row
                         key={a.outlet_id}
                         left={<Tag kind="wp">New</Tag>}
@@ -807,6 +816,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
                 <h2 className="text-[15px] font-semibold text-neutral-100">What&apos;s selling</h2>
                 <p className={`text-[12.5px] ${MUTED}`}>Cases by brand · {pLabel} · vs same days last year</p>
               </div>
+              <div className="flex max-h-[380px] flex-col gap-3 overflow-y-auto pr-1">
               {topBrands.map((b) => (
                 <div key={b.product} className="flex flex-col gap-1.5">
                   <div className="flex items-center justify-between gap-2.5 text-[13.5px]">
@@ -821,6 +831,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
                   </div>
                 </div>
               ))}
+              </div>
               {!topBrands.length && <p className={`text-sm ${MUTED}`}>No sales in this period.</p>}
             </section>
           </div>
@@ -921,7 +932,7 @@ function AccountPopup({ supabase, outletId, onClose }: { supabase: ReturnType<ty
           <div>
             <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">What they buy · last 13 months</h3>
             {items.length ? (
-              <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-4 gap-y-1 text-[13px]">
+              <div className="grid max-h-[260px] grid-cols-[minmax(0,1fr)_auto_auto] gap-x-4 gap-y-1 overflow-y-auto pr-1 text-[13px]">
                 {items.map((i) => (
                   <span key={i.item} className="contents">
                     <span className="min-w-0 truncate text-neutral-200">{i.item}</span>
