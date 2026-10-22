@@ -15,6 +15,7 @@
 
 import type { Role } from "@/lib/types/db";
 import { hasSection, ERNIE_SECTION, type AnySectionKey, type SectionKey } from "@/lib/permissions";
+import { DISTRIBUTOR_PAGES, distributorHref } from "@/lib/distributorPages";
 
 export type AppLink<S = SectionKey> = { href: string; label: string; section: S; about?: string };
 export type BrandTree = {
@@ -30,7 +31,6 @@ export const MAIN_LINKS: AppLink<SectionKey | typeof ERNIE_SECTION | null>[] = [
   { href: "/dashboard", label: "Dashboard", section: null, about: "Admin overview of the current week: inventory, orders, purchase orders and other live blocks." },
   { href: "/tanks", label: "Tanks", section: "tanks", about: "3D view of every fermenter with its live Ekos batch, stage and temperature, plus pallets of kegs, cans, lids and label rolls on hand." },
   { href: "/sales-dashboard", label: "Sales Dashboard", section: "sales_dashboard", about: "Opens on the dashboard home: live headline numbers for the last 30 / 90 days, year to date or custom dates vs the same dates last year (cases sold, buying accounts, new accounts, win backs, at-risk and lost accounts), cases by month, account health, distributor cards with each one's biggest immediate impacts, Needs attention (must-carry gaps, slipping accounts, big losses), Win backs, top brands, chain coverage and rep activity — lists export to Excel. Tools: Action Items (every chain store not buying a Mandate / must-carry item, with rep, phone and last check-in), chain gap report (which chain stores carry / don't carry each product, by distributor), chain setup, turned-off accounts." },
-  { href: "/my-territory", label: "My Territory", section: "my_territory", about: "A sales rep's own daily dashboard for their distributor territory only (e.g. Steve → Matagrano): today's priorities (stores missing must-carry items, accounts slipping, big losses to win back), stock at the distributor (on hand, weeks of supply, this week's order), recent win backs and new accounts to follow up, cases vs last year, cases by month, top brands, and the rep's check-ins. Click any account for its details." },
   { href: "/ernie", label: "My Ernie AI", section: ERNIE_SECTION, about: "This chat." },
   { href: "/ernie/projects", label: "Projects", section: ERNIE_SECTION, about: "Ernie Projects: shared rooms with their own file library." },
   { href: "/tasks", label: "Tasks", section: "tasks", about: "Company task tracker: tasks by category with status, due dates, assignees and comments." },
@@ -63,6 +63,15 @@ export const SALES_LINKS: AppLink[] = [
   { href: "/sales/chain-authorizations", label: "Chain Authorizations", section: "chain_authorizations", about: "Which items each grocery / retail chain has authorized." },
   { href: "/sales/chain-mandates", label: "Chain Mandates", section: "chain_mandates", about: "Products chains have mandated, and which stores each applies to." },
 ];
+
+// Distributors (2026-10-22) — one page per distributor, each its own access
+// checkbox (lib/distributorPages.ts). Drawn right below Sales.
+export const DISTRIBUTOR_LINKS: AppLink[] = DISTRIBUTOR_PAGES.map((d) => ({
+  href: distributorHref(d.slug),
+  label: d.name,
+  section: d.section,
+  about: `${d.name}'s daily dashboard: today's priorities (stores missing must-carry items, accounts slipping, big losses to win back), ${d.name}'s inventory (on hand, weeks of supply, when it was last updated), check-ins (overall, maintenance route progress for the current two-month period, accounts checked in with notes, route accounts not yet visited), recent win backs and new accounts, cases vs last year, cases by month and top brands. Click any account for its details.`,
+}));
 
 export const CALENDARS_LINKS: AppLink[] = [
   { href: "/events", label: "Events Calendar", section: "events_calendar", about: "Events: tastings, festivals, promos, with distributor and rep." },
@@ -211,6 +220,7 @@ export function pagesForErnie(role: Role | undefined, sections: AnySectionKey[],
     );
   }
   for (const l of SALES_LINKS) if (can(l.section)) out.push(line("Sales > ", l));
+  for (const l of DISTRIBUTOR_LINKS) if (can(l.section)) out.push(line("Distributors > ", l));
   for (const l of CALENDARS_LINKS) if (can(l.section)) out.push(line("Calendars > ", l));
   for (const l of POS_LINKS) if (can(l.section)) out.push(line("POS > ", l));
   for (const l of ADMIN_LINKS) {

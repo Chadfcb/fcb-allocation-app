@@ -373,6 +373,67 @@ export async function readLilypadTeamsAndUsers(): Promise<{ teams: string[]; use
   return { teams, users };
 }
 
+// Maintenance routes (added 2026-10-22 — claude/maintenance-routes.md): each
+// rep's LilyPad target lists and the accounts on them. GET calls only, the
+// same ones the Export page makes when you pick Source = Target Accounts.
+export interface LilypadUser {
+  id: string;
+  name: string;
+  active: boolean;
+}
+export interface LilypadTargetList {
+  id: string;
+  name: string;
+  accountCount: number;
+}
+export interface LilypadTargetAccount {
+  outletId: string;
+  name: string | null;
+  city: string | null;
+  distributor: string | null;
+}
+
+export async function readLilypadUsers(): Promise<LilypadUser[]> {
+  const { page, orgId } = await getLilypadSession();
+  const raw = await apiGet<unknown>(page, `/v6/organization/${orgId}/allusers`);
+  const list = Array.isArray(raw) ? raw : ((raw as { items?: unknown[]; data?: unknown[] })?.items ?? (raw as { data?: unknown[] })?.data ?? []);
+  return (list as Record<string, unknown>[])
+    .map((u) => ({
+      id: String(u._id ?? u.id ?? (u._link as Record<string, unknown> | undefined)?.selecteduser ?? ""),
+      name: `${String(u.first_name ?? "").trim()} ${String(u.last_name ?? "").trim()}`.trim(),
+      active: String(u.status ?? "active").toLowerCase() === "active",
+    }))
+    .filter((u) => /^[a-f0-9]{24}$/i.test(u.id) && u.name);
+}
+
+export async function readLilypadTargetLists(userId: string): Promise<LilypadTargetList[]> {
+  const { page } = await getLilypadSession();
+  const raw = await apiGet<unknown>(page, `/v6/worklist/${userId}/targets`);
+  const list = Array.isArray(raw) ? raw : ((raw as { items?: unknown[]; data?: unknown[] })?.items ?? (raw as { data?: unknown[] })?.data ?? []);
+  return (list as Record<string, unknown>[])
+    .map((l) => ({ id: String(l._id ?? l.id ?? ""), name: String(l.name ?? "").trim(), accountCount: Number(l.accountcount ?? 0) || 0 }))
+    .filter((l) => l.id && l.name);
+}
+
+export async function readLilypadTargetAccounts(listId: string): Promise<LilypadTargetAccount[]> {
+  const { page } = await getLilypadSession();
+  const raw = await apiGet<unknown>(page, `/v6/worklist/fetch/${listId}`);
+  const list = Array.isArray(raw) ? raw : ((raw as { items?: unknown[]; data?: unknown[] })?.items ?? (raw as { data?: unknown[] })?.data ?? []);
+  return (list as Record<string, unknown>[])
+    .map((i) => {
+      const acc = (i.account ?? {}) as Record<string, unknown>;
+      const addr = (acc.address ?? {}) as Record<string, unknown>;
+      const dist = (i.distributor ?? {}) as Record<string, unknown>;
+      return {
+        outletId: String(acc.id ?? "").trim(),
+        name: acc.name ? String(acc.name) : null,
+        city: addr.city ? String(addr.city) : null,
+        distributor: dist.name ? String(dist.name) : null,
+      };
+    })
+    .filter((a) => a.outletId);
+}
+
 // Unix seconds for midnight / end of day in Pacific time (the Export page's
 // date picker works in the browser's local time — Chad's is Pacific).
 export function pacificDayStartUnix(isoDate: string): number {

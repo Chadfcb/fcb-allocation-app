@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Role } from "@/lib/types/db";
+import { DISTRIBUTOR_PAGES, type DistributorSectionKey } from "@/lib/distributorPages";
 
 // Single source of truth for the per-user, per-section access system that
 // replaces the old binary admin/basic split for anything that used to be
@@ -39,7 +40,9 @@ export type SectionKey =
   | "football_pos"
   | "tanks"
   | "sales_dashboard"
-  | "my_territory";
+  // Distributors (2026-10-22) — one key per distributor page, from
+  // lib/distributorPages.ts (dist_matagrano, dist_guardian, …).
+  | DistributorSectionKey;
 
 // Ernie AI is deliberately its own grantable section, separate from every
 // page section above — an admin may want someone to have, say, Purchase
@@ -86,7 +89,7 @@ export type GroupKey =
   | "pos_labels"
   | "tanks"
   | "sales_dashboard"
-  | "my_territory"
+  | "distributors"
   | "tasks"
   | "audit_log";
 
@@ -200,15 +203,17 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
     items: [{ key: "sales_dashboard", label: "Sales Dashboard" }],
   },
   {
-    // My Territory (under MAIN, below Sales Dashboard) — a rep's own daily
-    // dashboard, added 2026-10-21 per Chad ("a Matagrano dashboard
-    // specifically for Steve"). Shows only the distributor(s) set as that
-    // person's Territory on this same Users > Edit panel (rep_territories);
-    // admins can look at any distributor. Report functions check
-    // sales_can_see() in sql/my_territory.sql.
-    key: "my_territory",
-    label: "My Territory",
-    items: [{ key: "my_territory", label: "My Territory" }],
+    // Distributors (Departments → Distributors) — one dashboard page per
+    // distributor, added 2026-10-22 per Chad (replaces the 10/21 My
+    // Territory page). Unlike every other category, each page here has its
+    // own checkbox in Users > Edit access — Chad: "steve has access to the
+    // distributors button, but only sees the sub category of Matagrano. I
+    // need to be able to edit that access." Checking the category itself
+    // still grants all of them. Report functions check sales_can_see() in
+    // sql/distributors.sql.
+    key: "distributors",
+    label: "Distributors",
+    items: DISTRIBUTOR_PAGES.map((d) => ({ key: d.section, label: d.name })),
   },
   {
     key: "tasks",
@@ -237,6 +242,10 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
 // admins to see it." Keep this in sync with has_section()'s restricted-key
 // list in sql/is_super_admin.sql.
 export const ADMIN_RESTRICTED_SECTIONS: AnySectionKey[] = ["cashflow_dashboard", "distributor_data"];
+
+// Categories whose pages can be granted one by one in Users > Edit access
+// (every other category is all-or-nothing).
+export const PER_PAGE_GROUPS: GroupKey[] = ["distributors"];
 
 export const GROUP_KEYS: GroupKey[] = SECTION_GROUPS.map((g) => g.key);
 

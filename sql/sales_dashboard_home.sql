@@ -26,8 +26,9 @@
 -- numbers come back for that range too (period key 'custom'), compared with
 -- the same dates a year earlier.
 --
--- My Territory (2026-10-21): access goes through sales_can_see()
--- (sql/my_territory.sql — run that file first); adds a 'new_accounts' list.
+-- Distributor pages (2026-10-22; were My Territory 10/21): access goes
+-- through sales_can_see() (sql/distributors.sql, which also re-creates
+-- sales_dash_home exactly as below); adds a 'new_accounts' list.
 --
 -- Run this in Supabase's SQL Editor BEFORE pushing the code.
 -- Idempotent — safe to run more than once. No new tables.
@@ -67,13 +68,13 @@ declare
   v_acc boolean;   -- can this person see Sales → Accounts (phones, check-ins)?
   result json;
 begin
-  -- Sales Dashboard users see any distributors; My Territory users (a rep's
-  -- own page, 2026-10-21 — sql/my_territory.sql) only their own.
+  -- Sales Dashboard users see any distributors; distributor-page people
+  -- (2026-10-22 — sql/distributors.sql) only their own.
   if not public.sales_can_see(p_current) then
     raise exception 'You don''t have access to the Sales Dashboard.';
   end if;
-  -- Phones / check-ins: Sales → Accounts people, and reps for their own accounts.
-  v_acc := public.has_section(auth.uid(), 'accounts') or public.has_section(auth.uid(), 'my_territory');
+  -- Phones / check-ins: Sales → Accounts people, and distributor-page people for their own accounts.
+  v_acc := public.has_section(auth.uid(), 'accounts') or public.has_dist_page();
   select m.as_of into a from public.sales_data_meta m where m.id = 1;
   if a is null then
     return json_build_object('as_of', null);

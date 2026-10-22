@@ -53,6 +53,7 @@ import {
   FINANCE_LINKS,
   OPERATIONS_LINKS,
   SALES_LINKS,
+  DISTRIBUTOR_LINKS,
   CALENDARS_LINKS,
   ADMIN_LINKS,
   ERNIE_LINKS,
@@ -123,9 +124,17 @@ const NEW_SIDEBAR_IDS: string[] = [
   // Sales Dashboard — new page under MAIN, right below Tanks (2026-10-08),
   // per Chad.
   "/sales-dashboard",
-  // My Territory — a rep's own dashboard under MAIN, below Sales Dashboard
-  // (2026-10-21), per Chad.
-  "/my-territory",
+  // Distributors — new Departments category below Sales, one page per
+  // distributor (2026-10-22), per Chad. Replaces My Territory. The
+  // Distributors button itself lights up from these automatically.
+  "/distributors/matagrano",
+  "/distributors/guardian",
+  "/distributors/valley-wide",
+  "/distributors/mussetter",
+  "/distributors/markstein",
+  "/distributors/superior",
+  "/distributors/saccani",
+  "/distributors/coast",
   // Football POS — new POS sub-link, added 2026-09-05, per Chad.
   "/pos/football",
   // Cash Flow Dashboard — new Finance section, added 2026-09-09, per Chad.
@@ -164,6 +173,8 @@ const NEW_SIDEBAR_IDS: string[] = [
 const FINANCE_STORAGE_KEY = "fcb-sidebar-finance-expanded";
 const OPERATIONS_STORAGE_KEY = "fcb-sidebar-operations-expanded";
 const SALES_STORAGE_KEY = "fcb-sidebar-sales-expanded";
+// Distributors (2026-10-22) — one page per distributor, right below Sales.
+const DISTRIBUTORS_STORAGE_KEY = "fcb-sidebar-distributors-expanded";
 const CALENDARS_STORAGE_KEY = "fcb-sidebar-calendars-expanded";
 const ERNIE_STORAGE_KEY = "fcb-sidebar-ernie-expanded";
 
@@ -186,7 +197,7 @@ const ADMIN_STORAGE_KEY = "fcb-sidebar-admin-expanded";
 
 // ERNIE_LINKS — moved to lib/appPages.ts (2026-10-16) so Ernie reads the same page list.
 
-type TopLevelCategory = "ernie" | "finance" | "operations" | "sales" | "calendars" | "pos" | "admin";
+type TopLevelCategory = "ernie" | "finance" | "operations" | "sales" | "distributors" | "calendars" | "pos" | "admin";
 
 // Which top-level category (if any) a given pathname belongs to — added
 // 2026-09-10, per Chad ("we built in that other categories would close if
@@ -211,6 +222,7 @@ function topLevelCategoryForPath(pathname: string): TopLevelCategory | null {
     return "operations";
   }
   if (SALES_LINKS.some((l) => l.href === pathname)) return "sales";
+  if (pathname.startsWith("/distributors/")) return "distributors";
   if (CALENDARS_LINKS.some((l) => l.href === pathname)) return "calendars";
   if (POS_LINKS.some((l) => l.href === pathname)) return "pos";
   if (ADMIN_LINKS.some((l) => l.href === pathname)) return "admin";
@@ -309,6 +321,7 @@ export default function Sidebar({
   const [financeExpanded, setFinanceExpanded] = useState(true);
   const [operationsExpanded, setOperationsExpanded] = useState(true);
   const [salesExpanded, setSalesExpanded] = useState(true);
+  const [distributorsExpanded, setDistributorsExpanded] = useState(true);
   const [calendarsExpanded, setCalendarsExpanded] = useState(true);
   const [posExpanded, setPosExpanded] = useState(true);
   const [adminExpanded, setAdminExpanded] = useState(true);
@@ -350,6 +363,10 @@ export default function Sidebar({
     const storedSales = localStorage.getItem(SALES_STORAGE_KEY);
     if (storedSales !== null) {
       setSalesExpanded(storedSales === "true");
+    }
+    const storedDistributors = localStorage.getItem(DISTRIBUTORS_STORAGE_KEY);
+    if (storedDistributors !== null) {
+      setDistributorsExpanded(storedDistributors === "true");
     }
     const storedCalendars = localStorage.getItem(CALENDARS_STORAGE_KEY);
     if (storedCalendars !== null) {
@@ -399,6 +416,7 @@ export default function Sidebar({
       { key: "finance", setExpanded: setFinanceExpanded, storageKey: FINANCE_STORAGE_KEY },
       { key: "operations", setExpanded: setOperationsExpanded, storageKey: OPERATIONS_STORAGE_KEY },
       { key: "sales", setExpanded: setSalesExpanded, storageKey: SALES_STORAGE_KEY },
+      { key: "distributors", setExpanded: setDistributorsExpanded, storageKey: DISTRIBUTORS_STORAGE_KEY },
       { key: "calendars", setExpanded: setCalendarsExpanded, storageKey: CALENDARS_STORAGE_KEY },
       { key: "pos", setExpanded: setPosExpanded, storageKey: POS_STORAGE_KEY },
       { key: "admin", setExpanded: setAdminExpanded, storageKey: ADMIN_STORAGE_KEY },
@@ -565,6 +583,10 @@ export default function Sidebar({
       setSalesExpanded(false);
       localStorage.setItem(SALES_STORAGE_KEY, "false");
     }
+    if (except !== "distributors") {
+      setDistributorsExpanded(false);
+      localStorage.setItem(DISTRIBUTORS_STORAGE_KEY, "false");
+    }
     if (except !== "calendars") {
       setCalendarsExpanded(false);
       localStorage.setItem(CALENDARS_STORAGE_KEY, "false");
@@ -616,6 +638,15 @@ export default function Sidebar({
       const next = !prev;
       localStorage.setItem(SALES_STORAGE_KEY, String(next));
       if (next) closeOtherTopLevelSections("sales");
+      return next;
+    });
+  }
+
+  function toggleDistributors() {
+    setDistributorsExpanded((prev) => {
+      const next = !prev;
+      localStorage.setItem(DISTRIBUTORS_STORAGE_KEY, String(next));
+      if (next) closeOtherTopLevelSections("distributors");
       return next;
     });
   }
@@ -708,6 +739,8 @@ export default function Sidebar({
   const opsBeforeLabels = weeksIndex === -1 ? visibleOperations : visibleOperations.slice(0, weeksIndex + 1);
   const opsAfterLabels = weeksIndex === -1 ? [] : visibleOperations.slice(weeksIndex + 1);
   const visibleSales = SALES_LINKS.filter((link) => can(link.section));
+  // Distributors: only the pages this person has (each its own checkbox).
+  const visibleDistributors = DISTRIBUTOR_LINKS.filter((link) => can(link.section));
   const showPosTree = can("pos_labels");
   const showUpcTree = can("upcs");
   const visibleCalendars = CALENDARS_LINKS.filter((link) => can(link.section));
@@ -733,6 +766,7 @@ export default function Sidebar({
     visibleFinance.length === 0 &&
     visibleOperations.length === 0 &&
     visibleSales.length === 0 &&
+    visibleDistributors.length === 0 &&
     !showPosTree &&
     !showUpcTree &&
     visibleCalendars.length === 0 &&
@@ -753,6 +787,7 @@ export default function Sidebar({
     showPosTree ||
     showUpcTree ||
     visibleSales.length > 0 ||
+    visibleDistributors.length > 0 ||
     showPosSection ||
     visibleCalendars.length > 0;
 
@@ -866,16 +901,6 @@ export default function Sidebar({
                       <IconChart />
                       Sales Dashboard
                       {showsNew("/sales-dashboard") && <NewBadge />}
-                    </Link>
-                  )}
-
-                  {/* My Territory (2026-10-21) — a rep's own dashboard for
-                      their distributor(s). Gated by its own "My Territory" access. */}
-                  {can("my_territory") && (
-                    <Link href="/my-territory" className={topLinkClass("/my-territory")} onClick={() => dismissNew("/my-territory")}>
-                      <IconChart />
-                      My Territory
-                      {showsNew("/my-territory") && <NewBadge />}
                     </Link>
                   )}
 
@@ -1082,6 +1107,44 @@ export default function Sidebar({
                       {salesExpanded && (
                         <div className="fcb-nav-sub-group">
                           {visibleSales.map((link) => (
+                            <Link
+                              key={link.href}
+                              href={link.href}
+                              className={linkClass(link.href)}
+                              onClick={() => dismissNew(link.href)}
+                            >
+                              {link.label}
+                              {showsNew(link.href) && <NewBadge />}
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* Distributors (2026-10-22, per Chad) — one page per
+                      distributor, right below Sales; each page is its own
+                      access checkbox, so a rep sees only theirs. */}
+                  {visibleDistributors.length > 0 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          toggleDistributors();
+                          dismissNew("section:distributors");
+                        }}
+                        className={parentClass(distributorsExpanded)}
+                      >
+                        <IconTruck />
+                        Distributors
+                        {parentRight(
+                          sectionShowsNew("section:distributors", visibleDistributors.map((link) => link.href)),
+                          distributorsExpanded,
+                        )}
+                      </button>
+                      {distributorsExpanded && (
+                        <div className="fcb-nav-sub-group">
+                          {visibleDistributors.map((link) => (
                             <Link
                               key={link.href}
                               href={link.href}
@@ -1322,6 +1385,17 @@ function IconCard() {
     </NavIcon>
   );
 }
+function IconTruck() {
+  return (
+    <NavIcon>
+      <path d="M3 6h11v10H3z" />
+      <path d="M14 10h4l3 3v3h-7" />
+      <circle cx="7" cy="17.5" r="1.7" />
+      <circle cx="17" cy="17.5" r="1.7" />
+    </NavIcon>
+  );
+}
+
 function IconCalendar() {
   return (
     <NavIcon>

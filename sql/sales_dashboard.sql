@@ -248,9 +248,9 @@ as $$
 declare
   result json;
 begin
-  -- Sales Dashboard, or My Territory (a rep's page — 2026-10-21; chain lists
+  -- Sales Dashboard, or a distributor page (2026-10-22; chain lists
   -- only, no sales numbers per store here).
-  if not (public.has_section(auth.uid(), 'sales_dashboard') or public.has_section(auth.uid(), 'my_territory')) then
+  if not (public.has_section(auth.uid(), 'sales_dashboard') or public.has_dist_page()) then
     raise exception 'You don''t have access to the Sales Dashboard.';
   end if;
 
@@ -319,7 +319,7 @@ declare
   result json;
   v_as_of date;
 begin
-  -- My Territory users (2026-10-21) only for their own distributor(s).
+  -- Distributor-page people (2026-10-22) only for their own distributor(s).
   if not public.sales_can_see(case when p_distributor is null then null else array[p_distributor] end) then
     raise exception 'You don''t have access to the Sales Dashboard.';
   end if;

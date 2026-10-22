@@ -15,6 +15,7 @@ import {
 import { closeLilypadSession } from "@/lib/syncs/lilypadReader";
 import { syncLilypadSales } from "@/lib/syncs/lilypadSales";
 import { syncLilypadCheckins } from "@/lib/syncs/lilypadCheckins";
+import { syncLilypadRoutes } from "@/lib/syncs/lilypadRoutes";
 
 // Automatic Syncs (Admin → Ekos Sync) — added 2026-10-03.
 // Plan: claude/ekos-auto-sync-plan.md.
@@ -101,6 +102,14 @@ export const SYNC_SOURCES: SyncSourceDef[] = [
     description:
       "Every rep visit, call and email logged in LilyPad (last 45 days each run; back to Jan 1 the first time) → Sales → Accounts check-ins.",
     run: () => syncLilypadCheckins(createAdminClient()),
+  },
+  {
+    // Added 2026-10-22 (claude/maintenance-routes.md).
+    key: "lilypad_routes",
+    label: "LilyPad — Maintenance Routes",
+    description:
+      "Each current rep's maintenance route (the LilyPad list of accounts they must check in at every two months) → the Distributors pages' check-ins block and Sales Dashboard → Rep activity.",
+    run: () => syncLilypadRoutes(createAdminClient()),
   },
 ];
 

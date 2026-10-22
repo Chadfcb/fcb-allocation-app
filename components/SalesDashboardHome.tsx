@@ -25,6 +25,8 @@ import { downloadWorkbook, type Supa } from "@/components/SalesDashboardClient";
 import type { ActionData, ActionRow } from "@/components/SalesActionItems";
 import { coverageFor, useChainCoverage } from "@/lib/chainCoverage";
 import { BIG_LOST_CE } from "@/lib/salesAccounts";
+import { useNewFeature } from "@/lib/newFeatures";
+import NewBadge from "@/components/NewBadge";
 import type { DashOverview, resolveLists } from "@/lib/salesDashboard";
 import {
   PERIODS,
@@ -333,6 +335,9 @@ export default function SalesDashboardHome({
   onOpenTool: (t: "actions" | "gap") => void;
 }) {
   const [home, setHome] = useState<HomeData | null>(null);
+  // Maintenance routes (2026-10-22): accounts checked in this two-month period / total, per rep.
+  const [routes, setRoutes] = useState<{ rep: string; distributor: string | null; total: number; visited: number }[] | null>(null);
+  const routeNew = useNewFeature("feature:rep-route-column");
   const [err, setErr] = useState<string | null>(null);
   const [period, setPeriod] = useState<Period>("90");
   const [dist, setDist] = useState("");
@@ -386,6 +391,9 @@ export default function SalesDashboardHome({
       .then(({ data }) => {
         if (!cancelled) setCheckedAt((data?.imported_at as string | null) ?? null);
       });
+    supabase.rpc("sales_route_progress").then(({ data, error }) => {
+      if (!cancelled && !error) setRoutes(((data as { routes?: { rep: string; distributor: string | null; total: number; visited: number }[] } | null)?.routes ?? []));
+    });
     supabase.rpc("sales_dash_home", loadArgs(custom)).then(({ data, error }) => {
       if (cancelled) return;
       if (error) setErr(error.message);
@@ -957,23 +965,40 @@ export default function SalesDashboardHome({
             <h2 className="text-[15px] font-semibold text-neutral-100">Rep activity</h2>
             <p className={`text-[12.5px] ${MUTED}`}>{pLabel}</p>
           </div>
-          <div className="grid grid-cols-[minmax(0,1.6fr)_repeat(3,minmax(0,1fr))] gap-2 border-b border-neutral-800/70 pb-1.5 text-[11px] text-neutral-500">
+          <div className="grid grid-cols-[minmax(0,1.6fr)_repeat(4,minmax(0,1fr))] gap-2 border-b border-neutral-800/70 pb-1.5 text-[11px] text-neutral-500">
             <span>Rep</span>
+            <button
+              type="button"
+              onClick={routeNew.dismiss}
+              title="Maintenance route: route accounts checked in this two-month period, out of all accounts on the route"
+              className="flex items-center justify-end gap-1 text-right"
+            >
+              {routeNew.isNew && <NewBadge inline />}
+              Route
+            </button>
             <span className="text-right">Check-ins</span>
             <span className="text-right">New</span>
             <span className="text-right">Won back</span>
           </div>
-          {v.reps.map((r) => (
-            <div key={r.rep} className="grid grid-cols-[minmax(0,1.6fr)_repeat(3,minmax(0,1fr))] items-center gap-2 py-1.5 text-[13.5px]">
+          {v.reps.map((r) => {
+            const mine = (routes ?? []).filter((x) => x.rep.trim().toLowerCase().split(/\s+/)[0] === r.rep.toLowerCase());
+            const tot = mine.reduce((t, x) => t + (Number(x.total) || 0), 0);
+            const vis = mine.reduce((t, x) => t + (Number(x.visited) || 0), 0);
+            return (
+            <div key={r.rep} className="grid grid-cols-[minmax(0,1.6fr)_repeat(4,minmax(0,1fr))] items-center gap-2 py-1.5 text-[13.5px]">
               <span className="flex min-w-0 flex-col">
                 <span className="font-semibold text-neutral-100">{r.rep}</span>
                 <span className="truncate text-[11.5px] text-neutral-500">{r.territory}</span>
+              </span>
+              <span className="text-right font-mono" title={tot ? `${Math.round((vis / tot) * 100)}% of route accounts checked in this period` : undefined}>
+                {routes === null ? "…" : tot ? `${vis}/${tot}` : "—"}
               </span>
               <span className="text-right font-mono">{r.checkins === null ? "—" : fmtN(r.checkins)}</span>
               <span className="text-right font-mono">{fmtN(r.newA)}</span>
               <span className="text-right font-mono">{fmtN(r.won)}</span>
             </div>
-          ))}
+            );
+          })}
           {!home.has_accounts && <p className="text-[11px] text-neutral-500">Check-ins show for people with Sales → Accounts access.</p>}
         </section>
       </div>

@@ -1,18 +1,14 @@
 import { redirect } from "next/navigation";
 import { getProfile } from "@/lib/getProfile";
 import { hasSection } from "@/lib/permissions";
-import MyTerritoryClient from "@/components/MyTerritoryClient";
+import { DISTRIBUTOR_PAGES, distributorHref } from "@/lib/distributorPages";
 
-// My Territory (added 2026-10-21, per Chad): a rep's own daily dashboard for
-// their distributor(s) only — first for Steve / Matagrano. Gated by its own
-// "My Territory" access on Admin → Users; the territory is set on the same
-// Edit access panel (rep_territories). Admins can pick any distributor.
-// Plan: claude/rep-dashboard-plan.md. SQL: sql/my_territory.sql.
+// My Territory (2026-10-21) became Distributors → <distributor> on
+// 2026-10-22. Old links / bookmarks land on the person's first distributor page.
 export const dynamic = "force-dynamic";
 
 export default async function MyTerritoryPage() {
   const profile = await getProfile();
-  if (!profile || !hasSection(profile.role, profile.sections, "my_territory", profile.is_super_admin)) redirect("/");
-  const name = profile.full_name?.trim() || null;
-  return <MyTerritoryClient isAdmin={profile.role === "admin"} viewerName={name} />;
+  const first = profile ? DISTRIBUTOR_PAGES.find((d) => hasSection(profile.role, profile.sections, d.section, profile.is_super_admin)) : null;
+  redirect(first ? distributorHref(first.slug) : "/");
 }

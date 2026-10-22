@@ -4,18 +4,19 @@ import { Fragment, useEffect, useMemo, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, Role } from "@/lib/types/db";
 import { firstNameFor } from "@/lib/displayName";
-import { CURRENT_DISTRIBUTORS } from "@/lib/salesAccounts";
 import {
   GROUP_KEYS,
   GROUP_LABEL,
   GROUP_SECTIONS,
   ERNIE_SECTION,
+  PER_PAGE_GROUPS,
+  SECTION_LABEL,
   type AnySectionKey,
   type GroupKey,
+  type SectionKey,
 } from "@/lib/permissions";
 
-// territories: My Territory distributor(s) — rep_territories (2026-10-21).
-type UserRow = Profile & { sections: AnySectionKey[]; territories: string[] };
+type UserRow = Profile & { sections: AnySectionKey[] };
 
 // Administrator / Manager / Employee tiering — added 2026-09-09, per Chad.
 // Deliberately NOT a database enum: it's just role + is_super_admin viewed
@@ -72,12 +73,42 @@ const TIER_BADGE_CLASS: Record<Tier, string> = {
 // `events_calendar`/`pos_labels`, which TypeScript correctly rejected).
 // Deriving it from GROUP_KEYS means a future category added to
 // SECTION_GROUPS can never get out of sync with this shape again.
-type GroupSelectionState = Record<GroupKey, boolean> & { ernie: boolean };
+// `pages`: the pages picked one by one inside a PER_PAGE_GROUPS category
+// (today just Distributors — Chad, 2026-10-22: "steve has access to the
+// distributors button, but only sees the sub category of Matagrano").
+type GroupSelectionState = Record<GroupKey, boolean> & { ernie: boolean; pages: SectionKey[] };
 
 function emptyGroupState(): GroupSelectionState {
-  const state = { ernie: false } as GroupSelectionState;
+  const state = { ernie: false, pages: [] } as unknown as GroupSelectionState;
   for (const group of GROUP_KEYS) state[group] = false;
   return state;
+}
+
+// One checkbox clicked: a whole category, Ernie, or (inside a per-page
+// category) one page. Checking a per-page category checks all its pages;
+// the category shows checked only when every page under it is.
+type ToggleKey = GroupKey | "ernie" | SectionKey;
+function applyToggle(prev: GroupSelectionState, key: ToggleKey, checked: boolean): GroupSelectionState {
+  const next: GroupSelectionState = { ...prev, pages: [...prev.pages] };
+  if (key === "ernie") {
+    next.ernie = checked;
+    return next;
+  }
+  if ((GROUP_KEYS as string[]).includes(key)) {
+    const g = key as GroupKey;
+    next[g] = checked;
+    if (PER_PAGE_GROUPS.includes(g)) {
+      const inGroup = GROUP_SECTIONS[g];
+      next.pages = checked ? [...new Set([...next.pages, ...inGroup])] : next.pages.filter((k) => !inGroup.includes(k));
+    }
+    return next;
+  }
+  const page = key as SectionKey;
+  next.pages = checked ? [...new Set([...next.pages, page])] : next.pages.filter((k) => k !== page);
+  for (const g of PER_PAGE_GROUPS) {
+    if (GROUP_SECTIONS[g].includes(page)) next[g] = GROUP_SECTIONS[g].every((k) => next.pages.includes(k));
+  }
+  return next;
 }
 
 // Derives which group checkboxes should show as checked for a user's
@@ -87,6 +118,9 @@ function groupStateFromSections(sections: AnySectionKey[]): GroupSelectionState 
   const state = emptyGroupState();
   for (const group of GROUP_KEYS) {
     state[group] = GROUP_SECTIONS[group].every((k) => sections.includes(k));
+    if (PER_PAGE_GROUPS.includes(group)) {
+      state.pages.push(...GROUP_SECTIONS[group].filter((k) => sections.includes(k)));
+    }
   }
   state.ernie = sections.includes(ERNIE_SECTION);
   return state;
@@ -98,7 +132,8 @@ function groupStateFromSections(sections: AnySectionKey[]): GroupSelectionState 
 function expandGroupState(state: GroupSelectionState): AnySectionKey[] {
   const keys: AnySectionKey[] = [];
   for (const group of GROUP_KEYS) {
-    if (state[group]) keys.push(...GROUP_SECTIONS[group]);
+    if (PER_PAGE_GROUPS.includes(group)) keys.push(...GROUP_SECTIONS[group].filter((k) => state.pages.includes(k)));
+    else if (state[group]) keys.push(...GROUP_SECTIONS[group]);
   }
   if (state.ernie) keys.push(ERNIE_SECTION);
   return keys;
@@ -122,8 +157,12 @@ function accessSummary(user: UserRow): string {
   // list reads as vacuously true, which would otherwise make an empty
   // category show up as "granted" for every single user.
   const groupLabels = GROUP_KEYS.filter(
-    (g) => GROUP_SECTIONS[g].length > 0 && state[g],
-  ).map((g) => GROUP_LABEL[g]);
+    (g) => GROUP_SECTIONS[g].length > 0 && (state[g] || (PER_PAGE_GROUPS.includes(g) && GROUP_SECTIONS[g].some((k) => state.pages.includes(k)))),
+  ).map((g) =>
+    PER_PAGE_GROUPS.includes(g) && !state[g]
+      ? `${GROUP_LABEL[g]} (${GROUP_SECTIONS[g].filter((k) => state.pages.includes(k)).map((k) => SECTION_LABEL[k]).join(", ")})`
+      : GROUP_LABEL[g],
+  );
   const withErnie = state.ernie ? [...groupLabels, "Ernie AI"] : groupLabels;
   return withErnie.length ? withErnie.join(", ") : "No sections yet";
 }
@@ -156,7 +195,7 @@ function GroupChecklist({
   tier: Tier;
   viewerIsSuperAdmin: boolean;
   state: GroupSelectionState;
-  onToggle: (key: GroupKey | "ernie", checked: boolean) => void;
+  onToggle: (key: ToggleKey, checked: boolean) => void;
 }) {
   // An Administrator always has everything, Finance included — nothing to
   // pick, same message as before the tiering existed.
@@ -223,23 +262,38 @@ function GroupChecklist({
         </p>
         <div className="flex flex-col gap-1">
           {visibleGroups.map((group) => (
-            <label
-              key={group}
-              className="flex items-center gap-2 rounded px-2 py-1 text-sm text-neutral-200 hover:bg-neutral-900"
-            >
-              <input
-                type="checkbox"
-                checked={state[group]}
-                onChange={(e) => onToggle(group, e.target.checked)}
-                className="h-4 w-4 accent-white"
-              />
-              {GROUP_LABEL[group]}
-            </label>
+            <Fragment key={group}>
+              <label className="flex items-center gap-2 rounded px-2 py-1 text-sm text-neutral-200 hover:bg-neutral-900">
+                <input
+                  type="checkbox"
+                  checked={state[group]}
+                  onChange={(e) => onToggle(group, e.target.checked)}
+                  className="h-4 w-4 accent-white"
+                />
+                {GROUP_LABEL[group]}
+              </label>
+              {/* Distributors (2026-10-22): each page has its own checkbox. */}
+              {PER_PAGE_GROUPS.includes(group) && (
+                <div className="ml-7 flex flex-wrap gap-x-4 gap-y-1 border-l border-neutral-800 pl-3">
+                  {GROUP_SECTIONS[group].map((page) => (
+                    <label key={page} className="flex items-center gap-1.5 py-0.5 text-[13px] text-neutral-300">
+                      <input
+                        type="checkbox"
+                        checked={state.pages.includes(page)}
+                        onChange={(e) => onToggle(page, e.target.checked)}
+                        className="h-3.5 w-3.5 accent-white"
+                      />
+                      {SECTION_LABEL[page]}
+                    </label>
+                  ))}
+                </div>
+              )}
+            </Fragment>
           ))}
         </div>
         <p className="mt-1 text-xs text-neutral-500">
-          Checking a category grants every page under it — no need to also
-          pick individual pages.
+          Checking a category grants every page under it. Distributors can
+          also be given one page at a time.
         </p>
       </div>
 
@@ -289,9 +343,6 @@ export default function UsersPage() {
   // went through it, so it has no name on file and nothing anywhere let
   // that be fixed after the fact. This is that fix.
   const [editFullName, setEditFullName] = useState("");
-  // My Territory (2026-10-21): which distributor(s) this person's My
-  // Territory page shows. Only used when the My Territory toggle is on.
-  const [editTerritories, setEditTerritories] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   // Remove access / Restore (2026-10-19).
   const [removing, setRemoving] = useState<string | null>(null);
@@ -299,15 +350,10 @@ export default function UsersPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [{ data: profiles }, { data: grants }, { data: terr }] = await Promise.all([
+    const [{ data: profiles }, { data: grants }] = await Promise.all([
       supabase.from("profiles").select("*").order("created_at"),
       supabase.from("user_section_access").select("user_id, section_key"),
-      supabase.from("rep_territories").select("user_id, distributor"),
     ]);
-    const terrByUser = new Map<string, string[]>();
-    for (const t of (terr ?? []) as { user_id: string; distributor: string }[]) {
-      terrByUser.set(t.user_id, [...(terrByUser.get(t.user_id) ?? []), t.distributor]);
-    }
 
     const sectionsByUser = new Map<string, AnySectionKey[]>();
     for (const g of grants ?? []) {
@@ -320,7 +366,6 @@ export default function UsersPage() {
       ((profiles as Profile[]) ?? []).map((p) => ({
         ...p,
         sections: sectionsByUser.get(p.id) ?? [],
-        territories: terrByUser.get(p.id) ?? [],
       })),
     );
     setLoading(false);
@@ -354,7 +399,6 @@ export default function UsersPage() {
     setEditTier(tierOf(user.role, user.is_super_admin));
     setEditSections(groupStateFromSections(user.sections));
     setEditFullName(user.full_name ?? "");
-    setEditTerritories(user.territories);
   }
 
   async function handleSaveEdit(userId: string) {
@@ -381,11 +425,6 @@ export default function UsersPage() {
         .eq("id", userId);
       const desired = editTier === "administrator" ? [] : expandGroupState(editSections);
       await saveSections(userId, desired);
-      // My Territory distributor(s): replace this person's rows.
-      await supabase.from("rep_territories").delete().eq("user_id", userId);
-      if (desired.includes("my_territory") && editTerritories.length) {
-        await supabase.from("rep_territories").insert(editTerritories.map((distributor) => ({ user_id: userId, distributor, updated_by: viewerId })));
-      }
       setEditingId(null);
       await load();
     } finally {
@@ -566,7 +605,7 @@ export default function UsersPage() {
           tier={viewerIsSuperAdmin ? newTier : "employee"}
           viewerIsSuperAdmin={viewerIsSuperAdmin}
           state={newSections}
-          onToggle={(key, checked) => setNewSections((prev) => ({ ...prev, [key]: checked }))}
+          onToggle={(key, checked) => setNewSections((prev) => applyToggle(prev, key, checked))}
         />
 
         {createError && <p className="text-sm text-red-400">{createError}</p>}
@@ -686,32 +725,8 @@ export default function UsersPage() {
                             tier={editTier}
                             viewerIsSuperAdmin={viewerIsSuperAdmin}
                             state={editSections}
-                            onToggle={(key, checked) => setEditSections((prev) => ({ ...prev, [key]: checked }))}
+                            onToggle={(key, checked) => setEditSections((prev) => applyToggle(prev, key, checked))}
                           />
-
-                          {editTier !== "administrator" && editSections.my_territory && (
-                            <div>
-                              <label className="mb-1 block text-xs font-medium text-neutral-400">Territory (My Territory page)</label>
-                              <div className="flex flex-wrap gap-2">
-                                {CURRENT_DISTRIBUTORS.map((d) => {
-                                  const on = editTerritories.includes(d);
-                                  return (
-                                    <button
-                                      key={d}
-                                      type="button"
-                                      onClick={() => setEditTerritories((prev) => (on ? prev.filter((x) => x !== d) : [...prev, d]))}
-                                      className={`rounded-md border px-3 py-1.5 text-sm ${on ? "border-white bg-white text-black" : "border-neutral-700 text-neutral-300 hover:bg-neutral-900"}`}
-                                    >
-                                      {d}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                              <p className="mt-1 text-xs text-neutral-500">
-                                Their My Territory page shows only these distributors{editTerritories.length ? "" : " — pick at least one"}.
-                              </p>
-                            </div>
-                          )}
 
                           <div className="flex items-center justify-end gap-2 pt-1">
                             {user.id !== viewerId && (tier === "employee" || viewerIsSuperAdmin) && (

@@ -1,3 +1,7 @@
+-- SUPERSEDED 2026-10-22 by sql/distributors.sql (My Territory became the
+-- Distributors pages). DON'T RUN THIS FILE AGAIN — it would re-create the
+-- old rep_territories table and access rules. Kept only as a record.
+--
 -- My Territory (added 2026-10-21, per Chad): a rep's own daily dashboard —
 -- "a Matagrano dashboard specifically for Steve … with information pertaining
 -- just to matagrano, for him to look at each day and be able to make
