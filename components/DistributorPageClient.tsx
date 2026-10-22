@@ -507,10 +507,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
               </div>
             </section>
 
-            {/* Account search (2026-10-22, per Chad) sits right above the stock block. */}
-            <div className="flex min-w-0 flex-[1_1_420px] flex-col gap-4">
-            <AccountSearch supabase={supabase} dist={dist} onPick={(id) => setOpenId(id)} />
-            <section className={`${CARD} flex min-w-0 flex-1 flex-col gap-3`}>
+            <section className={`${CARD} flex min-w-0 flex-[1_1_420px] flex-col gap-3`}>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-[15px] font-semibold text-neutral-100">Stock at {dist}</h2>
@@ -550,7 +547,6 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
               </div>
               {!(stock?.inventory ?? []).length && <p className={`text-[13px] ${MUTED}`}>Nothing to show yet.</p>}
             </section>
-            </div>
           </div>
 
           {/* Period + follow-ups */}
@@ -625,6 +621,11 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
                 {period === "custom" && !customReady && <span className={`text-xs ${MUTED}`}>Loading…</span>}
               </form>
             )}
+            {/* Account search — moved here 2026-10-22 (Chad: "move the account
+                search to this empty area", right of the period buttons). */}
+            <div className="min-w-[260px] max-w-[760px] flex-1 sm:ml-3">
+              <AccountSearch supabase={supabase} dist={dist} onPick={(id) => setOpenId(id)} />
+            </div>
             {period === "custom" && custom && home.as_of && custom.to > home.as_of && (
               <span className="basis-full text-[11.5px] text-neutral-500">
                 Sales numbers go through {fmtDay(home.as_of)} (latest sales in LilyPad); check-ins go through {fmtDay(custom.to)}.
@@ -1081,7 +1082,8 @@ function ChainListPopup({
   );
 }
 
-// Account search (2026-10-22, per Chad): type part of an account name, store
+// Account search (2026-10-22, per Chad; a slim bar in the period row since
+// later that day): type part of an account name, store
 // number ("#667"), city or address → this distributor's matching accounts →
 // pick one → the same account pop-up as anywhere else on the page. Searches
 // only this distributor's accounts (sales_territory_search checks access).
@@ -1124,11 +1126,7 @@ function AccountSearch({ supabase, dist, onPick }: { supabase: ReturnType<typeof
   };
 
   return (
-    <section className={`${CARD} relative flex flex-col gap-2`}>
-      <div className="flex items-center gap-2">
-        <h2 className="text-[15px] font-semibold text-neutral-100">Search accounts</h2>
-        {searchNew.isNew && <NewBadge inline />}
-      </div>
+    <div className="relative">
       <div className="relative">
         <svg viewBox="0 0 24 24" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
           <circle cx="11" cy="11" r="7" />
@@ -1158,10 +1156,15 @@ function AccountSearch({ supabase, dist, onPick }: { supabase: ReturnType<typeof
               setOpen(false);
             }
           }}
-          placeholder={`Account name, #store, city or address — ${dist} accounts`}
+          placeholder={`Search ${dist} accounts — name, #store, city or address`}
           aria-label={`Search ${dist} accounts`}
-          className="w-full rounded-lg border border-neutral-700 bg-neutral-900 py-2 pl-9 pr-3 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-[#6abc46] focus:outline-none"
+          className={`min-h-9 w-full rounded-full border border-neutral-700 bg-neutral-950 py-1.5 pl-9 text-[13px] text-neutral-100 placeholder:text-neutral-500 focus:border-[#6abc46] focus:outline-none ${searchNew.isNew ? "pr-16" : "pr-3"}`}
         />
+        {searchNew.isNew && (
+          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2">
+            <NewBadge inline />
+          </span>
+        )}
         {open && q.trim().length >= 2 && rows && (
           <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-[320px] overflow-y-auto rounded-lg border border-neutral-700 bg-neutral-950 shadow-2xl">
             {err ? (
@@ -1197,7 +1200,7 @@ function AccountSearch({ supabase, dist, onPick }: { supabase: ReturnType<typeof
           </div>
         )}
       </div>
-    </section>
+    </div>
   );
 }
 
