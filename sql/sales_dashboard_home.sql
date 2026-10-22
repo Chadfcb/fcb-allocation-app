@@ -26,6 +26,9 @@
 -- numbers come back for that range too (period key 'custom'), compared with
 -- the same dates a year earlier.
 --
+-- My Territory (2026-10-21): access goes through sales_can_see()
+-- (sql/my_territory.sql — run that file first); adds a 'new_accounts' list.
+--
 -- Run this in Supabase's SQL Editor BEFORE pushing the code.
 -- Idempotent — safe to run more than once. No new tables.
 
@@ -64,10 +67,13 @@ declare
   v_acc boolean;   -- can this person see Sales → Accounts (phones, check-ins)?
   result json;
 begin
-  if not public.has_section(auth.uid(), 'sales_dashboard') then
+  -- Sales Dashboard users see any distributors; My Territory users (a rep's
+  -- own page, 2026-10-21 — sql/my_territory.sql) only their own.
+  if not public.sales_can_see(p_current) then
     raise exception 'You don''t have access to the Sales Dashboard.';
   end if;
-  v_acc := public.has_section(auth.uid(), 'accounts');
+  -- Phones / check-ins: Sales → Accounts people, and reps for their own accounts.
+  v_acc := public.has_section(auth.uid(), 'accounts') or public.has_section(auth.uid(), 'my_territory');
   select m.as_of into a from public.sales_data_meta m where m.id = 1;
   if a is null then
     return json_build_object('as_of', null);
@@ -192,6 +198,10 @@ begin
         where bd.d between (a - interval '1 year')::date - 60 and (a - interval '1 year')::date
         group by ac.distributor) c),
     -- Counts per period × year × distributor: new accounts, win backs, went lost
+    -- New accounts this year (newest first) — the My Territory follow-up list
+    'new_accounts', (select coalesce(json_agg(c order by c.fb desc), '[]'::json) from (
+        select ac.outlet_id, ac.name, ac.city, ac.distributor as dist, ac.fb, ac.lb, ac.ce12
+        from acc ac where ac.fb >= back) c),
     'new_counts', (select coalesce(json_agg(c), '[]'::json) from (
         select w.p, w.yr, x.distributor as dist, count(*)::int as n
         from win w join acc x on x.fb between w.ws and w.we

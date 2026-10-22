@@ -123,6 +123,9 @@ const NEW_SIDEBAR_IDS: string[] = [
   // Sales Dashboard — new page under MAIN, right below Tanks (2026-10-08),
   // per Chad.
   "/sales-dashboard",
+  // My Territory — a rep's own dashboard under MAIN, below Sales Dashboard
+  // (2026-10-21), per Chad.
+  "/my-territory",
   // Football POS — new POS sub-link, added 2026-09-05, per Chad.
   "/pos/football",
   // Cash Flow Dashboard — new Finance section, added 2026-09-09, per Chad.
@@ -863,6 +866,16 @@ export default function Sidebar({
                       <IconChart />
                       Sales Dashboard
                       {showsNew("/sales-dashboard") && <NewBadge />}
+                    </Link>
+                  )}
+
+                  {/* My Territory (2026-10-21) — a rep's own dashboard for
+                      their distributor(s). Gated by its own "My Territory" access. */}
+                  {can("my_territory") && (
+                    <Link href="/my-territory" className={topLinkClass("/my-territory")} onClick={() => dismissNew("/my-territory")}>
+                      <IconChart />
+                      My Territory
+                      {showsNew("/my-territory") && <NewBadge />}
                     </Link>
                   )}
 

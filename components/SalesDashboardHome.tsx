@@ -56,8 +56,8 @@ import {
 
 type Resolved = ReturnType<typeof resolveLists>;
 
-const CARD = "rounded-xl border border-neutral-800 bg-neutral-950 p-5";
-const MUTED = "text-neutral-400";
+export const CARD = "rounded-xl border border-neutral-800 bg-neutral-950 p-5";
+export const MUTED = "text-neutral-400";
 const PREF_KEY = "fcb-sales-home-view";
 
 const accountsLink = (q: Record<string, string>) => `/sales/accounts?${new URLSearchParams(q).toString()}`;
@@ -65,7 +65,7 @@ const accountsLink = (q: Record<string, string>) => `/sales/accounts?${new URLSe
 // ---------------------------------------------------------------------------
 // Small pieces
 // ---------------------------------------------------------------------------
-function Pill({ on, onClick, children, id }: { on: boolean; onClick: () => void; children: React.ReactNode; id?: string }) {
+export function Pill({ on, onClick, children, id }: { on: boolean; onClick: () => void; children: React.ReactNode; id?: string }) {
   return (
     <button
       id={id}
@@ -82,7 +82,7 @@ function Pill({ on, onClick, children, id }: { on: boolean; onClick: () => void;
   );
 }
 
-function Change({ value, goodWhenDown, title }: { value: number | null; goodWhenDown?: boolean; title?: string }) {
+export function Change({ value, goodWhenDown, title }: { value: number | null; goodWhenDown?: boolean; title?: string }) {
   if (value === null) return <span className="rounded-full bg-neutral-800 px-2 py-0.5 text-xs font-semibold text-neutral-300">new</span>;
   const flat = Math.abs(value) < 0.5;
   const good = goodWhenDown ? value < 0 : value > 0;
@@ -94,11 +94,11 @@ function Change({ value, goodWhenDown, title }: { value: number | null; goodWhen
   );
 }
 
-function Dot({ color, glow }: { color: string; glow?: boolean }) {
+export function Dot({ color, glow }: { color: string; glow?: boolean }) {
   return <span className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: color, boxShadow: glow ? `0 0 10px ${color}` : undefined }} />;
 }
 
-function ExportButton({ onClick, label = "Export", busy }: { onClick: () => void; label?: string; busy?: boolean }) {
+export function ExportButton({ onClick, label = "Export", busy }: { onClick: () => void; label?: string; busy?: boolean }) {
   return (
     <button
       type="button"
@@ -116,7 +116,7 @@ function ExportButton({ onClick, label = "Export", busy }: { onClick: () => void
   );
 }
 
-function Modal({ title, sub, onClose, actions, children }: { title: string; sub?: string; onClose: () => void; actions?: React.ReactNode; children: React.ReactNode }) {
+export function Modal({ title, sub, onClose, actions, children }: { title: string; sub?: string; onClose: () => void; actions?: React.ReactNode; children: React.ReactNode }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -151,7 +151,7 @@ function Modal({ title, sub, onClose, actions, children }: { title: string; sub?
   );
 }
 
-function Row({ left, title, sub, value, valueLabel, href, onClick }: { left?: React.ReactNode; title: string; sub: string; value: string; valueLabel: string; href?: string; onClick?: () => void }) {
+export function Row({ left, title, sub, value, valueLabel, href, onClick }: { left?: React.ReactNode; title: string; sub: string; value: string; valueLabel: string; href?: string; onClick?: () => void }) {
   const inner = (
     <>
       {left}
@@ -181,7 +181,7 @@ function Row({ left, title, sub, value, valueLabel, href, onClick }: { left?: Re
   return <div className={cls}>{inner}</div>;
 }
 
-const TAG = {
+export const TAG = {
   gap: "bg-red-500/15 text-[#ffab9c]",
   slip: "bg-amber-500/15 text-[#f7c27a]",
   lost: "bg-red-500/10 text-[#ff9a8a]",
@@ -189,11 +189,11 @@ const TAG = {
   wl: "bg-teal-400/15 text-[#7fe0cd]",
   wp: "bg-[#6abc46]/15 text-[#9edc7f]",
 };
-function Tag({ kind, children }: { kind: keyof typeof TAG; children: React.ReactNode }) {
+export function Tag({ kind, children }: { kind: keyof typeof TAG; children: React.ReactNode }) {
   return <span className={`inline-flex min-w-[96px] shrink-0 justify-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${TAG[kind]}`}>{children}</span>;
 }
 
-function Spark({ values, color }: { values: number[]; color: string }) {
+export function Spark({ values, color }: { values: number[]; color: string }) {
   if (values.length < 2) return null;
   const mx = Math.max(...values);
   const mn = Math.min(...values);
@@ -209,7 +209,7 @@ function Spark({ values, color }: { values: number[]; color: string }) {
 // ---------------------------------------------------------------------------
 // Excel
 // ---------------------------------------------------------------------------
-type Col = { header: string; key: string; width?: number };
+export type Col = { header: string; key: string; width?: number };
 type ExcelWorkbook = import("exceljs").Workbook;
 function addSheet(wb: ExcelWorkbook, name: string, title: string, cols: Col[], rows: Record<string, unknown>[]) {
   const ws = wb.addWorksheet(name.slice(0, 31));
@@ -221,14 +221,14 @@ function addSheet(wb: ExcelWorkbook, name: string, title: string, cols: Col[], r
   cols.forEach((c, i) => (ws.getColumn(i + 1).width = c.width ?? 16));
   ws.views = [{ state: "frozen", ySplit: 2 }];
 }
-async function exportSheets(fileName: string, sheets: { name: string; title: string; cols: Col[]; rows: Record<string, unknown>[] }[]) {
+export async function exportSheets(fileName: string, sheets: { name: string; title: string; cols: Col[]; rows: Record<string, unknown>[] }[]) {
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
   for (const s of sheets) addSheet(wb, s.name, s.title, s.cols, s.rows);
   downloadWorkbook(await wb.xlsx.writeBuffer(), fileName);
 }
 
-const COLS_GAPS: Col[] = [
+export const COLS_GAPS: Col[] = [
   { header: "Store", key: "store", width: 30 },
   { header: "City", key: "city" },
   { header: "Chain", key: "chain" },
@@ -239,7 +239,7 @@ const COLS_GAPS: Col[] = [
   { header: "Cases a year at stake", key: "impact" },
   { header: "Last check-in", key: "checkin" },
 ];
-const gapRows = (rows: ActionRow[]) =>
+export const gapRows = (rows: ActionRow[]) =>
   rows.map((r) => ({
     store: r.store.name,
     city: r.store.city ?? "",
@@ -251,7 +251,7 @@ const gapRows = (rows: ActionRow[]) =>
     impact: Math.round(r.impact),
     checkin: r.lastCheckin ? `${fmtDay(r.lastCheckin)}${r.lastCheckinBy ? ` (${r.lastCheckinBy})` : ""}` : "",
   }));
-const COLS_ACCOUNTS: Col[] = [
+export const COLS_ACCOUNTS: Col[] = [
   { header: "Account", key: "name", width: 32 },
   { header: "City", key: "city" },
   { header: "Distributor", key: "dist" },
@@ -262,7 +262,7 @@ const COLS_ACCOUNTS: Col[] = [
   { header: "Cases last 12 months", key: "ce12" },
   { header: "Last check-in", key: "checkin" },
 ];
-const accountRows = (rows: HomeAttention[]) =>
+export const accountRows = (rows: HomeAttention[]) =>
   rows.map((a) => ({
     name: a.name,
     city: a.city ?? "",
@@ -274,7 +274,7 @@ const accountRows = (rows: HomeAttention[]) =>
     ce12: Math.round(a.ce12),
     checkin: a.checkin ? `${fmtDay(a.checkin.date)}${a.checkin.rep ? ` (${a.checkin.rep})` : ""}` : "",
   }));
-const COLS_WB: Col[] = [
+export const COLS_WB: Col[] = [
   { header: "Account", key: "name", width: 32 },
   { header: "City", key: "city" },
   { header: "Distributor", key: "dist" },
@@ -287,7 +287,7 @@ const COLS_WB: Col[] = [
   { header: "Cases since", key: "ce" },
   { header: "Check-in before they came back", key: "checkin", width: 24 },
 ];
-const wbRows = (rows: HomeWinback[]) =>
+export const wbRows = (rows: HomeWinback[]) =>
   rows.map((w) => ({
     name: w.name,
     city: w.city ?? "",
@@ -349,9 +349,6 @@ export default function SalesDashboardHome({
   // by every sync even when LilyPad had nothing newer). Chad 10/21: the as-of
   // date alone read like the data was stale.
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
-  // Month under the mouse on the Cases sold by month chart (Chad 10/21: hover a
-  // peak or valley to see what it is).
-  const [hoverMonth, setHoverMonth] = useState<number | null>(null);
   const coverage = useChainCoverage(supabase, ov, resolved, version);
 
   // Remembered period / distributor (this browser only).
@@ -525,17 +522,6 @@ export default function SalesDashboardHome({
   };
 
   const cov = coverage.rows ? coverageFor(coverage.rows, dist) : null;
-
-  // Trend chart geometry.
-  const W = 760;
-  const H = 230;
-  const mx = Math.max(1, ...t.ty, ...t.ly);
-  const X = (i: number) => (i * W) / 11;
-  const Y = (val: number) => 215 - (val / mx) * 190;
-  const tyPts = t.ty.map((val, i) => `${X(i).toFixed(1)},${Y(val).toFixed(1)}`).join(" ");
-  const lyPts = t.ly.map((val, i) => `${X(i).toFixed(1)},${Y(val).toFixed(1)}`).join(" ");
-  const best = Math.max(...t.ty);
-  const bestIdx = t.ty.indexOf(best);
 
   const casesChg = pctChange(k.cases, k.casesLy);
   const health = [
@@ -848,130 +834,7 @@ export default function SalesDashboardHome({
 
       {/* Cases by month + Account health */}
       <div className="flex flex-wrap gap-4">
-        <section className={`${CARD} flex min-w-0 flex-[999_1_620px] flex-col gap-3.5`}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-[15px] font-semibold text-neutral-100">Cases sold by month</h2>
-              <p className={`text-[12.5px] ${MUTED}`}>{scope} · last 12 months · case equivalents</p>
-            </div>
-            <div className="flex items-center gap-4 text-[12.5px]">
-              <span className="flex items-center gap-1.5 text-neutral-200">
-                <span className="inline-block h-[3px] w-4 rounded bg-[#6abc46]" />
-                This year
-              </span>
-              <span className={`flex items-center gap-1.5 ${MUTED}`}>
-                <span className="inline-block w-4 border-t-2 border-dashed border-neutral-500" />
-                Last year
-              </span>
-            </div>
-          </div>
-          <div className="relative h-[230px]" onMouseLeave={() => setHoverMonth(null)}>
-            <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="absolute inset-0 block h-[230px] w-full" role="img" aria-label={`Cases sold by month, this year versus last year, ${scope}`}>
-              <defs>
-                <linearGradient id="home-tyfill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stopColor="#6abc46" stopOpacity="0.28" />
-                  <stop offset="1" stopColor="#6abc46" stopOpacity="0" />
-                </linearGradient>
-              </defs>
-              {[20, 85, 150].map((y) => (
-                <line key={y} x1="0" y1={y} x2={W} y2={y} stroke="#1b2420" strokeWidth="1" />
-              ))}
-              <line x1="0" y1="215" x2={W} y2="215" stroke="#24302a" strokeWidth="1" />
-              <path d={`M0,215 L${tyPts.split(" ").join(" L")} L${W},215 Z`} fill="url(#home-tyfill)" />
-              <polyline points={lyPts} fill="none" stroke="#6f7f77" strokeWidth="2" strokeDasharray="5 5" vectorEffect="non-scaling-stroke" />
-              <polyline points={tyPts} fill="none" stroke="#6abc46" strokeWidth="2.5" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
-              {hoverMonth !== null && <line x1={X(hoverMonth)} y1="10" x2={X(hoverMonth)} y2="215" stroke="#8fd16f" strokeOpacity="0.45" strokeWidth="1" strokeDasharray="3 4" vectorEffect="non-scaling-stroke" />}
-            </svg>
-            {/* Hover zones, one per month, plus the dots and the pop-up */}
-            <div className="absolute inset-0 overflow-hidden">
-              {t.months.map((m, i) => (
-                <div
-                  key={m}
-                  className="h-full cursor-crosshair"
-                  style={{ position: "absolute", left: `${((i - 0.5) / 11) * 100}%`, width: `${100 / 11}%` }}
-                  onMouseEnter={() => setHoverMonth(i)}
-                  onClick={() => setHoverMonth(i)}
-                />
-              ))}
-            </div>
-            {hoverMonth !== null && (
-              <>
-                <span className="pointer-events-none absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-neutral-950 bg-[#6abc46] shadow-[0_0_10px_#6abc46]" style={{ left: `${(hoverMonth / 11) * 100}%`, top: Y(t.ty[hoverMonth]) }} />
-                <span className="pointer-events-none absolute h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-neutral-400" style={{ left: `${(hoverMonth / 11) * 100}%`, top: Y(t.ly[hoverMonth]) }} />
-                <div
-                  className="pointer-events-none absolute top-1 z-10 w-max min-w-[190px] rounded-xl border border-[#6abc46]/40 bg-neutral-950/95 px-3.5 py-2.5 text-[12.5px] shadow-xl"
-                  style={{
-                    left: `${(hoverMonth / 11) * 100}%`,
-                    // Beside the point, never on top of it.
-                    transform: `translateX(${hoverMonth <= 5 ? "14px" : "calc(-100% - 14px)"})`,
-                  }}
-                >
-                  {(() => {
-                    const m = t.months[hoverMonth];
-                    const lyMonth = `${+m.slice(0, 4) - 1}${m.slice(4)}`;
-                    const tyV = t.ty[hoverMonth];
-                    // The month still going is compared with the same days last year
-                    // (last year's month, split by days — it's a monthly total).
-                    const partial = hoverMonth === 11 && t.partial;
-                    const asOfDay = home.as_of ? +home.as_of.slice(8, 10) : 0;
-                    const monthDays = new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).getUTCDate();
-                    const lyV = partial ? (t.ly[hoverMonth] * asOfDay) / monthDays : t.ly[hoverMonth];
-                    const isBest = hoverMonth === bestIdx;
-                    const isLow = tyV === Math.min(...t.ty);
-                    return (
-                      <>
-                        <div className="mb-1 flex items-center gap-2 font-semibold text-neutral-100">
-                          {monthLabel(m)} {m.slice(0, 4)}
-                          {hoverMonth === 11 && t.partial && <span className="font-normal text-neutral-500">so far (through {fmtDay(home.as_of)})</span>}
-                        </div>
-                        <div className="flex items-center justify-between gap-4">
-                          <span className="flex items-center gap-1.5 text-neutral-300">
-                            <span className="inline-block h-[3px] w-3 rounded bg-[#6abc46]" />
-                            Cases sold
-                          </span>
-                          <span className="font-mono text-neutral-50">{fmtN(tyV)}</span>
-                        </div>
-                        <div className="flex items-center justify-between gap-4">
-                          <span className="flex items-center gap-1.5 text-neutral-400">
-                            <span className="inline-block w-3 border-t-2 border-dashed border-neutral-500" />
-                            {partial ? `${monthLabel(lyMonth)} 1–${asOfDay}, ${lyMonth.slice(0, 4)} (est.)` : `${monthLabel(lyMonth)} ${lyMonth.slice(0, 4)}`}
-                          </span>
-                          <span className="font-mono text-neutral-300">{fmtN(lyV)}</span>
-                        </div>
-                        <div className="mt-1.5 flex items-center gap-2">
-                          <Change value={pctChange(tyV, lyV)} />
-                          <span className="text-neutral-500">vs last year</span>
-                          {isBest && <span className="rounded-full bg-[#6abc46]/15 px-2 py-0.5 text-[11px] font-semibold text-[#9edc7f]">Best month</span>}
-                          {isLow && !isBest && !partial && <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-semibold text-[#ffab9c]">Lowest month</span>}
-                        </div>
-                      </>
-                    );
-                  })()}
-                </div>
-              </>
-            )}
-          </div>
-          <div className="flex justify-between text-[11px] text-neutral-500">
-            {t.months.map((m, i) => (
-              <span key={m}>
-                {monthLabel(m)}
-                {i === 11 && t.partial ? "*" : ""}
-              </span>
-            ))}
-          </div>
-          <div className="flex flex-wrap gap-7 border-t border-neutral-800/70 pt-3.5">
-            <Stat value={fmtN(kpis(home, "ytd", dist).cases)} label="Cases year to date" />
-            <Stat value={fmtN(kpis(home, "ytd", dist).casesLy)} label="Same days last year" />
-            <div className="flex flex-col gap-0.5">
-              <span className="text-xl">
-                <Change value={pctChange(kpis(home, "ytd", dist).cases, kpis(home, "ytd", dist).casesLy)} />
-              </span>
-              <span className="text-[11px] text-neutral-500">Change</span>
-            </div>
-            <Stat value={fmtN(best)} label={`Best month (${monthLabel(t.months[bestIdx] ?? t.months[0])})`} />
-          </div>
-          {t.partial && <p className="text-[11px] text-neutral-500">* {monthLabel(t.months[11])} so far (through {fmtDay(home.as_of)}).</p>}
-        </section>
+        <CasesByMonth home={home} dist={dist} scope={scope} />
 
         <section className={`${CARD} flex min-w-0 flex-[1_1_360px] flex-col gap-4`}>
           <div>
@@ -1191,14 +1054,14 @@ export default function SalesDashboardHome({
 }
 
 // "Fri 10/16/26"
-function fmtWeekdayDay(iso: string | null): string {
+export function fmtWeekdayDay(iso: string | null): string {
   if (!iso) return "—";
   const d = new Date(`${iso.slice(0, 10)}T12:00:00Z`);
   return `${d.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" })} ${fmtDay(iso)}`;
 }
 
 // "today, 4:12 AM" / "yesterday, 4:12 AM" / "Mon 10/19, 4:12 AM" — Pacific time.
-function fmtChecked(ts: string): string {
+export function fmtChecked(ts: string): string {
   const tz = "America/Los_Angeles";
   const when = new Date(ts);
   const dayKey = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: tz });
@@ -1219,9 +1082,155 @@ function Step({ n, children }: { n: number; children: React.ReactNode }) {
   );
 }
 
+// Cases sold by month — last 12 months vs the 12 before, with the hover
+// pop-up (Chad 10/21). Shared by the Sales Dashboard home and My Territory.
+export function CasesByMonth({ home, dist, scope }: { home: HomeData; dist: string; scope: string }) {
+  // Month under the mouse on the Cases sold by month chart (Chad 10/21: hover a
+  // peak or valley to see what it is).
+  const [hoverMonth, setHoverMonth] = useState<number | null>(null);
+  const t = trend(home, dist);
+  // Trend chart geometry.
+  const W = 760;
+  const H = 230;
+  const mx = Math.max(1, ...t.ty, ...t.ly);
+  const X = (i: number) => (i * W) / 11;
+  const Y = (val: number) => 215 - (val / mx) * 190;
+  const tyPts = t.ty.map((val, i) => `${X(i).toFixed(1)},${Y(val).toFixed(1)}`).join(" ");
+  const lyPts = t.ly.map((val, i) => `${X(i).toFixed(1)},${Y(val).toFixed(1)}`).join(" ");
+  const best = Math.max(...t.ty);
+  const bestIdx = t.ty.indexOf(best);
+
+  return (
+  <section className={`${CARD} flex min-w-0 flex-[999_1_620px] flex-col gap-3.5`}>
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h2 className="text-[15px] font-semibold text-neutral-100">Cases sold by month</h2>
+        <p className={`text-[12.5px] ${MUTED}`}>{scope} · last 12 months · case equivalents</p>
+      </div>
+      <div className="flex items-center gap-4 text-[12.5px]">
+        <span className="flex items-center gap-1.5 text-neutral-200">
+          <span className="inline-block h-[3px] w-4 rounded bg-[#6abc46]" />
+          This year
+        </span>
+        <span className={`flex items-center gap-1.5 ${MUTED}`}>
+          <span className="inline-block w-4 border-t-2 border-dashed border-neutral-500" />
+          Last year
+        </span>
+      </div>
+    </div>
+    <div className="relative h-[230px]" onMouseLeave={() => setHoverMonth(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="absolute inset-0 block h-[230px] w-full" role="img" aria-label={`Cases sold by month, this year versus last year, ${scope}`}>
+        <defs>
+          <linearGradient id="home-tyfill" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor="#6abc46" stopOpacity="0.28" />
+            <stop offset="1" stopColor="#6abc46" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {[20, 85, 150].map((y) => (
+          <line key={y} x1="0" y1={y} x2={W} y2={y} stroke="#1b2420" strokeWidth="1" />
+        ))}
+        <line x1="0" y1="215" x2={W} y2="215" stroke="#24302a" strokeWidth="1" />
+        <path d={`M0,215 L${tyPts.split(" ").join(" L")} L${W},215 Z`} fill="url(#home-tyfill)" />
+        <polyline points={lyPts} fill="none" stroke="#6f7f77" strokeWidth="2" strokeDasharray="5 5" vectorEffect="non-scaling-stroke" />
+        <polyline points={tyPts} fill="none" stroke="#6abc46" strokeWidth="2.5" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+        {hoverMonth !== null && <line x1={X(hoverMonth)} y1="10" x2={X(hoverMonth)} y2="215" stroke="#8fd16f" strokeOpacity="0.45" strokeWidth="1" strokeDasharray="3 4" vectorEffect="non-scaling-stroke" />}
+      </svg>
+      {/* Hover zones, one per month, plus the dots and the pop-up */}
+      <div className="absolute inset-0 overflow-hidden">
+        {t.months.map((m, i) => (
+          <div
+            key={m}
+            className="h-full cursor-crosshair"
+            style={{ position: "absolute", left: `${((i - 0.5) / 11) * 100}%`, width: `${100 / 11}%` }}
+            onMouseEnter={() => setHoverMonth(i)}
+            onClick={() => setHoverMonth(i)}
+          />
+        ))}
+      </div>
+      {hoverMonth !== null && (
+        <>
+          <span className="pointer-events-none absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-neutral-950 bg-[#6abc46] shadow-[0_0_10px_#6abc46]" style={{ left: `${(hoverMonth / 11) * 100}%`, top: Y(t.ty[hoverMonth]) }} />
+          <span className="pointer-events-none absolute h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-neutral-400" style={{ left: `${(hoverMonth / 11) * 100}%`, top: Y(t.ly[hoverMonth]) }} />
+          <div
+            className="pointer-events-none absolute top-1 z-10 w-max min-w-[190px] rounded-xl border border-[#6abc46]/40 bg-neutral-950/95 px-3.5 py-2.5 text-[12.5px] shadow-xl"
+            style={{
+              left: `${(hoverMonth / 11) * 100}%`,
+              // Beside the point, never on top of it.
+              transform: `translateX(${hoverMonth <= 5 ? "14px" : "calc(-100% - 14px)"})`,
+            }}
+          >
+            {(() => {
+              const m = t.months[hoverMonth];
+              const lyMonth = `${+m.slice(0, 4) - 1}${m.slice(4)}`;
+              const tyV = t.ty[hoverMonth];
+              // The month still going is compared with the same days last year
+              // (last year's month, split by days — it's a monthly total).
+              const partial = hoverMonth === 11 && t.partial;
+              const asOfDay = home.as_of ? +home.as_of.slice(8, 10) : 0;
+              const monthDays = new Date(Date.UTC(+m.slice(0, 4), +m.slice(5, 7), 0)).getUTCDate();
+              const lyV = partial ? (t.ly[hoverMonth] * asOfDay) / monthDays : t.ly[hoverMonth];
+              const isBest = hoverMonth === bestIdx;
+              const isLow = tyV === Math.min(...t.ty);
+              return (
+                <>
+                  <div className="mb-1 flex items-center gap-2 font-semibold text-neutral-100">
+                    {monthLabel(m)} {m.slice(0, 4)}
+                    {hoverMonth === 11 && t.partial && <span className="font-normal text-neutral-500">so far (through {fmtDay(home.as_of)})</span>}
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="flex items-center gap-1.5 text-neutral-300">
+                      <span className="inline-block h-[3px] w-3 rounded bg-[#6abc46]" />
+                      Cases sold
+                    </span>
+                    <span className="font-mono text-neutral-50">{fmtN(tyV)}</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="flex items-center gap-1.5 text-neutral-400">
+                      <span className="inline-block w-3 border-t-2 border-dashed border-neutral-500" />
+                      {partial ? `${monthLabel(lyMonth)} 1–${asOfDay}, ${lyMonth.slice(0, 4)} (est.)` : `${monthLabel(lyMonth)} ${lyMonth.slice(0, 4)}`}
+                    </span>
+                    <span className="font-mono text-neutral-300">{fmtN(lyV)}</span>
+                  </div>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <Change value={pctChange(tyV, lyV)} />
+                    <span className="text-neutral-500">vs last year</span>
+                    {isBest && <span className="rounded-full bg-[#6abc46]/15 px-2 py-0.5 text-[11px] font-semibold text-[#9edc7f]">Best month</span>}
+                    {isLow && !isBest && !partial && <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-[11px] font-semibold text-[#ffab9c]">Lowest month</span>}
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </>
+      )}
+    </div>
+    <div className="flex justify-between text-[11px] text-neutral-500">
+      {t.months.map((m, i) => (
+        <span key={m}>
+          {monthLabel(m)}
+          {i === 11 && t.partial ? "*" : ""}
+        </span>
+      ))}
+    </div>
+    <div className="flex flex-wrap gap-7 border-t border-neutral-800/70 pt-3.5">
+      <Stat value={fmtN(kpis(home, "ytd", dist).cases)} label="Cases year to date" />
+      <Stat value={fmtN(kpis(home, "ytd", dist).casesLy)} label="Same days last year" />
+      <div className="flex flex-col gap-0.5">
+        <span className="text-xl">
+          <Change value={pctChange(kpis(home, "ytd", dist).cases, kpis(home, "ytd", dist).casesLy)} />
+        </span>
+        <span className="text-[11px] text-neutral-500">Change</span>
+      </div>
+      <Stat value={fmtN(best)} label={`Best month (${monthLabel(t.months[bestIdx] ?? t.months[0])})`} />
+    </div>
+    {t.partial && <p className="text-[11px] text-neutral-500">* {monthLabel(t.months[11])} so far (through {fmtDay(home.as_of)}).</p>}
+  </section>
+  );
+}
+
 const SIZE_COLORS = ["#6abc46", "#5aa9f0", "#3fc9b0", "#f0a63c", "#a08cf0", "#ef8fb0", "#e0c45a", "#7d8782"];
 
-function Stat({ value, label, color }: { value: string; label: string; color?: string }) {
+export function Stat({ value, label, color }: { value: string; label: string; color?: string }) {
   return (
     <div className="flex flex-col gap-0.5">
       <span className="font-mono text-2xl font-light" style={{ color: color ?? "#f2f7f0" }}>

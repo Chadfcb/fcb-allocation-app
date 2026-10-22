@@ -38,7 +38,8 @@ export type SectionKey =
   | "accounts"
   | "football_pos"
   | "tanks"
-  | "sales_dashboard";
+  | "sales_dashboard"
+  | "my_territory";
 
 // Ernie AI is deliberately its own grantable section, separate from every
 // page section above — an admin may want someone to have, say, Purchase
@@ -85,6 +86,7 @@ export type GroupKey =
   | "pos_labels"
   | "tanks"
   | "sales_dashboard"
+  | "my_territory"
   | "tasks"
   | "audit_log";
 
@@ -196,6 +198,17 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
     key: "sales_dashboard",
     label: "Sales Dashboard",
     items: [{ key: "sales_dashboard", label: "Sales Dashboard" }],
+  },
+  {
+    // My Territory (under MAIN, below Sales Dashboard) — a rep's own daily
+    // dashboard, added 2026-10-21 per Chad ("a Matagrano dashboard
+    // specifically for Steve"). Shows only the distributor(s) set as that
+    // person's Territory on this same Users > Edit panel (rep_territories);
+    // admins can look at any distributor. Report functions check
+    // sales_can_see() in sql/my_territory.sql.
+    key: "my_territory",
+    label: "My Territory",
+    items: [{ key: "my_territory", label: "My Territory" }],
   },
   {
     key: "tasks",

@@ -45,7 +45,9 @@ export interface ActionData {
 const BTN = "rounded-md border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-800 disabled:opacity-50";
 
 // Loads the list. Lives in SalesDashboardClient so the tab name can show the count.
-export function useActionItems(supabase: Supa, ov: DashOverview | null, resolved: Resolved | null, version: number): ActionData {
+// onlyDist (My Territory, 2026-10-21): just that distributor's stores — a rep
+// can only ask for their own.
+export function useActionItems(supabase: Supa, ov: DashOverview | null, resolved: Resolved | null, version: number, onlyDist: string | null = null): ActionData {
   const chains = useMemo(() => {
     if (!ov || !resolved) return [];
     const ours = new Set(ov.chains.map((c) => c.chain));
@@ -64,7 +66,7 @@ export function useActionItems(supabase: Supa, ov: DashOverview | null, resolved
       const rows: ActionRow[] = [];
       let asOf: string | null = null;
       for (const chain of chainsKey ? chainsKey.split("\u0001") : []) {
-        const { data: res, error } = await supabase.rpc("sales_gap_by_store", { p_chain: chain, p_distributor: null });
+        const { data: res, error } = await supabase.rpc("sales_gap_by_store", { p_chain: chain, p_distributor: onlyDist });
         if (cancelled) return;
         if (error) {
           setData({ rows: [], asOf: null, err: error.message });
@@ -132,7 +134,7 @@ export function useActionItems(supabase: Supa, ov: DashOverview | null, resolved
     return () => {
       cancelled = true;
     };
-  }, [supabase, resolved, chainsKey, version]);
+  }, [supabase, resolved, chainsKey, version, onlyDist]);
 
   return { ...data, chains };
 }

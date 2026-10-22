@@ -248,7 +248,9 @@ as $$
 declare
   result json;
 begin
-  if not public.has_section(auth.uid(), 'sales_dashboard') then
+  -- Sales Dashboard, or My Territory (a rep's page — 2026-10-21; chain lists
+  -- only, no sales numbers per store here).
+  if not (public.has_section(auth.uid(), 'sales_dashboard') or public.has_section(auth.uid(), 'my_territory')) then
     raise exception 'You don''t have access to the Sales Dashboard.';
   end if;
 
@@ -317,7 +319,8 @@ declare
   result json;
   v_as_of date;
 begin
-  if not public.has_section(auth.uid(), 'sales_dashboard') then
+  -- My Territory users (2026-10-21) only for their own distributor(s).
+  if not public.sales_can_see(case when p_distributor is null then null else array[p_distributor] end) then
     raise exception 'You don''t have access to the Sales Dashboard.';
   end if;
   select as_of into v_as_of from public.sales_data_meta where id = 1;

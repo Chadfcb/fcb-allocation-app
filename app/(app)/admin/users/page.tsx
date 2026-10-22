@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import type { Profile, Role } from "@/lib/types/db";
 import { firstNameFor } from "@/lib/displayName";
+import { CURRENT_DISTRIBUTORS } from "@/lib/salesAccounts";
 import {
   GROUP_KEYS,
   GROUP_LABEL,
@@ -13,7 +14,8 @@ import {
   type GroupKey,
 } from "@/lib/permissions";
 
-type UserRow = Profile & { sections: AnySectionKey[] };
+// territories: My Territory distributor(s) — rep_territories (2026-10-21).
+type UserRow = Profile & { sections: AnySectionKey[]; territories: string[] };
 
 // Administrator / Manager / Employee tiering — added 2026-09-09, per Chad.
 // Deliberately NOT a database enum: it's just role + is_super_admin viewed
@@ -287,6 +289,9 @@ export default function UsersPage() {
   // went through it, so it has no name on file and nothing anywhere let
   // that be fixed after the fact. This is that fix.
   const [editFullName, setEditFullName] = useState("");
+  // My Territory (2026-10-21): which distributor(s) this person's My
+  // Territory page shows. Only used when the My Territory toggle is on.
+  const [editTerritories, setEditTerritories] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   // Remove access / Restore (2026-10-19).
   const [removing, setRemoving] = useState<string | null>(null);
@@ -294,10 +299,15 @@ export default function UsersPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [{ data: profiles }, { data: grants }] = await Promise.all([
+    const [{ data: profiles }, { data: grants }, { data: terr }] = await Promise.all([
       supabase.from("profiles").select("*").order("created_at"),
       supabase.from("user_section_access").select("user_id, section_key"),
+      supabase.from("rep_territories").select("user_id, distributor"),
     ]);
+    const terrByUser = new Map<string, string[]>();
+    for (const t of (terr ?? []) as { user_id: string; distributor: string }[]) {
+      terrByUser.set(t.user_id, [...(terrByUser.get(t.user_id) ?? []), t.distributor]);
+    }
 
     const sectionsByUser = new Map<string, AnySectionKey[]>();
     for (const g of grants ?? []) {
@@ -310,6 +320,7 @@ export default function UsersPage() {
       ((profiles as Profile[]) ?? []).map((p) => ({
         ...p,
         sections: sectionsByUser.get(p.id) ?? [],
+        territories: terrByUser.get(p.id) ?? [],
       })),
     );
     setLoading(false);
@@ -343,6 +354,7 @@ export default function UsersPage() {
     setEditTier(tierOf(user.role, user.is_super_admin));
     setEditSections(groupStateFromSections(user.sections));
     setEditFullName(user.full_name ?? "");
+    setEditTerritories(user.territories);
   }
 
   async function handleSaveEdit(userId: string) {
@@ -369,6 +381,11 @@ export default function UsersPage() {
         .eq("id", userId);
       const desired = editTier === "administrator" ? [] : expandGroupState(editSections);
       await saveSections(userId, desired);
+      // My Territory distributor(s): replace this person's rows.
+      await supabase.from("rep_territories").delete().eq("user_id", userId);
+      if (desired.includes("my_territory") && editTerritories.length) {
+        await supabase.from("rep_territories").insert(editTerritories.map((distributor) => ({ user_id: userId, distributor, updated_by: viewerId })));
+      }
       setEditingId(null);
       await load();
     } finally {
@@ -671,6 +688,30 @@ export default function UsersPage() {
                             state={editSections}
                             onToggle={(key, checked) => setEditSections((prev) => ({ ...prev, [key]: checked }))}
                           />
+
+                          {editTier !== "administrator" && editSections.my_territory && (
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-neutral-400">Territory (My Territory page)</label>
+                              <div className="flex flex-wrap gap-2">
+                                {CURRENT_DISTRIBUTORS.map((d) => {
+                                  const on = editTerritories.includes(d);
+                                  return (
+                                    <button
+                                      key={d}
+                                      type="button"
+                                      onClick={() => setEditTerritories((prev) => (on ? prev.filter((x) => x !== d) : [...prev, d]))}
+                                      className={`rounded-md border px-3 py-1.5 text-sm ${on ? "border-white bg-white text-black" : "border-neutral-700 text-neutral-300 hover:bg-neutral-900"}`}
+                                    >
+                                      {d}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                              <p className="mt-1 text-xs text-neutral-500">
+                                Their My Territory page shows only these distributors{editTerritories.length ? "" : " — pick at least one"}.
+                              </p>
+                            </div>
+                          )}
 
                           <div className="flex items-center justify-end gap-2 pt-1">
                             {user.id !== viewerId && (tier === "employee" || viewerIsSuperAdmin) && (
