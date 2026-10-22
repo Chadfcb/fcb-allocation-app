@@ -173,7 +173,7 @@ const NEW_SIDEBAR_IDS: string[] = [
 const FINANCE_STORAGE_KEY = "fcb-sidebar-finance-expanded";
 const OPERATIONS_STORAGE_KEY = "fcb-sidebar-operations-expanded";
 const SALES_STORAGE_KEY = "fcb-sidebar-sales-expanded";
-// Distributors (2026-10-22) — one page per distributor, right below Sales.
+// Distributors (2026-10-22) — one page per distributor, in Main below Sales Dashboard.
 const DISTRIBUTORS_STORAGE_KEY = "fcb-sidebar-distributors-expanded";
 const CALENDARS_STORAGE_KEY = "fcb-sidebar-calendars-expanded";
 const ERNIE_STORAGE_KEY = "fcb-sidebar-ernie-expanded";
@@ -780,14 +780,14 @@ export default function Sidebar({
     ...(showUpcTree ? ["section:upcs", ...upcDescendantIds()] : []),
   ];
 
-  const showMainGroup = role === "admin" || showErnie || showTasks || can("tanks") || can("sales_dashboard");
+  const showMainGroup =
+    role === "admin" || showErnie || showTasks || can("tanks") || can("sales_dashboard") || visibleDistributors.length > 0;
   const showDepartments =
     visibleFinance.length > 0 ||
     visibleOperations.length > 0 ||
     showPosTree ||
     showUpcTree ||
     visibleSales.length > 0 ||
-    visibleDistributors.length > 0 ||
     showPosSection ||
     visibleCalendars.length > 0;
 
@@ -902,6 +902,45 @@ export default function Sidebar({
                       Sales Dashboard
                       {showsNew("/sales-dashboard") && <NewBadge />}
                     </Link>
+                  )}
+
+                  {/* Distributors (2026-10-22, per Chad) — one page per
+                      distributor; each page is its own access checkbox, so a
+                      rep sees only theirs. In Main, below Sales Dashboard and
+                      above Ernie AI (moved from Departments 10/22, per Chad). */}
+                  {visibleDistributors.length > 0 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          toggleDistributors();
+                          dismissNew("section:distributors");
+                        }}
+                        className={parentClass(distributorsExpanded)}
+                      >
+                        <IconTruck />
+                        Distributors
+                        {parentRight(
+                          sectionShowsNew("section:distributors", visibleDistributors.map((link) => link.href)),
+                          distributorsExpanded,
+                        )}
+                      </button>
+                      {distributorsExpanded && (
+                        <div className="fcb-nav-sub-group">
+                          {visibleDistributors.map((link) => (
+                            <Link
+                              key={link.href}
+                              href={link.href}
+                              className={linkClass(link.href)}
+                              onClick={() => dismissNew(link.href)}
+                            >
+                              {link.label}
+                              {showsNew(link.href) && <NewBadge />}
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </>
                   )}
 
                   {showErnie && (
@@ -1107,44 +1146,6 @@ export default function Sidebar({
                       {salesExpanded && (
                         <div className="fcb-nav-sub-group">
                           {visibleSales.map((link) => (
-                            <Link
-                              key={link.href}
-                              href={link.href}
-                              className={linkClass(link.href)}
-                              onClick={() => dismissNew(link.href)}
-                            >
-                              {link.label}
-                              {showsNew(link.href) && <NewBadge />}
-                            </Link>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {/* Distributors (2026-10-22, per Chad) — one page per
-                      distributor, right below Sales; each page is its own
-                      access checkbox, so a rep sees only theirs. */}
-                  {visibleDistributors.length > 0 && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          toggleDistributors();
-                          dismissNew("section:distributors");
-                        }}
-                        className={parentClass(distributorsExpanded)}
-                      >
-                        <IconTruck />
-                        Distributors
-                        {parentRight(
-                          sectionShowsNew("section:distributors", visibleDistributors.map((link) => link.href)),
-                          distributorsExpanded,
-                        )}
-                      </button>
-                      {distributorsExpanded && (
-                        <div className="fcb-nav-sub-group">
-                          {visibleDistributors.map((link) => (
                             <Link
                               key={link.href}
                               href={link.href}
