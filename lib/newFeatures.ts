@@ -21,6 +21,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { DISTRIBUTOR_PAGES, distributorHref } from "@/lib/distributorPages";
 
 export interface NewFeature {
   id: string; // unique, prefixed "feature:"
@@ -30,6 +31,14 @@ export interface NewFeature {
 }
 
 export const NEW_FEATURES: NewFeature[] = [
+  // Account search on every distributor page (one entry per page, so each
+  // page's sidebar link lights up).
+  ...DISTRIBUTOR_PAGES.map((d) => ({
+    id: `feature:dist-account-search-${d.slug}`,
+    page: distributorHref(d.slug),
+    label: `${d.name} page: Search accounts box above the stock block (opens the account pop-up)`,
+    added: "2026-10-22",
+  })),
   {
     id: "feature:dashboard-po-popup",
     page: "/dashboard",

@@ -22,6 +22,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { useNewFeature } from "@/lib/newFeatures";
+import NewBadge from "@/components/NewBadge";
 import { useActionItems, type ActionRow } from "@/components/SalesActionItems";
 import {
   CARD,
@@ -483,7 +485,10 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
               </div>
             </section>
 
-            <section className={`${CARD} flex min-w-0 flex-[1_1_420px] flex-col gap-3`}>
+            {/* Account search (2026-10-22, per Chad) sits right above the stock block. */}
+            <div className="flex min-w-0 flex-[1_1_420px] flex-col gap-4">
+            <AccountSearch supabase={supabase} dist={dist} onPick={(id) => setOpenId(id)} />
+            <section className={`${CARD} flex min-w-0 flex-1 flex-col gap-3`}>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-[15px] font-semibold text-neutral-100">Stock at {dist}</h2>
@@ -523,6 +528,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
               </div>
               {!(stock?.inventory ?? []).length && <p className={`text-[13px] ${MUTED}`}>Nothing to show yet.</p>}
             </section>
+            </div>
           </div>
 
           {/* Period + follow-ups */}
@@ -844,6 +850,136 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
 }
 
 // One account's details (reps don't have Sales → Accounts).
+// Account search (2026-10-22, per Chad): type part of an account name, store
+// number ("#667"), city or address → this distributor's matching accounts →
+// pick one → the same account pop-up as anywhere else on the page. Searches
+// only this distributor's accounts (sales_territory_search checks access).
+function AccountSearch({ supabase, dist, onPick }: { supabase: ReturnType<typeof createClient>; dist: string; onPick: (outletId: string) => void }) {
+  const slug = dist.toLowerCase().trim().replace(/\s+/g, "-");
+  const searchNew = useNewFeature(`feature:dist-account-search-${slug}`);
+  const [q, setQ] = useState("");
+  const [rows, setRows] = useState<SearchRow[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(0);
+
+  useEffect(() => {
+    const term = q.trim();
+    // Under 2 letters: nothing to search (the list only shows from 2 letters).
+    if (term.length < 2) return;
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const { data, error } = await supabase.rpc("sales_territory_search", { p_dist: dist, p_q: term });
+      if (cancelled) return;
+      if (error) {
+        setErr(error.message);
+        setRows([]);
+      } else {
+        setErr(null);
+        setRows((data as SearchRow[]) ?? []);
+        setHi(0);
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [supabase, dist, q]);
+
+  const pick = (r: SearchRow) => {
+    onPick(r.outlet_id);
+    setOpen(false);
+    searchNew.dismiss();
+  };
+
+  return (
+    <section className={`${CARD} relative flex flex-col gap-2`}>
+      <div className="flex items-center gap-2">
+        <h2 className="text-[15px] font-semibold text-neutral-100">Search accounts</h2>
+        {searchNew.isNew && <NewBadge inline />}
+      </div>
+      <div className="relative">
+        <svg viewBox="0 0 24 24" className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m20 20-3.5-3.5" />
+        </svg>
+        <input
+          type="search"
+          value={q}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          onKeyDown={(e) => {
+            if (!rows?.length) return;
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setHi((h) => Math.min(h + 1, rows.length - 1));
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setHi((h) => Math.max(h - 1, 0));
+            } else if (e.key === "Enter") {
+              e.preventDefault();
+              if (rows[hi]) pick(rows[hi]);
+            } else if (e.key === "Escape") {
+              setOpen(false);
+            }
+          }}
+          placeholder={`Account name, #store, city or address — ${dist} accounts`}
+          aria-label={`Search ${dist} accounts`}
+          className="w-full rounded-lg border border-neutral-700 bg-neutral-900 py-2 pl-9 pr-3 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-[#6abc46] focus:outline-none"
+        />
+        {open && q.trim().length >= 2 && rows && (
+          <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-[320px] overflow-y-auto rounded-lg border border-neutral-700 bg-neutral-950 shadow-2xl">
+            {err ? (
+              <p className="px-3 py-2 text-sm text-red-300">{err}</p>
+            ) : rows.length === 0 ? (
+              <p className={`px-3 py-2 text-sm ${MUTED}`}>No {dist} accounts match &ldquo;{q.trim()}&rdquo;.</p>
+            ) : (
+              rows.map((r, i) => (
+                <button
+                  key={r.outlet_id}
+                  type="button"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onMouseEnter={() => setHi(i)}
+                  onClick={() => pick(r)}
+                  className={`flex w-full flex-col gap-0.5 px-3 py-2 text-left ${i === hi ? "bg-neutral-800" : "hover:bg-neutral-900"}`}
+                >
+                  <span className="flex items-center gap-2 text-sm text-neutral-100">
+                    {r.name}
+                    {r.is_off && <span className="rounded bg-neutral-700 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-neutral-300">turned off</span>}
+                  </span>
+                  <span className={`text-[12px] ${MUTED}`}>
+                    {[
+                      r.city,
+                      r.premise === "On" ? "On-premise" : r.premise === "Off" ? "Off-premise" : null,
+                      r.last_buy_date ? `last order ${fmtDay(r.last_buy_date)}` : "no orders on record",
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+interface SearchRow {
+  outlet_id: string;
+  name: string;
+  city: string | null;
+  address: string | null;
+  premise: string | null;
+  last_buy_date: string | null;
+  is_off: boolean;
+}
+
 function AccountPopup({ supabase, outletId, onClose }: { supabase: ReturnType<typeof createClient>; outletId: string; onClose: () => void }) {
   const [d, setD] = useState<AccountDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
