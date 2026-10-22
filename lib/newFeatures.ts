@@ -31,6 +31,12 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    id: "feature:dashboard-po-popup",
+    page: "/dashboard",
+    label: "Dashboard > Open Purchase Orders: click a PO to see its items, amounts and comment",
+    added: "2026-10-22",
+  },
+  {
     id: "feature:dashboard-order-popup",
     page: "/dashboard",
     label: "Dashboard > Distributor Order Values: click an order to see its items and amounts (delivered orders also show their delivery date)",
