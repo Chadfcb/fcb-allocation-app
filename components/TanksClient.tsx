@@ -64,7 +64,7 @@ interface TankInfo {
 // Tanks beta build number: v1.xx, xx = main Tanks changes so far, preview + site
 // (Chad, 2026-10-05: count every main change, not just pushes). Full list of the
 // first 25 in the project doc claude/tank-view-direction.md. Add 1 per main change.
-const TANKS_BUILD = "1.40";   // 40 Status rows zoom the camera to the tank's label + Back to cellar view, 39 Status section at the top (action items / in progress / ready + packaging), 38 label rack (rolls of 2,000 by product, steel shelves), 37 count windows sized by distance (no overlap), 36 count windows over the pallets, 35 can + lid pallets, 34 keg pallets (1/2 + 1/6 bbl, Packaging Inventory On Hand), 26 walking guy + take control, 27 Shift run + Space jump, 28 overdue warning signs, 29 Ekos tank sync, 30 See Batch Details popup, 31 W A S D free-roam camera, 32 click tanks in first person, 33 admin preview controls + demo tag
+const TANKS_BUILD = "1.41";   // 41 tank details card + Back button drawn above the pallet count windows, 40 Status rows zoom the camera to the tank's label + Back to cellar view, 39 Status section at the top (action items / in progress / ready + packaging), 38 label rack (rolls of 2,000 by product, steel shelves), 37 count windows sized by distance (no overlap), 36 count windows over the pallets, 35 can + lid pallets, 34 keg pallets (1/2 + 1/6 bbl, Packaging Inventory On Hand), 26 walking guy + take control, 27 Shift run + Space jump, 28 overdue warning signs, 29 Ekos tank sync, 30 See Batch Details popup, 31 W A S D free-roam camera, 32 click tanks in first person, 33 admin preview controls + demo tag
 
 const STATUS_PILL: Record<string, { bg: string; fg: string }> = {
   Fermenting: { bg: "rgba(255,153,0,0.18)", fg: "#FFC266" },
@@ -293,7 +293,7 @@ export default function TanksClient({
           <button
             type="button"
             onClick={backToCellar}
-            className={`absolute left-3.5 ${changed ? "top-12" : "top-3"} inline-flex items-center rounded-full px-3.5 py-1.5 text-[13px] font-semibold`}
+            className={`absolute left-3.5 ${changed ? "top-12" : "top-3"} z-[6] inline-flex items-center rounded-full px-3.5 py-1.5 text-[13px] font-semibold`}
             style={{
               color: "#F2F7F0",
               background: "linear-gradient(90deg, var(--hl-strong, rgba(106,188,70,0.28)), var(--hl-soft, rgba(106,188,70,0.10))), rgba(8,11,10,0.72)",
@@ -309,9 +309,12 @@ export default function TanksClient({
         </div>
 
         {selected && (
+          // z-[6] (2026-10-23): above the pallet count windows (z 2), hover snapshot (3) and the
+          // walking guy's card (4) — they were covering the card's bottom / See Batch Details.
+          // The See Batch Details popup itself is z-10.
           <aside
             aria-live="polite"
-            className="absolute right-4 top-4 w-[280px] max-w-[calc(100%-32px)] rounded-xl border border-neutral-700 bg-neutral-950 p-4 shadow-2xl max-sm:bottom-12 max-sm:left-3 max-sm:right-3 max-sm:top-auto max-sm:w-auto"
+            className="absolute right-4 top-4 z-[6] w-[280px] max-w-[calc(100%-32px)] rounded-xl border border-neutral-700 bg-neutral-950 p-4 shadow-2xl max-sm:bottom-12 max-sm:left-3 max-sm:right-3 max-sm:top-auto max-sm:w-auto"
           >
             <div className="flex items-start justify-between gap-2.5">
               <div>
