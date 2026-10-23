@@ -129,8 +129,12 @@ export interface PlannerData {
   lily: {
     months: string[]; // 3 full months, oldest first, + the current partial month (YYYY-MM)
     partialFactor: number; // scales the partial month to a full one
-    // ce[brand][distributor] = [m1, m2, m3, partial]
+    // ce[brand][distributor] = [m1, m2, m3, partial] — every account (used for Saccani → Mussetter)
     ce: Record<string, Record<string, number[]>>;
+    // pots[brand][distributor][pot] = [m1, m2, m3, partial] — Recurring / New / Lost accounts
+    // (60-day rules, same as the Sales Dashboard; sql/brew_planner_commitments.sql)
+    pots: Record<string, Record<string, Record<Pot, number[]>>>;
+    accounts: Record<string, Record<Pot, number>>; // [brand][pot] = accounts (measured distributors)
     kegCe: Record<string, number>; // per brand, weighted CE sold in kegs
     canCe: Record<string, number>;
   };
@@ -144,6 +148,34 @@ export interface PlannerData {
   emptyTanks: number;
   ignored: { what: string; bbl: number }[]; // rows left out on purpose (Superior's odd Ekos row …)
   fresh: { label: string; value: string; old: boolean }[];
+  commitments: Commitment[];
+  products: { id: string; name: string; base: string; brand: string }[]; // for the Add commitment form
+}
+
+export type Pot = "recurring" | "new" | "lost";
+
+// Brew Planner commitments (table brew_planner_commitments) — Chad, 2026-10-23:
+// "they have x amount of commitments, the velocity should be this, and that
+// should effect a beer, and inturn how much we should brew".
+export interface Commitment {
+  id: string;
+  account: string;
+  distributor: string | null;
+  product_id: string;
+  product: string;
+  base: string | null;
+  brand: string | null;
+  qty: number;
+  per: "week" | "month";
+  start_date: string;
+  end_date: string | null;
+  note: string | null;
+  bblPerWeek: number;
+}
+
+export function commitmentBblPerWeek(qty: number, per: "week" | "month", productName: string): number {
+  const weekly = per === "month" ? (qty * 12) / 52 : qty;
+  return weekly * bblPerUnit(productName);
 }
 
 export interface Settings {
@@ -156,6 +188,7 @@ export interface Settings {
   minBrew: number;
   recentWeight: number;
   saccaniPct: number;
+  newPct: number; // how much of New accounts' sales to count (some won't reorder)
   lead: Record<string, number>;
 }
 
@@ -169,6 +202,7 @@ export const DEFAULT_SETTINGS: Settings = {
   minBrew: 5,
   recentWeight: 2,
   saccaniPct: 0,
+  newPct: 100,
   lead: Object.fromEntries(BASES.map((b) => [b.key, b.lead])),
 };
 
@@ -179,14 +213,21 @@ export const addDays = (x: Date, n: number) => new Date(x.getTime() + n * DAY);
 // ---------------------------------------------------------------------------
 // The math (same as the approved preview).
 // ---------------------------------------------------------------------------
-function lilyRate(D: PlannerData, S: Settings, brand: string, dist: string): number {
-  const v = D.lily.ce[brand]?.[dist];
+function rateOf(D: PlannerData, S: Settings, v: number[] | undefined): number {
   if (!v) return 0;
   const [m1, m2, m3, part] = v;
   let ce: number;
   if (m1 <= 0 && m2 <= 0) ce = (m3 + part * D.lily.partialFactor) / 2; // new distributor (Mussetter started Sept)
   else ce = (m1 + m2 + m3 * S.recentWeight) / (2 + S.recentWeight);
   return (Math.max(ce, 0) / CE_PER_BBL) * 12 / 52;
+}
+const lilyRate = (D: PlannerData, S: Settings, brand: string, dist: string) => rateOf(D, S, D.lily.ce[brand]?.[dist]);
+// A distributor's selling rate for one brand, by pot. Lost accounts aren't counted.
+function potRates(D: PlannerData, S: Settings, brand: string, dist: string) {
+  const p = D.lily.pots[brand]?.[dist];
+  // A distributor+brand that only shows up together (pots missing) falls back to all accounts as recurring.
+  if (!p) return { recurring: lilyRate(D, S, brand, dist), new: 0, lost: 0 };
+  return { recurring: rateOf(D, S, p.recurring), new: rateOf(D, S, p.new), lost: rateOf(D, S, p.lost) };
 }
 
 function shipList(D: PlannerData, dist: string, brand: string) {
@@ -214,11 +255,14 @@ function estStock(D: PlannerData, dist: string, brand: string): number {
 }
 
 export interface DistRow { dist: string; q: "Measured" | "Estimated"; rate: number; stock: number }
-export interface BrandRow { key: string; name: string; pullOff: boolean; share: number; rate: number; stock: number; weeks: number | null; kegShare: number | null; fromBatch: number }
+export interface BrandRow { key: string; name: string; pullOff: boolean; share: number; rate: number; stock: number; weeks: number | null; kegShare: number | null; fromBatch: number; accounts: Record<Pot, number> }
 export interface TankRow { tank: string; bbl: number; start: string | null; stage: string | null; label: string; ready: boolean; pkg: Date; out: number; days: number | null }
+// Where demand comes from (bbl / week). Lost isn't counted — shown so you can see what went away.
+export interface Pots { recurring: number; new: number; newCounted: number; estimated: number; commitments: number; lost: number }
+export interface Rec { action: "Brew" | "Hold"; bbl: number; why: string; need?: number; sell?: number; warn?: string | null }
 export interface Plan {
   base: BaseDef;
-  demand: number;
+  demand: number; // counted selling rate today, without commitments
   dstock: number;
   wh: number;
   inTank: number;
@@ -230,19 +274,78 @@ export interface Plan {
   brands: BrandRow[];
   tanks: TankRow[];
   proj: { day: Date; stock: number; add: number }[];
-  rec: { action: "Brew" | "Hold"; bbl: number; why: string; need?: number; sell?: number; warn?: string | null };
+  rec: Rec;
+  pots: Pots;
+  commitments: Commitment[]; // this base's commitments
+  commitNow: number; // bbl / week of commitments active at the landing date
+  recWithout: Rec | null; // the call without commitments (null when there are none)
 }
 
 export const r1 = (x: number) => (Math.round(x * 10) / 10).toFixed(1);
 export const fmtDay = (x: Date) => x.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
+// bbl of commitments between two days (each runs at bblPerWeek from start to end).
+function commitBbl(list: Commitment[], from: Date, to: Date): number {
+  let total = 0;
+  for (const c of list) {
+    const s = Math.max(from.getTime(), d(c.start_date).getTime());
+    const e = Math.min(to.getTime(), c.end_date ? d(c.end_date).getTime() + DAY : Infinity);
+    if (e > s) total += (c.bblPerWeek * (e - s)) / DAY / 7;
+  }
+  return total;
+}
+const commitAt = (list: Commitment[], day: Date) =>
+  list.filter((c) => d(c.start_date) <= day && (!c.end_date || d(c.end_date) >= day)).reduce((a, c) => a + c.bblPerWeek, 0);
+
+function decide(S: Settings, sizes: number[], y: number, demand: number, list: Commitment[], atLand: number, land: Date): Rec {
+  const cycleEnd = addDays(land, S.cycleWeeks * 7);
+  const horizonEnd = addDays(land, (S.cycleWeeks + S.targetWeeks) * 7);
+  const required = demand * (S.cycleWeeks + S.targetWeeks) + commitBbl(list, land, horizonEnd);
+  const need = (required - Math.max(atLand, 0)) / y;
+  const nextLand = atLand - demand * S.cycleWeeks - commitBbl(list, land, cycleEnd);
+  const rateNext = demand + commitAt(list, cycleEnd);
+  if (rateNext <= 0 || nextLand >= rateNext * S.safetyWeeks || need < S.minBrew) {
+    let why: string;
+    if (rateNext <= 0) why = "No sales showing.";
+    else if (nextLand >= rateNext * S.safetyWeeks)
+      why = `If you wait a cycle, there's still ${r1(nextLand)} bbl (${r1(nextLand / rateNext)} weeks) when that batch would be ready.`;
+    else why = `Short by only ${r1(Math.max(need, 0))} bbl, under the ${S.minBrew} bbl minimum.`;
+    return { action: "Hold", bbl: 0, why };
+  }
+  const rateLand = demand + commitAt(list, land);
+  let size = sizes.find((s) => s >= need) ?? sizes[sizes.length - 1];
+  let sell = ((Math.max(atLand, 0) + size * y) / rateLand) * 7;
+  let warn: string | null = null;
+  if (sell > S.maxDays) {
+    const smaller = sizes.filter((s) => s < size);
+    const down = smaller[smaller.length - 1];
+    if (down && ((Math.max(atLand, 0) + down * y) / rateLand) * 7 >= S.cycleWeeks * 7) {
+      warn = `${size} bbl would take ${Math.round(sell)} days to sell, so it went down to ${down} bbl.`;
+      size = down;
+      sell = ((Math.max(atLand, 0) + size * y) / rateLand) * 7;
+    } else warn = `Takes about ${Math.round(sell)} days to sell (limit ${S.maxDays}).`;
+  }
+  return {
+    action: "Brew",
+    bbl: size,
+    need,
+    sell,
+    warn,
+    why: `Brewed today it's ready about ${fmtDay(land)}. By then about ${r1(Math.max(atLand, 0))} bbl is left outside the tanks. You need ${r1(
+      required,
+    )} bbl to cover ${S.cycleWeeks} weeks to the next batch plus ${S.targetWeeks} weeks of stock: ${r1(need)} bbl to brew before packaging loss.`,
+  };
+}
+
 export function plan(D: PlannerData, S: Settings, base: BaseDef): Plan {
   const y = S.yieldPct / 100;
   const sizes = String(S.sizes).split(/[ ,]+/).map(Number).filter((x) => x > 0).sort((a, b) => a - b);
   const TODAY = d(D.today);
+  const newF = Math.max(0, S.newPct) / 100;
   const rowsBy = new Map<string, DistRow>();
   const brandRate: Record<string, number> = {};
   const brandStock: Record<string, number> = {};
+  const pots: Pots = { recurring: 0, new: 0, newCounted: 0, estimated: 0, commitments: 0, lost: 0 };
   const add = (dist: string, q: DistRow["q"], brand: string, r: number, st: number) => {
     brandRate[brand] = (brandRate[brand] ?? 0) + r;
     brandStock[brand] = (brandStock[brand] ?? 0) + st;
@@ -253,14 +356,30 @@ export function plan(D: PlannerData, S: Settings, base: BaseDef): Plan {
   };
   for (const br of base.brands) {
     for (const dist of MEASURED) {
-      let r = br.lily.length ? lilyRate(D, S, br.key, dist) : shipRate(D, dist, br.key);
-      if (dist === "Mussetter" && S.saccaniPct > 0) r += (lilyRate(D, S, br.key, "Saccani") * S.saccaniPct) / 100;
+      let r: number;
+      if (br.lily.length) {
+        const pr = potRates(D, S, br.key, dist);
+        pots.recurring += pr.recurring;
+        pots.new += pr.new;
+        pots.newCounted += pr.new * newF;
+        pots.lost += pr.lost;
+        r = pr.recurring + pr.new * newF;
+        if (dist === "Mussetter" && S.saccaniPct > 0) {
+          const extra = (lilyRate(D, S, br.key, "Saccani") * S.saccaniPct) / 100;
+          r += extra;
+          pots.recurring += extra;
+        }
+      } else {
+        r = shipRate(D, dist, br.key);
+        pots.estimated += r;
+      }
       const st = D.distStock[dist]?.[br.key] ?? 0;
       if (r || st) add(dist, "Measured", br.key, r, st);
     }
     for (const dist of ESTIMATED) {
       const r = shipRate(D, dist, br.key);
       const st = estStock(D, dist, br.key);
+      pots.estimated += r;
       if (r || st) add(dist, "Estimated", br.key, r, st);
     }
   }
@@ -269,6 +388,7 @@ export function plan(D: PlannerData, S: Settings, base: BaseDef): Plan {
   const dstock = rows.reduce((a, x) => a + x.stock, 0);
   const wh = base.brands.reduce((a, br) => a + (D.warehouse[br.key] ?? 0), 0);
   const lead = S.lead[base.key] ?? base.lead;
+  const list = D.commitments.filter((c) => c.base === base.key);
   const tanks: TankRow[] = D.tanks
     .filter((t) => t.base === base.key)
     .map((t) => {
@@ -284,56 +404,31 @@ export function plan(D: PlannerData, S: Settings, base: BaseDef): Plan {
     const day = addDays(TODAY, 7 * w);
     const prev = addDays(TODAY, 7 * (w - 1));
     const a = tanks.filter((t) => t.pkg <= day && t.pkg > prev).reduce((s, t) => s + t.out, 0);
-    stock += a - demand;
+    stock += a - demand - commitBbl(list, prev, day);
     proj.push({ day, stock, add: a });
     if (stock < 0 && !runout) runout = day;
   }
 
   const land = addDays(TODAY, lead);
   const arriving = tanks.filter((t) => t.pkg <= land).reduce((s, t) => s + t.out, 0);
-  const atLand = dstock + wh + arriving - (demand * lead) / 7;
-  const need = (demand * (S.cycleWeeks + S.targetWeeks) - Math.max(atLand, 0)) / y;
-  const nextLand = atLand - demand * S.cycleWeeks;
-  let rec: Plan["rec"];
-  if (demand <= 0 || nextLand >= demand * S.safetyWeeks || need < S.minBrew) {
-    let why: string;
-    if (demand <= 0) why = "No sales showing.";
-    else if (nextLand >= demand * S.safetyWeeks)
-      why = `If you wait a cycle, there's still ${r1(nextLand)} bbl (${r1(nextLand / demand)} weeks) when that batch would be ready.`;
-    else why = `Short by only ${r1(Math.max(need, 0))} bbl, under the ${S.minBrew} bbl minimum.`;
-    rec = { action: "Hold", bbl: 0, why };
-  } else {
-    let size = sizes.find((s) => s >= need) ?? sizes[sizes.length - 1];
-    let sell = ((Math.max(atLand, 0) + size * y) / demand) * 7;
-    let warn: string | null = null;
-    if (sell > S.maxDays) {
-      const smaller = sizes.filter((s) => s < size);
-      const down = smaller[smaller.length - 1];
-      if (down && ((Math.max(atLand, 0) + down * y) / demand) * 7 >= S.cycleWeeks * 7) {
-        warn = `${size} bbl would take ${Math.round(sell)} days to sell, so it went down to ${down} bbl.`;
-        size = down;
-        sell = ((Math.max(atLand, 0) + size * y) / demand) * 7;
-      } else warn = `Takes about ${Math.round(sell)} days to sell (limit ${S.maxDays}).`;
-    }
-    rec = {
-      action: "Brew",
-      bbl: size,
-      need,
-      sell,
-      warn,
-      why: `Brewed today it's ready about ${fmtDay(land)}. By then about ${r1(Math.max(atLand, 0))} bbl is left outside the tanks. You need ${r1(
-        demand * (S.cycleWeeks + S.targetWeeks),
-      )} bbl to cover ${S.cycleWeeks} weeks to the next batch plus ${S.targetWeeks} weeks of stock: ${r1(need)} bbl to brew before packaging loss.`,
-    };
-  }
+  const atLandNo = dstock + wh + arriving - (demand * lead) / 7;
+  const atLand = atLandNo - commitBbl(list, TODAY, land);
+  const rec = decide(S, sizes, y, demand, list, atLand, land);
+  const recWithout = list.length ? decide(S, sizes, y, demand, [], atLandNo, land) : null;
+  const commitNow = commitAt(list, land);
+  pots.commitments = commitNow;
 
+  // Commitments count toward their brand's share too.
+  const brandCommit: Record<string, number> = {};
+  for (const c of list) if (c.brand) brandCommit[c.brand] = (brandCommit[c.brand] ?? 0) + (commitAt([c], land) || 0);
+  const total = demand + commitNow;
   const batchOut = rec.action === "Brew" ? rec.bbl * y : 0;
   const brands: BrandRow[] =
     base.brands.length < 2
       ? []
       : base.brands.map((br) => {
-          const rate = brandRate[br.key] ?? 0;
-          const share = demand ? rate / demand : 0;
+          const rate = (brandRate[br.key] ?? 0) + (brandCommit[br.key] ?? 0);
+          const share = total ? rate / total : 0;
           const k = D.lily.kegCe[br.key] ?? 0;
           const c = D.lily.canCe[br.key] ?? 0;
           const st = brandStock[br.key] ?? 0;
@@ -347,6 +442,7 @@ export function plan(D: PlannerData, S: Settings, base: BaseDef): Plan {
             weeks: rate ? st / rate : null,
             kegShare: k + c > 0 ? k / (k + c) : null,
             fromBatch: batchOut * share,
+            accounts: D.lily.accounts[br.key] ?? { recurring: 0, new: 0, lost: 0 },
           };
         });
 
@@ -356,7 +452,7 @@ export function plan(D: PlannerData, S: Settings, base: BaseDef): Plan {
     dstock,
     wh,
     inTank: tanks.reduce((s, t) => s + t.bbl, 0),
-    cover: demand ? (dstock + wh) / demand : null,
+    cover: total ? (dstock + wh) / total : null,
     runout,
     atLand,
     land,
@@ -365,5 +461,9 @@ export function plan(D: PlannerData, S: Settings, base: BaseDef): Plan {
     tanks,
     proj,
     rec,
+    pots,
+    commitments: list,
+    commitNow,
+    recWithout,
   };
 }

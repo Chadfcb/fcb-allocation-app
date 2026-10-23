@@ -11,7 +11,10 @@ import {
   brandOfProduct,
   baseOfTank,
   distName,
+  commitmentBblPerWeek,
+  type Commitment,
   type PlannerData,
+  type Pot,
 } from "@/lib/brewPlanner";
 
 // Brew Planner (added 2026-10-23, per Chad — EXPERIMENTAL): what to brew this
@@ -44,7 +47,7 @@ async function gather(admin: Admin): Promise<PlannerData> {
   const today = isoDay(now);
 
   const [{ data: products }, { data: distributors }, { data: meta }, { data: tankRows }, { data: weeks }] = await Promise.all([
-    admin.from("products").select("id, name"),
+    admin.from("products").select("id, name, active"),
     admin.from("distributors").select("id, name"),
     admin.from("sales_data_meta").select("as_of, imported_at").order("imported_at", { ascending: false }).limit(1).maybeSingle(),
     admin.from("ekos_tanks").select("tank_name, volume_bbl, product_name, batch_title, start_date, stage, synced_at"),
@@ -63,29 +66,34 @@ async function gather(admin: Admin): Promise<PlannerData> {
   const partialFactor = daysInCur / Math.max(1, asOf.getUTCDate());
   const lilyNames = new Map<string, string>(); // LilyPad product → brand key
   for (const b of BASES) for (const br of b.brands) for (const n of br.lily) lilyNames.set(n, br.key);
-  const sales = await readAll<{ product: string; package: string | null; distributor: string; month: string; ce: number }>((f, t) =>
-    admin
-      .from("sales_account_sales")
-      .select("product, package, distributor, month, ce")
-      .gte("month", `${months[0]}-01`)
-      .in("product", [...lilyNames.keys()])
-      .order("id")
-      .range(f, t),
-  );
+  // Recurring / New / Lost accounts per product, distributor and month — one
+  // database call (sql/brew_planner_commitments.sql, same rules as the Sales Dashboard).
+  const { data: potData, error: potErr } = await admin.rpc("brew_planner_account_pots", { p_products: [...lilyNames.keys()] });
+  if (potErr) throw new Error(`Couldn't read LilyPad sales for the Brew Planner (has sql/brew_planner_commitments.sql been run?): ${potErr.message}`);
+  const pd = (potData ?? {}) as {
+    ce?: { product: string; distributor: string; pot: Pot; ym: string; keg: boolean; ce: number }[];
+    accounts?: { product: string; distributor: string; pot: Pot; n: number }[];
+  };
   const ce: PlannerData["lily"]["ce"] = {};
+  const pots: PlannerData["lily"]["pots"] = {};
+  const accounts: PlannerData["lily"]["accounts"] = {};
   const kegCe: Record<string, number> = {};
   const canCe: Record<string, number> = {};
-  for (const s of sales) {
+  for (const s of pd.ce ?? []) {
     const brand = lilyNames.get(s.product);
-    const i = months.indexOf(String(s.month).slice(0, 7));
+    const i = months.indexOf(s.ym);
     if (!brand || i < 0) continue;
     const dist = distName(s.distributor ?? "");
-    const v = ((ce[brand] ??= {})[dist] ??= [0, 0, 0, 0]);
-    v[i] += Number(s.ce) || 0;
-    if (i < 3 && dist !== "Saccani") {
-      const keg = /keg|1\/2|1\/6|bbl/i.test(s.package ?? "");
-      (keg ? kegCe : canCe)[brand] = ((keg ? kegCe : canCe)[brand] ?? 0) + (Number(s.ce) || 0);
-    }
+    const v = Number(s.ce) || 0;
+    ((ce[brand] ??= {})[dist] ??= [0, 0, 0, 0])[i] += v;
+    (((pots[brand] ??= {})[dist] ??= { recurring: [0, 0, 0, 0], new: [0, 0, 0, 0], lost: [0, 0, 0, 0] })[s.pot] ??= [0, 0, 0, 0])[i] += v;
+    if (i < 3 && dist !== "Saccani" && s.pot !== "lost") (s.keg ? kegCe : canCe)[brand] = ((s.keg ? kegCe : canCe)[brand] ?? 0) + v;
+  }
+  for (const a of pd.accounts ?? []) {
+    const brand = lilyNames.get(a.product);
+    if (!brand || !MEASURED.includes(distName(a.distributor ?? ""))) continue;
+    const row = (accounts[brand] ??= { recurring: 0, new: 0, lost: 0 });
+    row[a.pot] = (row[a.pot] ?? 0) + (Number(a.n) || 0);
   }
 
   // --- Distributor counts: each measured distributor's newest Ekos count
@@ -216,9 +224,28 @@ async function gather(admin: Admin): Promise<PlannerData> {
     { label: "Our warehouse", value: `${week?.label ?? "—"}, last updated ${when(whUpdated)}`, old: !!whUpdated && now.getTime() - new Date(whUpdated).getTime() > 8 * 864e5 },
   ];
 
+  // --- Commitments (entered on this page) + the products they can be for
+  const { data: cRows } = await admin
+    .from("brew_planner_commitments")
+    .select("id, account, distributor, product_id, qty, per, start_date, end_date, note")
+    .order("start_date", { ascending: true });
+  const commitments: Commitment[] = ((cRows ?? []) as Omit<Commitment, "product" | "base" | "brand" | "bblPerWeek">[]).map((c) => {
+    const name = prodName.get(c.product_id) ?? "?";
+    const br = brandOfProduct(name);
+    return { ...c, qty: Number(c.qty) || 0, product: name, base: br?.base ?? null, brand: br?.brand ?? null, bblPerWeek: commitmentBblPerWeek(Number(c.qty) || 0, c.per, name) };
+  });
+  const planProducts = ((products ?? []) as { id: string; name: string; active?: boolean }[])
+    .filter((p) => p.active !== false)
+    .map((p) => ({ id: p.id, name: p.name, br: brandOfProduct(p.name) }))
+    .filter((p) => p.br && bblPerUnit(p.name) > 0)
+    .map((p) => ({ id: p.id, name: p.name, base: p.br!.base, brand: p.br!.brand }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
   return {
     today,
-    lily: { months, partialFactor, ce, kegCe, canCe },
+    commitments,
+    products: planProducts,
+    lily: { months, partialFactor, ce, pots, accounts, kegCe, canCe },
     distStock,
     distCountAt,
     shipments,
