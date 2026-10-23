@@ -187,7 +187,11 @@ export async function syncEkosTanks(
     let furthest = 0;
     let dumped = false;
     let packaged = false;
+    // Tanks Status section (Chad, 2026-10-23): being packaged = a "Package: …"
+    // task that's In-Progress or Completed while the tank still has beer.
+    let packaging = false;
     for (const t of b?.tasks ?? []) {
+      if (/^\s*package\s*:/i.test(t.title) && (t.status === "Completed" || /progress/i.test(t.status))) packaging = true;
       if (t.status !== "Completed") continue;
       if (/^\s*package\s*:/i.test(t.title)) packaged = true;
       const s = resolve(t.title);
@@ -210,7 +214,8 @@ export async function syncEkosTanks(
       .filter((t) => t.status !== "Completed")
       .sort((x, y) => (x.date ?? "9999").localeCompare(y.date ?? "9999"))
       .slice(0, 40)
-      .map((t) => ({ title: norm(t.title), date: t.date, overdue: isLate(t) }));
+      // due + status added 2026-10-23 for the Tanks page Status section (due today / days overdue)
+      .map((t) => ({ title: norm(t.title), date: t.date, due: t.due, status: t.status, overdue: isLate(t) }));
 
     return {
       tank_name: m.name,
@@ -227,6 +232,7 @@ export async function syncEkosTanks(
       temp_at: cold ? null : full && latest ? latest.at : null,
       overdue: full && left.some((t) => t.overdue),
       tasks_left: full ? left : [],
+      packaging: full && packaging,
       batch_details: full && b ? batchDetails(b, kind) : null,
       synced_at: now,
     };

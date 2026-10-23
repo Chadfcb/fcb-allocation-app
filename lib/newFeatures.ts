@@ -31,6 +31,12 @@ export interface NewFeature {
 }
 
 export const NEW_FEATURES: NewFeature[] = [
+  {
+    id: "feature:tanks-status",
+    page: "/tanks",
+    label: "Tanks: Status section at the top — action items, in progress, ready to package / packaging (click a row to find the tank)",
+    added: "2026-10-23",
+  },
   // Account search on every distributor page (one entry per page, so each
   // page's sidebar link lights up).
   // All Chain Mandates / Chain Authorizations buttons on every distributor page.

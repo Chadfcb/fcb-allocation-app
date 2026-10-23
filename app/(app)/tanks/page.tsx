@@ -15,6 +15,9 @@ import TanksClient, { type LiveTank } from "@/components/TanksClient";
 // table ekos_tanks each weekday morning (claude/tank-sync-plan.md). Read here
 // on the server, after the access check, and handed to the 3D view. Until
 // the first sync has run, the page shows the Oct 3 snapshot + samples.
+//
+// Status section at the top (2026-10-23, Chad): Action items / In progress /
+// Ready to package + Packaging — components/tanks/TankStatus.tsx.
 export const dynamic = "force-dynamic";
 
 export default async function TanksPage() {
@@ -26,7 +29,7 @@ export default async function TanksPage() {
     admin
       .from("ekos_tanks")
       .select(
-        "tank_name, volume_bbl, product_code, batch_title, product_name, color, start_date, stage, yeast_in_cone, dry_hop, temp_f, temp_at, overdue, tasks_left, batch_details, synced_at",
+        "tank_name, volume_bbl, product_code, batch_title, product_name, color, start_date, stage, yeast_in_cone, dry_hop, temp_f, temp_at, overdue, tasks_left, packaging, batch_details, synced_at",
       ),
     // current week = the newest one, same as Inventory & Allocation opens to
     admin.from("weeks").select("id").order("week_start", { ascending: false }).limit(1).maybeSingle(),
@@ -89,6 +92,8 @@ export default async function TanksPage() {
         minute: "2-digit",
       }).format(new Date(newest))
     : null;
+  // Today in brewery time, for the Status section's overdue / due today (2026-10-23).
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date()); // YYYY-MM-DD
   // Preview controls under the 3D view are for admins only (Chad, 2026-10-05).
-  return <TanksClient live={live} kegs={kegs} cans={cans} lids={lids} labels={labels} syncedLabel={syncedLabel} isAdmin={profile.role === "admin"} />;
+  return <TanksClient live={live} kegs={kegs} cans={cans} lids={lids} labels={labels} syncedLabel={syncedLabel} today={today} isAdmin={profile.role === "admin"} />;
 }

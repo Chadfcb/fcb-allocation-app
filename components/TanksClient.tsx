@@ -25,6 +25,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createTankScene, type TankScene } from "./tanks/tankScene.js";
 import BatchDetails, { type BatchDetailsData } from "./tanks/BatchDetails";
 import TankPreviewControls from "./tanks/TankPreviewControls";
+import TankStatus from "./tanks/TankStatus";
 import type { TankSceneView } from "./tanks/tankScene.js";
 
 // One tank from the Ekos tank sync (table ekos_tanks, sql/ekos_tanks.sql).
@@ -42,7 +43,8 @@ export interface LiveTank {
   temp_f: number | null;
   temp_at: string | null;
   overdue: boolean;
-  tasks_left: { title: string; date: string | null; overdue: boolean }[];
+  tasks_left: { title: string; date: string | null; due?: string | null; status?: string; overdue: boolean }[];
+  packaging?: boolean | null; // being packaged (Status section, 2026-10-23)
   batch_details: BatchDetailsData | null; // "See Batch Details" (2026-10-05)
   synced_at: string;
 }
@@ -60,7 +62,7 @@ interface TankInfo {
 // Tanks beta build number: v1.xx, xx = main Tanks changes so far, preview + site
 // (Chad, 2026-10-05: count every main change, not just pushes). Full list of the
 // first 25 in the project doc claude/tank-view-direction.md. Add 1 per main change.
-const TANKS_BUILD = "1.38";   // 38 label rack (rolls of 2,000 by product, steel shelves), 37 count windows sized by distance (no overlap), 36 count windows over the pallets, 35 can + lid pallets, 34 keg pallets (1/2 + 1/6 bbl, Packaging Inventory On Hand), 26 walking guy + take control, 27 Shift run + Space jump, 28 overdue warning signs, 29 Ekos tank sync, 30 See Batch Details popup, 31 W A S D free-roam camera, 32 click tanks in first person, 33 admin preview controls + demo tag
+const TANKS_BUILD = "1.39";   // 39 Status section at the top (action items / in progress / ready + packaging), 38 label rack (rolls of 2,000 by product, steel shelves), 37 count windows sized by distance (no overlap), 36 count windows over the pallets, 35 can + lid pallets, 34 keg pallets (1/2 + 1/6 bbl, Packaging Inventory On Hand), 26 walking guy + take control, 27 Shift run + Space jump, 28 overdue warning signs, 29 Ekos tank sync, 30 See Batch Details popup, 31 W A S D free-roam camera, 32 click tanks in first person, 33 admin preview controls + demo tag
 
 const STATUS_PILL: Record<string, { bg: string; fg: string }> = {
   Fermenting: { bg: "rgba(255,153,0,0.18)", fg: "#FFC266" },
@@ -127,6 +129,7 @@ export default function TanksClient({
   lids = null,
   labels = null,
   syncedLabel = null,
+  today = new Date().toISOString().slice(0, 10),
   isAdmin = false,
 }: {
   live?: LiveTank[];
@@ -135,10 +138,12 @@ export default function TanksClient({
   lids?: number | null;
   labels?: { name: string; size: "c19" | "c16" | "c12"; onHand: number }[] | null;
   syncedLabel?: string | null;
+  today?: string; // YYYY-MM-DD, brewery time (Status section)
   isAdmin?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const snapRef = useRef<HTMLDivElement>(null);
+  const viewBoxRef = useRef<HTMLElement>(null);
   const sceneRef = useRef<TankScene | null>(null);
   const [selected, setSelected] = useState<TankInfo | null>(null);
   const [failed, setFailed] = useState(false);
@@ -216,6 +221,11 @@ export default function TanksClient({
   }, []);
 
   const closeBatch = useCallback(() => setShowBatch(false), []);
+  // Status section row clicked → pick that tank in the 3D view and bring the view into sight.
+  const findTank = useCallback((name: string) => {
+    sceneRef.current?.select(name);
+    viewBoxRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
   const full = !!selected && selected.volume > 0.05;
   const pct = selected ? Math.round((selected.volume / selected.capacity) * 100) : 0;
   const pill = (selected && STATUS_PILL[selected.status]) || STATUS_PILL.Empty;
@@ -235,7 +245,10 @@ export default function TanksClient({
         </p>
       </div>
 
+      {data.length > 0 && <TankStatus tanks={data} today={today} pills={STATUS_PILL} onPick={findTank} />}
+
       <section
+        ref={viewBoxRef}
         aria-label="3D tank view"
         className="relative overflow-hidden rounded-xl border border-neutral-800"
         style={{ height: "clamp(440px, 70vh, 780px)" }}
