@@ -1611,11 +1611,12 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
   // where the camera is looking — see updateRoam)
   const PAN_MIN = new THREE.Vector3(-75, 0.5, -48), PAN_MAX = new THREE.Vector3(150, 120, 48);   // right edge 75 → 150 ft for the keg + can pallets + label rack (2026-10-06)
   // ---------- Zoom to a tank (Chad, 2026-10-23): clicking a row in the Status section glides the
-  // camera (about 1 s) to the front of that tank at label height — close enough to read the
-  // label plate, with that tank filling most of the view and its neighbours mostly out of frame.
-  // Distance follows the tank's size and the screen shape, so 60 / 30 / 7 bbl tanks frame alike.
-  // If another tank stands between the camera and the label, it swings round the tank (up to
-  // 50°, the plate still readable) to find a clear line, or comes in closer. Dragging, scrolling
+  // camera (about 1 s) to the front of that tank — the whole tank in view (lid to floor, ~85% of
+  // the view's height since v1.42; v1.40 came in to the label and was "zooming too much"), label
+  // readable, neighbours mostly out of frame. Distance follows the tank's size and the screen
+  // shape, so 60 / 30 / 7 bbl tanks frame alike. If another tank stands between the camera and
+  // the tank, it swings round (up to 50°, the label still faces it), else rises and looks down
+  // over the tanks in front. Dragging, scrolling
   // or W A S D during the glide stops it where it is.
   let flight = null;
   const easeIO = k => (k < 0.5 ? 4*k*k*k : 1 - Math.pow(-2*k + 2, 3)/2);
@@ -1640,37 +1641,45 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
     if (fp.active) exitFP();
     const before = getView();
     select(t);
-    const gx = t.group.position.x, gz = t.group.position.z, R = t.Rft;
-    const plateY = (t.TIP + 1.15 + 0.263) * R;          // middle of the label plate (Y_CONE + half the plate)
-    // how far back: tank (+ a little air) across the narrower of the two screen directions
+    const gx = t.group.position.x, gz = t.group.position.z, R = t.Rft, H = t.Hft;
+    // v1.42 (Chad: "its zooming too much"): pull back so the WHOLE tank shows, lid to floor,
+    // filling about 85% of the view's height (and never more than ~85% of its width), aimed
+    // at its middle (the label sits just under centre). Label still readable.
     const vHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov/2));
     const hHalf = vHalf * camera.aspect;
-    // phones (tall, narrow view): the tank nearly fills the width, so the label stays readable
-    const want = Math.max(6.5, Math.min((R*(camera.aspect < 1 ? 1.2 : 1.9))/hHalf, (R*2.6)/vHalf));
-    const LOOK_DOWN = 0.12;                              // a touch above the label, looking slightly down
-    // clear line of sight: no other tank between the label and the camera
-    const clearUpTo = ang => {
-      const dx = Math.sin(ang), dz = Math.cos(ang), ox = gx + dx*R, oz = gz + dz*R;
-      let best = Infinity;
+    const aimY = H*0.5;
+    const want = Math.max((H/0.86)/2/vHalf, R/0.85/hHalf, 8);   // from the tank's centre line
+    const LOOK_DOWN = 0.12;                                       // slightly above, looking a touch down
+    // Tanks between the camera and the one picked: the line is blocked where it passes through
+    // another tank's footprint below that tank's top (+1 ft).
+    const blockersOn = (ang, dist) => {
+      const dx = Math.sin(ang), dz = Math.cos(ang), out = [];
       for (const o of tanks){
         if (o === t) continue;
-        const cx = o.group.position.x - ox, cz = o.group.position.z - oz;
-        const along = cx*dx + cz*dz; if (along <= 0) continue;
-        const off = Math.abs(cx*dz - cz*dx), rr = o.Rft + 0.8;
-        if (off < rr) best = Math.min(best, along - Math.sqrt(rr*rr - off*off));
+        const cx = o.group.position.x - gx, cz = o.group.position.z - gz;
+        const along = cx*dx + cz*dz; if (along <= R || along >= dist + o.Rft) continue;
+        // in the way = its footprint reaches into the middle half of the view at that distance
+        const off = Math.abs(cx*dz - cz*dx), rr = o.Rft + 0.5 + Math.max(0, dist - along)*hHalf*0.5;
+        if (off < rr) out.push({ s: Math.max(R, along - o.Rft), top: o.Hft + 1 });
       }
-      return best;
+      return out;
     };
-    let ang = 0, dist = want, bestRoom = -1, bestAng = 0;
+    const lineClear = (ang, dist, camY) => blockersOn(ang, dist).every(b => aimY + (camY - aimY)*b.s/dist >= b.top);
+    // 1) straight on, or swung round the tank up to 50° (the label still faces the camera)
+    let ang = null, camY = aimY + want*LOOK_DOWN;
     for (const deg of [0, 15, -15, 30, -30, 40, -40, 50, -50]){
-      const a = THREE.MathUtils.degToRad(deg), room = clearUpTo(a);
-      if (room >= want){ ang = a; dist = want; bestRoom = Infinity; break; }
-      if (room > bestRoom){ bestRoom = room; bestAng = a; }
+      const a = THREE.MathUtils.degToRad(deg);
+      if (lineClear(a, want, camY)){ ang = a; break; }
     }
-    if (bestRoom !== Infinity){ ang = bestAng; dist = Math.max(4, bestRoom - 0.5); }
+    // 2) still blocked: stay straight on and rise to look down over the tanks in front
+    if (ang === null){
+      ang = 0;
+      for (const b of blockersOn(0, want)) camY = Math.max(camY, aimY + (b.top - aimY)*want/b.s);
+    }
+    const dist = want;
     const dx = Math.sin(ang), dz = Math.cos(ang);
-    const target = new THREE.Vector3(gx + dx*R*0.6, plateY, gz + dz*R*0.6);
-    const pos = new THREE.Vector3(gx + dx*(R + dist), plateY + dist*LOOK_DOWN, gz + dz*(R + dist));
+    const target = new THREE.Vector3(gx, aimY, gz);
+    const pos = new THREE.Vector3(gx + dx*dist, camY, gz + dz*dist);
     controls.minDistance = Math.min(6, pos.distanceTo(target) - 0.1);
     flyTo({ p: pos, t: target });
     return before;
