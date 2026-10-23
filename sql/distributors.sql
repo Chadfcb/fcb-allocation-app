@@ -485,14 +485,15 @@ begin
   back := least(y0, a - 89, coalesce(c0, a));
 
   with
-  -- The three periods, this year (ty) and the same days last year (ly).
+  -- The periods (30 / 60 / 90 days, year to date, custom), this year (ty) and
+  -- the same days last year (ly). 60 days added 2026-10-22 (distributor pages).
   win as (
     select v.p, 'ty'::text as yr, v.ws, v.we
-    from (values ('30', a - 29, a), ('90', a - 89, a), ('ytd', y0, a), ('custom', c0, c1)) v(p, ws, we)
+    from (values ('30', a - 29, a), ('60', a - 59, a), ('90', a - 89, a), ('ytd', y0, a), ('custom', c0, c1)) v(p, ws, we)
     where v.ws is not null
     union all
     select v.p, 'ly', (v.ws - interval '1 year')::date, (v.we - interval '1 year')::date
-    from (values ('30', a - 29, a), ('90', a - 89, a), ('ytd', y0, a), ('custom', c0, c1)) v(p, ws, we)
+    from (values ('30', a - 29, a), ('60', a - 59, a), ('90', a - 89, a), ('ytd', y0, a), ('custom', c0, c1)) v(p, ws, we)
     where v.ws is not null
   ),
   acc as (

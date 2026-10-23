@@ -6,7 +6,9 @@
 
 import { BIG_LOST_CE, CURRENT_DISTRIBUTORS, REP_BY_DISTRIBUTOR, REPS } from "@/lib/salesAccounts";
 
-export type Period = "30" | "90" | "ytd" | "custom";
+// "60" added 2026-10-22 for the distributor pages' per-block buttons (the Sales
+// Dashboard itself still offers 30 / 90 / YTD / custom — PERIODS below).
+export type Period = "30" | "60" | "90" | "ytd" | "custom";
 // The quick picks; "custom" (a From–To range, added 2026-10-21) is its own control.
 export const PERIODS: { key: Exclude<Period, "custom">; label: string; long: string }[] = [
   { key: "30", label: "30 days", long: "Last 30 days" },

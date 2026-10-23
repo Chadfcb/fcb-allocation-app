@@ -9,7 +9,7 @@
 // Top to bottom: today's priorities (must-carry gaps, slipping accounts, big
 // losses) + the distributor's inventory (on hand, per week, weeks left, and
 // when it was last updated — from Ekos, or the uploaded file for Superior) ·
-// period buttons (30 / 90 / YTD / custom dates) · check-ins (overall, maintenance route progress, accounts
+// account search · check-ins (overall, maintenance route progress, accounts
 // checked in with notes, route accounts not checked in yet) · follow-ups (win
 // backs, new accounts) · at a glance · cases by month · what's selling. Click
 // an account → its details in a pop-up. Lists export to Excel.
@@ -51,7 +51,7 @@ import { REP_BY_DISTRIBUTOR } from "@/lib/salesAccounts";
 import { FILE_INVENTORY_DISTRIBUTORS, NO_INVENTORY_DISTRIBUTORS } from "@/lib/distributorPages";
 import { CARRIED_DAYS, buildStoreReports, resolveLists, splitKey, statusFor, type DashOverview, type GapStore } from "@/lib/salesDashboard";
 import { loadGapStores } from "@/lib/salesGapMany";
-import { PERIODS, addDaysIso, brands, distColor, fmtDay, fmtN, kpis, pctChange, winbacksIn, type DateRange, type HomeData, type Period } from "@/lib/salesDashHome";
+import { addDaysIso, brands, distColor, fmtDay, fmtN, kpis, pctChange, periodRange, winbacksIn, type DateRange, type HomeData, type Period } from "@/lib/salesDashHome";
 
 interface StockData {
   updated_at: string | null;
@@ -132,40 +132,179 @@ function fmtStamp(ts: string): string {
 function periodStart(p: Exclude<Period, "custom">): string {
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(new Date());
   if (p === "ytd") return `${today.slice(0, 4)}-01-01`;
-  const back = p === "30" ? 29 : 89;
+  const back = p === "30" ? 29 : p === "60" ? 59 : 89;
   return new Date(Date.parse(`${today}T12:00:00Z`) - back * 86400000).toISOString().slice(0, 10);
 }
 const daysBetween = (a: string, b: string) => Math.round((Date.parse(`${b}T12:00:00Z`) - Date.parse(`${a}T12:00:00Z`)) / 86400000);
 
-export default function DistributorPageClient({ dist, viewerName }: { dist: string; viewerName: string | null }) {
-  const supabase = useMemo(() => createClient(), []);
-  const [period, setPeriod] = useState<Period>("30");
-  // Custom dates (2026-10-22, per Chad): `custom` is the applied range, the
-  // From / To boxes edit `draft` until Apply. Remembered per browser, per page.
-  const [custom, setCustom] = useState<DateRange | null>(null);
-  const [draft, setDraft] = useState<DateRange>({ from: "", to: "" });
-  const [showCustom, setShowCustom] = useState(false);
-  const prefKey = `fcb-dist-period-${dist}`;
+// ---------------------------------------------------------------------------
+// Per-block date buttons (2026-10-22, per Chad: "move the date selector into
+// each block, and have each block change with those buttons, instead of one
+// button for all" — "30 60 90 year to date custom"). Each block (Check-ins,
+// Follow up, At a glance, What's selling) has its own choice, remembered per
+// browser per page per block. 30 / 60 / 90 / YTD come with the page's main
+// sales load; a custom range in a sales block loads its own numbers.
+// ---------------------------------------------------------------------------
+type BlockKey = "ck" | "fu" | "gl" | "ws";
+interface BlockPeriod {
+  period: Period;
+  custom: DateRange | null;
+}
+const DIST_PERIODS: { key: Exclude<Period, "custom">; label: string; long: string }[] = [
+  { key: "30", label: "30 days", long: "Last 30 days" },
+  { key: "60", label: "60 days", long: "Last 60 days" },
+  { key: "90", label: "90 days", long: "Last 90 days" },
+  { key: "ytd", label: "Year to date", long: "Year to date" },
+];
+const DEFAULT_BP: BlockPeriod = { period: "30", custom: null };
+
+function useBlockPeriod(dist: string, block: BlockKey): [BlockPeriod, (bp: BlockPeriod) => void] {
+  const key = `fcb-dist-period-${dist}-${block}`;
+  const [bp, setBp] = useState<BlockPeriod>(DEFAULT_BP);
   useEffect(() => {
     try {
-      const s = JSON.parse(localStorage.getItem(prefKey) ?? "{}") as { period?: Period; custom?: DateRange };
+      const s = JSON.parse(localStorage.getItem(key) ?? "{}") as Partial<BlockPeriod>;
       if (s.period === "custom" && s.custom?.from && s.custom?.to) {
         // eslint-disable-next-line react-hooks/set-state-in-effect -- restore the remembered choice
-        setCustom(s.custom);
-        setDraft(s.custom);
-        setPeriod("custom");
-      } else if (s.period && s.period !== "custom") setPeriod(s.period);
+        setBp({ period: "custom", custom: s.custom });
+      } else if (s.period && DIST_PERIODS.some((p) => p.key === s.period)) setBp({ period: s.period, custom: null });
     } catch {
       // ignore
     }
-  }, [prefKey]);
-  const remember = (p: Period, c: DateRange | null) => {
+  }, [key]);
+  const set = (next: BlockPeriod) => {
+    setBp(next);
     try {
-      localStorage.setItem(prefKey, JSON.stringify({ period: p, custom: p === "custom" ? c : undefined }));
+      localStorage.setItem(key, JSON.stringify(next));
     } catch {
       // ignore
     }
   };
+  return [bp, set];
+}
+
+function periodLabel(bp: BlockPeriod): string {
+  if (bp.period === "custom" && bp.custom) return `${fmtDay(bp.custom.from)} – ${fmtDay(bp.custom.to)}`;
+  return DIST_PERIODS.find((p) => p.key === bp.period)?.long ?? "Last 30 days";
+}
+
+// Sales numbers for a block's custom range (null while loading / not custom).
+// Blocks asking for the same range at the same moment share one request.
+const customHomeInFlight = new Map<string, Promise<HomeData | null>>();
+function useCustomHome(supabase: ReturnType<typeof createClient>, dist: string, bp: BlockPeriod, version: number): HomeData | null {
+  const [state, setState] = useState<{ key: string; data: HomeData | null } | null>(null);
+  const c = bp.period === "custom" ? bp.custom : null;
+  const key = c ? `${dist}|${c.from}|${c.to}|${version}` : "";
+  useEffect(() => {
+    if (!key || !c) return;
+    let cancelled = false;
+    let req = customHomeInFlight.get(key);
+    if (!req) {
+      req = Promise.resolve(supabase.rpc("sales_dash_home", { p_current: [dist], p_big: 0, p_from: c.from, p_to: c.to })).then(
+        ({ data, error }) => (error ? null : (data as HomeData)),
+        () => null,
+      );
+      customHomeInFlight.set(key, req);
+      void req.then(() => setTimeout(() => customHomeInFlight.delete(key), 10_000));
+    }
+    void req.then((data) => {
+      if (!cancelled) setState({ key, data });
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- key covers dist + range + version
+  }, [supabase, key]);
+  return state && state.key === key ? state.data : null;
+}
+
+// The buttons drawn in each block's header.
+function PeriodPicker({ value, onChange, asOf, salesNote }: { value: BlockPeriod; onChange: (bp: BlockPeriod) => void; asOf: string | null; salesNote?: boolean }) {
+  const [showCustom, setShowCustom] = useState(false);
+  const [draft, setDraft] = useState<DateRange>(value.custom ?? { from: "", to: "" });
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {DIST_PERIODS.map((p) => (
+        <Pill
+          key={p.key}
+          on={value.period === p.key && !showCustom}
+          onClick={() => {
+            setShowCustom(false);
+            onChange({ period: p.key, custom: null });
+          }}
+        >
+          {p.label}
+        </Pill>
+      ))}
+      <Pill
+        on={value.period === "custom" || showCustom}
+        onClick={() => {
+          if (!showCustom && !draft.from) {
+            const to = asOf ?? "";
+            setDraft({ from: to ? addDaysIso(to, -29) : "", to });
+          }
+          setShowCustom(!showCustom);
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="18" rx="2" />
+          <path d="M16 2v4M8 2v4M3 10h18" />
+        </svg>
+        {value.period === "custom" && value.custom ? `${fmtDay(value.custom.from)} – ${fmtDay(value.custom.to)}` : "Custom dates"}
+      </Pill>
+      {showCustom && (
+        <form
+          className="flex basis-full flex-wrap items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!draft.from || !draft.to) return;
+            const r = draft.from <= draft.to ? draft : { from: draft.to, to: draft.from };
+            setDraft(r);
+            setShowCustom(false);
+            onChange({ period: "custom", custom: r });
+          }}
+        >
+          <label className={`flex items-center gap-1.5 text-[13px] ${MUTED}`}>
+            From
+            <input
+              type="date"
+              value={draft.from}
+              onChange={(e) => setDraft({ ...draft, from: e.target.value })}
+              className="min-h-9 rounded-full border border-neutral-700 bg-neutral-950 px-3 text-[13px] text-neutral-100 [color-scheme:dark]"
+            />
+          </label>
+          <label className={`flex items-center gap-1.5 text-[13px] ${MUTED}`}>
+            To
+            <input
+              type="date"
+              value={draft.to}
+              onChange={(e) => setDraft({ ...draft, to: e.target.value })}
+              className="min-h-9 rounded-full border border-neutral-700 bg-neutral-950 px-3 text-[13px] text-neutral-100 [color-scheme:dark]"
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={!draft.from || !draft.to}
+            className="inline-flex min-h-9 items-center rounded-full border border-[#6abc46]/45 bg-[#6abc46]/15 px-3.5 text-[13px] font-semibold text-neutral-50 hover:bg-[#6abc46]/25 disabled:opacity-50"
+          >
+            Apply
+          </button>
+        </form>
+      )}
+      {salesNote && value.period === "custom" && value.custom && asOf && value.custom.to > asOf && (
+        <span className="basis-full text-[11.5px] text-neutral-500">Sales numbers go through {fmtDay(asOf)} (latest sales in LilyPad).</span>
+      )}
+    </div>
+  );
+}
+
+export default function DistributorPageClient({ dist, viewerName }: { dist: string; viewerName: string | null }) {
+  const supabase = useMemo(() => createClient(), []);
+  // Each block's own date buttons (2026-10-22).
+  const [ckP, setCkP] = useBlockPeriod(dist, "ck");
+  const [fuP, setFuP] = useBlockPeriod(dist, "fu");
+  const [glP, setGlP] = useBlockPeriod(dist, "gl");
+  const [wsP, setWsP] = useBlockPeriod(dist, "ws");
   const [ov, setOv] = useState<DashOverview | null>(null);
   const [home, setHome] = useState<HomeData | null>(null);
   const [stock, setStock] = useState<StockData | null>(null);
@@ -189,7 +328,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
     // p_big 0: Must win back lists EVERY account lost in the last year (Chad,
     // 2026-10-22: "90+ day lost, all accounts"), not just 50+ case ones.
     const [h, s, o, m, pr] = await Promise.all([
-      supabase.rpc("sales_dash_home", { p_current: [dist], p_big: 0, p_from: custom?.from ?? null, p_to: custom?.to ?? null }),
+      supabase.rpc("sales_dash_home", { p_current: [dist], p_big: 0, p_from: null, p_to: null }),
       supabase.rpc("sales_territory_stock", { p_dist: dist }),
       supabase.rpc("sales_dash_overview"),
       supabase.from("sales_data_meta").select("imported_at").eq("id", 1).maybeSingle(),
@@ -207,7 +346,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
     setOv(o.data as DashOverview);
     setCheckedAt((m.data?.imported_at as string | null) ?? null);
     setVersion((v) => v + 1);
-  }, [supabase, dist, custom]);
+  }, [supabase, dist]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- load from the database
@@ -230,17 +369,17 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
     };
   }, [supabase, load, dist]);
 
-  // Check-ins follow the period buttons (counted back from today).
+  // Check-ins follow their own block's buttons (counted back from today).
   const loadCheckins = useCallback(async () => {
-    if (period === "custom" && !custom) return;
+    if (ckP.period === "custom" && !ckP.custom) return;
     const args =
-      period === "custom" && custom
-        ? { p_dist: dist, p_from: custom.from, p_to: custom.to }
-        : { p_dist: dist, p_from: periodStart(period as Exclude<Period, "custom">), p_to: null };
+      ckP.period === "custom" && ckP.custom
+        ? { p_dist: dist, p_from: ckP.custom.from, p_to: ckP.custom.to }
+        : { p_dist: dist, p_from: periodStart(ckP.period as Exclude<Period, "custom">), p_to: null };
     const { data, error } = await supabase.rpc("sales_territory_checkins", args);
     if (error) setErr(error.message);
     else setCheckins(data as CheckinData);
-  }, [supabase, dist, period, custom]);
+  }, [supabase, dist, ckP]);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- load from the database
     loadCheckins();
@@ -255,17 +394,30 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
   const attention = (home?.attention ?? []).filter((a) => a.dist === dist);
   const slip = attention.filter((a) => a.stage === "plost");
   const lost = attention.filter((a) => a.stage === "lost");
-  // Sales numbers: while the custom range is still loading, show 30 days.
-  const customReady = !!home?.periods?.some((x) => x.p === "custom");
-  const shown: Period = period === "custom" && !customReady ? "30" : period;
-  const k = home?.as_of ? kpis(home, shown, dist) : null;
-  const wins = home?.as_of ? winbacksIn(home, shown, dist) : [];
-  const newAccts = (((home as (HomeData & { new_accounts?: NewAccount[] }) | null)?.new_accounts ?? []) as NewAccount[]).filter((a) => a.dist === dist);
-  const pLabel = shown === "custom" && custom ? `${fmtDay(custom.from)} – ${fmtDay(custom.to)}` : PERIODS.find((p) => p.key === shown)!.long;
-  const topBrands = home?.as_of ? brands(home, shown, dist, 999) : [];
+  // Each sales block: its own period; a custom range uses its own loaded
+  // numbers (null = still loading → the block says "Loading these dates…").
+  const fuCustom = useCustomHome(supabase, dist, fuP, version);
+  const glCustom = useCustomHome(supabase, dist, glP, version);
+  const wsCustom = useCustomHome(supabase, dist, wsP, version);
+  const homeFor = (bp: BlockPeriod, c: HomeData | null) => (bp.period === "custom" ? (c?.as_of ? c : null) : home?.as_of ? home : null);
+  const fuHome = homeFor(fuP, fuCustom);
+  const glHome = homeFor(glP, glCustom);
+  const wsHome = homeFor(wsP, wsCustom);
+  const ckLabel = periodLabel(ckP);
+  const fuLabel = periodLabel(fuP);
+  const glLabel = periodLabel(glP);
+  const wsLabel = periodLabel(wsP);
+  const k = glHome ? kpis(glHome, glP.period, dist) : null;
+  const wins = fuHome ? winbacksIn(fuHome, fuP.period, dist) : [];
+  // New accounts whose first order falls in Follow up's period.
+  const fuRange = fuHome ? periodRange(fuHome, fuP.period) : null;
+  const newAccts = (((fuHome as (HomeData & { new_accounts?: NewAccount[] }) | null)?.new_accounts ?? []) as NewAccount[]).filter(
+    (a) => a.dist === dist && (!fuRange || (a.fb >= fuRange.from && a.fb <= fuRange.to)),
+  );
+  const topBrands = wsHome ? brands(wsHome, wsP.period, dist, 999) : [];
   const myCheckins =
-    home?.checkins && rep
-      ? home.checkins.filter((c) => c.p === shown && (c.rep ?? "").trim().toLowerCase().split(/\s+/)[0] === rep.toLowerCase()).reduce((t, c) => t + (Number(c.n) || 0), 0)
+    glHome?.checkins && rep
+      ? glHome.checkins.filter((c) => c.p === glP.period && (c.rep ?? "").trim().toLowerCase().split(/\s+/)[0] === rep.toLowerCase()).reduce((t, c) => t + (Number(c.n) || 0), 0)
       : null;
 
   const low = (stock?.inventory ?? []).filter((i) => i.per_week > 0 && (i.on_hand <= 0 || (i.weeks_left ?? 99) < 2));
@@ -291,12 +443,12 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
   const exportFollow = async () => {
     setBusy("follow");
     try {
-      if (follow === "won") await exportSheets(`${dist} - win backs - ${pLabel} - ${home?.as_of}.xlsx`, [{ name: "Win backs", title: `${dist} — win backs — ${pLabel}`, cols: COLS_WB, rows: wbRows(wins) }]);
+      if (follow === "won") await exportSheets(`${dist} - win backs - ${fuLabel} - ${home?.as_of}.xlsx`, [{ name: "Win backs", title: `${dist} — win backs — ${fuLabel}`, cols: COLS_WB, rows: wbRows(wins) }]);
       else
-        await exportSheets(`${dist} - new accounts - ${home?.as_of}.xlsx`, [
+        await exportSheets(`${dist} - new accounts - ${fuLabel} - ${home?.as_of}.xlsx`, [
           {
             name: "New accounts",
-            title: `${dist} — new accounts this year`,
+            title: `${dist} — new accounts — ${fuLabel}`,
             cols: [
               { header: "Account", key: "name", width: 32 },
               { header: "City", key: "city" },
@@ -351,7 +503,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
       const sheets: Parameters<typeof exportSheets>[1] = [
         {
           name: "Check-ins",
-          title: `${dist} check-ins — ${pLabel} (${fmtDay(checkins.from)} – ${fmtDay(checkins.to)})`,
+          title: `${dist} check-ins — ${ckLabel} (${fmtDay(checkins.from)} – ${fmtDay(checkins.to)})`,
           cols: [
             { header: "Date", key: "date", width: 11 },
             { header: "Account", key: "name", width: 32 },
@@ -394,7 +546,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
           })),
         });
       }
-      await exportSheets(`${dist} - check-ins - ${pLabel}.xlsx`, sheets);
+      await exportSheets(`${dist} - check-ins - ${ckLabel}.xlsx`, sheets);
     } finally {
       setBusy(null);
     }
@@ -549,88 +701,10 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
             </section>
           </div>
 
-          {/* Period + follow-ups */}
-          <div className="flex flex-wrap items-center gap-2">
-            {PERIODS.map((p) => (
-              <Pill
-                key={p.key}
-                on={period === p.key}
-                onClick={() => {
-                  setPeriod(p.key);
-                  setShowCustom(false);
-                  remember(p.key, null);
-                }}
-              >
-                {p.label}
-              </Pill>
-            ))}
-            <Pill
-              on={period === "custom" || showCustom}
-              onClick={() => {
-                if (!showCustom && !draft.from) {
-                  const to = home.as_of ?? "";
-                  setDraft({ from: to ? addDaysIso(to, -29) : "", to });
-                }
-                setShowCustom(!showCustom);
-              }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <rect x="3" y="4" width="18" height="18" rx="2" />
-                <path d="M16 2v4M8 2v4M3 10h18" />
-              </svg>
-              {period === "custom" && custom ? `${fmtDay(custom.from)} – ${fmtDay(custom.to)}` : "Custom dates"}
-            </Pill>
-            {showCustom && (
-              <form
-                className="flex flex-wrap items-center gap-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  if (!draft.from || !draft.to) return;
-                  const r = draft.from <= draft.to ? draft : { from: draft.to, to: draft.from };
-                  setDraft(r);
-                  setCustom(r);
-                  setPeriod("custom");
-                  remember("custom", r);
-                }}
-              >
-                <label className={`flex items-center gap-1.5 text-[13px] ${MUTED}`}>
-                  From
-                  <input
-                    type="date"
-                    value={draft.from}
-                    onChange={(e) => setDraft({ ...draft, from: e.target.value })}
-                    className="min-h-9 rounded-full border border-neutral-700 bg-neutral-950 px-3 text-[13px] text-neutral-100 [color-scheme:dark]"
-                  />
-                </label>
-                <label className={`flex items-center gap-1.5 text-[13px] ${MUTED}`}>
-                  To
-                  <input
-                    type="date"
-                    value={draft.to}
-                    onChange={(e) => setDraft({ ...draft, to: e.target.value })}
-                    className="min-h-9 rounded-full border border-neutral-700 bg-neutral-950 px-3 text-[13px] text-neutral-100 [color-scheme:dark]"
-                  />
-                </label>
-                <button
-                  type="submit"
-                  disabled={!draft.from || !draft.to}
-                  className="inline-flex min-h-9 items-center rounded-full border border-[#6abc46]/45 bg-[#6abc46]/15 px-3.5 text-[13px] font-semibold text-neutral-50 hover:bg-[#6abc46]/25 disabled:opacity-50"
-                >
-                  Apply
-                </button>
-                {period === "custom" && !customReady && <span className={`text-xs ${MUTED}`}>Loading…</span>}
-              </form>
-            )}
-            {/* Account search — moved here 2026-10-22 (Chad: "move the account
-                search to this empty area", right of the period buttons). */}
-            <div className="min-w-[260px] max-w-[760px] flex-1 sm:ml-3">
-              <AccountSearch supabase={supabase} dist={dist} onPick={(id) => setOpenId(id)} />
-            </div>
-            {period === "custom" && custom && home.as_of && custom.to > home.as_of && (
-              <span className="basis-full text-[11.5px] text-neutral-500">
-                Sales numbers go through {fmtDay(home.as_of)} (latest sales in LilyPad); check-ins go through {fmtDay(custom.to)}.
-              </span>
-            )}
+          {/* Account search (the shared date buttons that sat here moved into
+              each block, 2026-10-22). */}
+          <div className="w-full">
+            <AccountSearch supabase={supabase} dist={dist} onPick={(id) => setOpenId(id)} />
           </div>
 
           {/* Check-ins (2026-10-22): overall + maintenance route */}
@@ -639,12 +713,13 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
               <div>
                 <h2 className="text-[15px] font-semibold text-neutral-100">Check-ins</h2>
                 <p className={`text-[12.5px] ${MUTED}`}>
-                  {pLabel}
+                  {ckLabel}
                   {checkins ? ` · ${fmtDay(checkins.from)} – ${fmtDay(checkins.to)}` : ""} · visits, calls and emails logged in LilyPad at {dist} accounts
                 </p>
               </div>
               <ExportButton onClick={exportCheckins} busy={busy === "ck"} />
             </div>
+            <PeriodPicker value={ckP} onChange={setCkP} asOf={home.as_of ?? null} />
             {!checkins ? (
               <p className={`text-sm ${MUTED}`}>Loading…</p>
             ) : (
@@ -700,7 +775,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
 
                 <div className="flex flex-wrap gap-2">
                   <Pill on={ckTab === "in"} onClick={() => setCkTab("in")}>
-                    Checked in · {pLabel} <span className="font-mono opacity-80">{checkins.checkins.length}</span>
+                    Checked in · {ckLabel} <span className="font-mono opacity-80">{checkins.checkins.length}</span>
                   </Pill>
                   {routes.length > 0 && (
                     <Pill on={ckTab === "not"} onClick={() => setCkTab("not")}>
@@ -764,16 +839,17 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h2 className="text-[15px] font-semibold text-neutral-100">Follow up</h2>
-                  <p className={`text-[12.5px] ${MUTED}`}>Accounts that came back or just started — keep them buying</p>
+                  <p className={`text-[12.5px] ${MUTED}`}>{fuLabel} · accounts that came back or just started — keep them buying</p>
                 </div>
                 <ExportButton onClick={exportFollow} busy={busy === "follow"} />
               </div>
+              <PeriodPicker value={fuP} onChange={setFuP} asOf={home.as_of ?? null} salesNote />
               <div className="flex flex-wrap gap-2">
                 <Pill on={follow === "won"} onClick={() => setFollow("won")}>
-                  Won back · {pLabel} <span className="font-mono opacity-80">{wins.length}</span>
+                  Won back <span className="font-mono opacity-80">{wins.length}</span>
                 </Pill>
                 <Pill on={follow === "new"} onClick={() => setFollow("new")}>
-                  New this year <span className="font-mono opacity-80">{newAccts.length}</span>
+                  New accounts <span className="font-mono opacity-80">{newAccts.length}</span>
                 </Pill>
               </div>
               <div className="flex max-h-[380px] flex-col overflow-y-auto pr-1">
@@ -800,16 +876,26 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
                         onClick={() => setOpenId(a.outlet_id)}
                       />
                     ))}
-                {(follow === "won" ? wins.length : newAccts.length) === 0 && <p className={`py-4 text-sm ${MUTED}`}>None yet.</p>}
+                {!fuHome ? (
+                  <p className={`py-4 text-sm ${MUTED}`}>Loading these dates…</p>
+                ) : (
+                  (follow === "won" ? wins.length : newAccts.length) === 0 && <p className={`py-4 text-sm ${MUTED}`}>None in this period.</p>
+                )}
               </div>
             </section>
 
-            {k && (
-              <section className={`${CARD} flex min-w-0 flex-[1_1_420px] flex-col gap-4`}>
-                <div>
-                  <h2 className="text-[15px] font-semibold text-neutral-100">{dist} at a glance</h2>
-                  <p className={`text-[12.5px] ${MUTED}`}>{pLabel} · vs the same days last year</p>
+            <section className={`${CARD} flex min-w-0 flex-[1_1_420px] flex-col gap-4`}>
+                <div className="flex flex-col gap-3">
+                  <div>
+                    <h2 className="text-[15px] font-semibold text-neutral-100">{dist} at a glance</h2>
+                    <p className={`text-[12.5px] ${MUTED}`}>{glLabel} · vs the same days last year</p>
+                  </div>
+                  <PeriodPicker value={glP} onChange={setGlP} asOf={home.as_of ?? null} salesNote />
                 </div>
+                {!k ? (
+                  <p className={`text-sm ${MUTED}`}>Loading these dates…</p>
+                ) : (
+                <>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="flex flex-col gap-1">
                     <span className="font-mono text-[28px] font-light leading-tight text-neutral-50">{fmtN(k.cases)}</span>
@@ -830,11 +916,12 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
                 </div>
                 {rep && (
                   <div className="flex flex-wrap gap-6 border-t border-neutral-800/70 pt-3">
-                    <Stat value={myCheckins === null ? "—" : fmtN(myCheckins)} label={`${rep}'s check-ins · ${pLabel}`} />
+                    <Stat value={myCheckins === null ? "—" : fmtN(myCheckins)} label={`${rep}'s check-ins · ${glLabel}`} />
                   </div>
                 )}
+                </>
+                )}
               </section>
-            )}
           </div>
 
           {/* Trend + what's selling */}
@@ -843,8 +930,9 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
             <section className={`${CARD} flex min-w-0 flex-[1_1_360px] flex-col gap-3`}>
               <div>
                 <h2 className="text-[15px] font-semibold text-neutral-100">What&apos;s selling</h2>
-                <p className={`text-[12.5px] ${MUTED}`}>Cases by brand · {pLabel} · vs same days last year</p>
+                <p className={`text-[12.5px] ${MUTED}`}>Cases by brand · {wsLabel} · vs same days last year</p>
               </div>
+              <PeriodPicker value={wsP} onChange={setWsP} asOf={home.as_of ?? null} salesNote />
               <div className="flex max-h-[380px] flex-col gap-3 overflow-y-auto pr-1">
               {topBrands.map((b) => (
                 <div key={b.product} className="flex flex-col gap-1.5">
@@ -861,7 +949,11 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
                 </div>
               ))}
               </div>
-              {!topBrands.length && <p className={`text-sm ${MUTED}`}>No sales in this period.</p>}
+              {!wsHome ? (
+                <p className={`text-sm ${MUTED}`}>Loading these dates…</p>
+              ) : (
+                !topBrands.length && <p className={`text-sm ${MUTED}`}>No sales in this period.</p>
+              )}
             </section>
           </div>
         </>
