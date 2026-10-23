@@ -32,6 +32,12 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    id: "feature:tanks-back-to-cellar",
+    page: "/tanks",
+    label: "Tanks: clicking a Status row zooms in to that tank's label; Back to cellar view button glides back",
+    added: "2026-10-23",
+  },
+  {
     id: "feature:tanks-status",
     page: "/tanks",
     label: "Tanks: Status section at the top — action items, in progress, ready to package / packaging (click a row to find the tank)",

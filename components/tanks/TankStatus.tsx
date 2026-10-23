@@ -7,7 +7,8 @@
 //
 // All from the Ekos tank sync (table ekos_tanks) — the same rows the 3D view
 // draws. Clicking a row picks that tank in the 3D view (its details card with
-// See Batch Details) and scrolls the view into sight.
+// See Batch Details), scrolls the view into sight and glides the camera in
+// close to that tank's label (2026-10-23 — tankScene focus()).
 //
 // - Action items: every overdue task on a tank's batch (not Completed, due
 //   date before today, "Close Batch" never counts — same rule as the warning

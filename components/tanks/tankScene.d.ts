@@ -16,6 +16,11 @@ export interface TankScene {
   /** Where the camera is (to put it back after a rebuild). */
   getView: () => TankSceneView;
   setView: (view: TankSceneView | null) => void;
+  /** Glide the camera close to a tank's label and pick it (Status section, 2026-10-23).
+   *  Returns the camera position from before, for "Back to cellar view" (null if no such tank). */
+  focus: (name: string) => TankSceneView | null;
+  /** Glide the camera to a saved view (about 1 s). */
+  flyTo: (view: TankSceneView | null) => void;
 }
 
 export interface TankSceneView {

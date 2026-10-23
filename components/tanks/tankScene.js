@@ -1598,6 +1598,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
   snapEl.addEventListener('wheel', onSnapWheel);
 
   // ---------- Camera controls: left-drag turns, right-drag slides, scroll zooms ----------
+  // (focusTank / flyTo — the Status section's zoom-in — are right after the controls.)
   const controls = new OrbitControls(camera, canvas);
   controls.target.set(0, 4, 0);
   controls.enableDamping = true; controls.dampingFactor = 0.08;
@@ -1609,6 +1610,71 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
   // (top raised from 16 to 120 ft on 2026-10-05 so W A S D free roam can keep its look-at point up
   // where the camera is looking — see updateRoam)
   const PAN_MIN = new THREE.Vector3(-75, 0.5, -48), PAN_MAX = new THREE.Vector3(150, 120, 48);   // right edge 75 → 150 ft for the keg + can pallets + label rack (2026-10-06)
+  // ---------- Zoom to a tank (Chad, 2026-10-23): clicking a row in the Status section glides the
+  // camera (about 1 s) to the front of that tank at label height — close enough to read the
+  // label plate, with that tank filling most of the view and its neighbours mostly out of frame.
+  // Distance follows the tank's size and the screen shape, so 60 / 30 / 7 bbl tanks frame alike.
+  // If another tank stands between the camera and the label, it swings round the tank (up to
+  // 50°, the plate still readable) to find a clear line, or comes in closer. Dragging, scrolling
+  // or W A S D during the glide stops it where it is.
+  let flight = null;
+  const easeIO = k => (k < 0.5 ? 4*k*k*k : 1 - Math.pow(-2*k + 2, 3)/2);
+  function flyTo(view, ms = 1000){
+    if (!view) return;
+    if (fp.active) exitFP();
+    const p1 = Array.isArray(view.p) ? new THREE.Vector3().fromArray(view.p) : view.p.clone();
+    const t1 = Array.isArray(view.t) ? new THREE.Vector3().fromArray(view.t) : view.t.clone();
+    flight = { p0: camera.position.clone(), t0: controls.target.clone(), p1, t1, start: performance.now(), ms: reduce ? 1 : ms };
+  }
+  function updateFlight(now){
+    if (!flight) return;
+    const k = Math.min(1, (now - flight.start)/flight.ms), e = easeIO(k);
+    camera.position.lerpVectors(flight.p0, flight.p1, e);
+    controls.target.lerpVectors(flight.t0, flight.t1, e);
+    if (k >= 1) flight = null;
+  }
+  controls.addEventListener('start', ()=>{ flight = null; });   // the person took over
+  function focusTank(name){
+    const t = byName(name);
+    if (!t) return null;
+    if (fp.active) exitFP();
+    const before = getView();
+    select(t);
+    const gx = t.group.position.x, gz = t.group.position.z, R = t.Rft;
+    const plateY = (t.TIP + 1.15 + 0.263) * R;          // middle of the label plate (Y_CONE + half the plate)
+    // how far back: tank (+ a little air) across the narrower of the two screen directions
+    const vHalf = Math.tan(THREE.MathUtils.degToRad(camera.fov/2));
+    const hHalf = vHalf * camera.aspect;
+    // phones (tall, narrow view): the tank nearly fills the width, so the label stays readable
+    const want = Math.max(6.5, Math.min((R*(camera.aspect < 1 ? 1.2 : 1.9))/hHalf, (R*2.6)/vHalf));
+    const LOOK_DOWN = 0.12;                              // a touch above the label, looking slightly down
+    // clear line of sight: no other tank between the label and the camera
+    const clearUpTo = ang => {
+      const dx = Math.sin(ang), dz = Math.cos(ang), ox = gx + dx*R, oz = gz + dz*R;
+      let best = Infinity;
+      for (const o of tanks){
+        if (o === t) continue;
+        const cx = o.group.position.x - ox, cz = o.group.position.z - oz;
+        const along = cx*dx + cz*dz; if (along <= 0) continue;
+        const off = Math.abs(cx*dz - cz*dx), rr = o.Rft + 0.8;
+        if (off < rr) best = Math.min(best, along - Math.sqrt(rr*rr - off*off));
+      }
+      return best;
+    };
+    let ang = 0, dist = want, bestRoom = -1, bestAng = 0;
+    for (const deg of [0, 15, -15, 30, -30, 40, -40, 50, -50]){
+      const a = THREE.MathUtils.degToRad(deg), room = clearUpTo(a);
+      if (room >= want){ ang = a; dist = want; bestRoom = Infinity; break; }
+      if (room > bestRoom){ bestRoom = room; bestAng = a; }
+    }
+    if (bestRoom !== Infinity){ ang = bestAng; dist = Math.max(4, bestRoom - 0.5); }
+    const dx = Math.sin(ang), dz = Math.cos(ang);
+    const target = new THREE.Vector3(gx + dx*R*0.6, plateY, gz + dz*R*0.6);
+    const pos = new THREE.Vector3(gx + dx*(R + dist), plateY + dist*LOOK_DOWN, gz + dz*(R + dist));
+    controls.minDistance = Math.min(6, pos.distanceTo(target) - 0.1);
+    flyTo({ p: pos, t: target });
+    return before;
+  }
   controls.addEventListener('change', ()=>{
     const tg = controls.target, before = tg.clone(); tg.clamp(PAN_MIN, PAN_MAX);
     if (!tg.equals(before)) camera.position.add(tg.clone().sub(before));
@@ -1995,6 +2061,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
     if (fp.active){ roam.keys = {}; return; }
     const f = (roam.keys.w ? 1 : 0) - (roam.keys.s ? 1 : 0), r = (roam.keys.d ? 1 : 0) - (roam.keys.a ? 1 : 0);
     if (!f && !r) return;
+    flight = null;   // W A S D during a zoom-in glide stops it where it is
     camera.getWorldDirection(roamFwd);
     // The mouse turns the view around a look-at point; zoomed out, that point can be 100+ ft
     // ahead and it stops at the edge of the floor long before the camera gets in among the
@@ -2061,6 +2128,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
     updateSnapHover(performance.now());
     updateGuy(dt, tm);
     updateRoam(dt);
+    updateFlight(performance.now());
     if (!fp.active) controls.update();
     renderer.render(scene, camera);
     positionSnap();
@@ -2099,6 +2167,6 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
   // getView/setView (2026-10-05): the app's preview controls rebuild the scene with changed
   // data — they keep the camera where it was.
   const getView = () => ({ p: camera.position.toArray(), t: controls.target.toArray() });
-  const setView = v => { if (!v) return; camera.position.fromArray(v.p); controls.target.fromArray(v.t); controls.update(); };
-  return { dispose, select: t => select(t ? byName(t) : null), getView, setView };
+  const setView = v => { if (!v) return; flight = null; camera.position.fromArray(v.p); controls.target.fromArray(v.t); controls.update(); };
+  return { dispose, select: t => select(t ? byName(t) : null), getView, setView, focus: focusTank, flyTo };
 }

@@ -26,6 +26,8 @@ import { createTankScene, type TankScene } from "./tanks/tankScene.js";
 import BatchDetails, { type BatchDetailsData } from "./tanks/BatchDetails";
 import TankPreviewControls from "./tanks/TankPreviewControls";
 import TankStatus from "./tanks/TankStatus";
+import NewBadge from "./NewBadge";
+import { useNewFeature } from "@/lib/newFeatures";
 import type { TankSceneView } from "./tanks/tankScene.js";
 
 // One tank from the Ekos tank sync (table ekos_tanks, sql/ekos_tanks.sql).
@@ -62,7 +64,7 @@ interface TankInfo {
 // Tanks beta build number: v1.xx, xx = main Tanks changes so far, preview + site
 // (Chad, 2026-10-05: count every main change, not just pushes). Full list of the
 // first 25 in the project doc claude/tank-view-direction.md. Add 1 per main change.
-const TANKS_BUILD = "1.39";   // 39 Status section at the top (action items / in progress / ready + packaging), 38 label rack (rolls of 2,000 by product, steel shelves), 37 count windows sized by distance (no overlap), 36 count windows over the pallets, 35 can + lid pallets, 34 keg pallets (1/2 + 1/6 bbl, Packaging Inventory On Hand), 26 walking guy + take control, 27 Shift run + Space jump, 28 overdue warning signs, 29 Ekos tank sync, 30 See Batch Details popup, 31 W A S D free-roam camera, 32 click tanks in first person, 33 admin preview controls + demo tag
+const TANKS_BUILD = "1.40";   // 40 Status rows zoom the camera to the tank's label + Back to cellar view, 39 Status section at the top (action items / in progress / ready + packaging), 38 label rack (rolls of 2,000 by product, steel shelves), 37 count windows sized by distance (no overlap), 36 count windows over the pallets, 35 can + lid pallets, 34 keg pallets (1/2 + 1/6 bbl, Packaging Inventory On Hand), 26 walking guy + take control, 27 Shift run + Space jump, 28 overdue warning signs, 29 Ekos tank sync, 30 See Batch Details popup, 31 W A S D free-roam camera, 32 click tanks in first person, 33 admin preview controls + demo tag
 
 const STATUS_PILL: Record<string, { bg: string; fg: string }> = {
   Fermenting: { bg: "rgba(255,153,0,0.18)", fg: "#FFC266" },
@@ -155,6 +157,10 @@ export default function TanksClient({
   const viewRef = useRef<TankSceneView | null>(null);
   const keepSelected = useRef<string | null>(null);
   const changed = data !== live;
+  // Zoom to a tank from the Status section (2026-10-23): where the camera was before the
+  // first zoom, for "Back to cellar view". null = not zoomed in.
+  const [backView, setBackView] = useState<TankSceneView | null>(null);
+  const backNew = useNewFeature("feature:tanks-back-to-cellar");
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -221,11 +227,19 @@ export default function TanksClient({
   }, []);
 
   const closeBatch = useCallback(() => setShowBatch(false), []);
-  // Status section row clicked → pick that tank in the 3D view and bring the view into sight.
+  // Status section row clicked → bring the 3D view into sight and glide the camera to that
+  // tank's label (Chad, 2026-10-23), picking it (details card). Keeps the view from before the
+  // FIRST zoom, so Back to cellar view returns there even after clicking several rows.
   const findTank = useCallback((name: string) => {
-    sceneRef.current?.select(name);
     viewBoxRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const before = sceneRef.current?.focus(name) ?? null;
+    if (before) setBackView((prev) => prev ?? before);
   }, []);
+  const backToCellar = useCallback(() => {
+    backNew.dismiss();
+    sceneRef.current?.flyTo(backView);
+    setBackView(null);
+  }, [backView, backNew]);
   const full = !!selected && selected.volume > 0.05;
   const pct = selected ? Math.round((selected.volume / selected.capacity) * 100) : 0;
   const pill = (selected && STATUS_PILL[selected.status]) || STATUS_PILL.Empty;
@@ -273,6 +287,22 @@ export default function TanksClient({
           <div className="pointer-events-none absolute left-3.5 top-3 rounded-full border border-amber-500/50 bg-amber-950/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-amber-300">
             Demo — not real data
           </div>
+        )}
+        {backView && (
+          // Status section zoom (2026-10-23): glide back to where the camera was before
+          <button
+            type="button"
+            onClick={backToCellar}
+            className={`absolute left-3.5 ${changed ? "top-12" : "top-3"} inline-flex items-center rounded-full px-3.5 py-1.5 text-[13px] font-semibold`}
+            style={{
+              color: "#F2F7F0",
+              background: "linear-gradient(90deg, var(--hl-strong, rgba(106,188,70,0.28)), var(--hl-soft, rgba(106,188,70,0.10))), rgba(8,11,10,0.72)",
+              boxShadow: "inset 0 0 0 1px var(--hl-line, rgba(106,188,70,0.40)), 0 0 24px var(--hl-glow, rgba(106,188,70,0.14))",
+            }}
+          >
+            ← Back to cellar view
+            {backNew.isNew && <NewBadge inline />}
+          </button>
         )}
         <div className="pointer-events-none absolute bottom-3 left-3.5 rounded-full bg-black/60 px-2.5 py-1 text-xs text-neutral-300">
           Drag to turn · Right-click drag to slide · Scroll to zoom · W A S D to move · Click a tank
