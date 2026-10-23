@@ -39,6 +39,7 @@ export type SectionKey =
   | "accounts"
   | "football_pos"
   | "tanks"
+  | "brew_planner"
   | "sales_dashboard"
   // Distributors (2026-10-22) — one key per distributor page, from
   // lib/distributorPages.ts (dist_matagrano, dist_guardian, …).
@@ -88,6 +89,7 @@ export type GroupKey =
   | "events_calendar"
   | "pos_labels"
   | "tanks"
+  | "brew_planner"
   | "sales_dashboard"
   | "distributors"
   | "tasks"
@@ -191,6 +193,15 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
     key: "tanks",
     label: "Tanks",
     items: [{ key: "tanks", label: "Tanks" }],
+  },
+  {
+    // Brew Planner (under MAIN, below Tanks, above Distributors) — its own
+    // Users > Edit toggle, added 2026-10-23 per Chad. EXPERIMENTAL. Read-only
+    // page; reads its data on the server after the access check, so no
+    // table / RLS of its own (lib/brewPlanner.ts).
+    key: "brew_planner",
+    label: "Brew Planner",
+    items: [{ key: "brew_planner", label: "Brew Planner" }],
   },
   {
     // Sales Dashboard (under MAIN, below Tanks) — its own Users > Edit toggle,

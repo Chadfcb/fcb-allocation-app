@@ -121,6 +121,9 @@ const NEW_SIDEBAR_IDS: string[] = [
   // Tanks — new 3D tank view under MAIN, right below Dashboard (2026-10-03),
   // per Chad.
   "/tanks",
+  // Brew Planner — new page under MAIN, below Tanks, above Distributors
+  // (2026-10-23), per Chad. Experimental.
+  "/brew-planner",
   // Sales Dashboard — new page under MAIN, right below Tanks (2026-10-08),
   // per Chad.
   "/sales-dashboard",
@@ -762,6 +765,7 @@ export default function Sidebar({
     !showTasks &&
     !showAuditLog &&
     !can("tanks") &&
+    !can("brew_planner") &&
     !can("sales_dashboard") &&
     visibleFinance.length === 0 &&
     visibleOperations.length === 0 &&
@@ -781,7 +785,7 @@ export default function Sidebar({
   ];
 
   const showMainGroup =
-    role === "admin" || showErnie || showTasks || can("tanks") || can("sales_dashboard") || visibleDistributors.length > 0;
+    role === "admin" || showErnie || showTasks || can("tanks") || can("brew_planner") || can("sales_dashboard") || visibleDistributors.length > 0;
   const showDepartments =
     visibleFinance.length > 0 ||
     visibleOperations.length > 0 ||
@@ -903,6 +907,17 @@ export default function Sidebar({
                       <IconTank />
                       Tanks
                       {showsNew("/tanks") && <NewBadge />}
+                    </Link>
+                  )}
+
+                  {/* Brew Planner (2026-10-23, per Chad) — EXPERIMENTAL. What to
+                      brew and how much. Its own "Brew Planner" access (Admin →
+                      Users). Below Tanks, above Distributors. */}
+                  {can("brew_planner") && (
+                    <Link href="/brew-planner" className={topLinkClass("/brew-planner")} onClick={() => dismissNew("/brew-planner")}>
+                      <IconLayers />
+                      Brew Planner
+                      {showsNew("/brew-planner") && <NewBadge />}
                     </Link>
                   )}
 
