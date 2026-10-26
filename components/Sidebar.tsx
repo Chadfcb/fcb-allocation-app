@@ -879,7 +879,7 @@ export default function Sidebar({
                   toggleErnie();
                   dismissNew("section:ernie");
                 }}
-                className={parentClass(ernieExpanded)}
+                className={`fcb-nav-item fcb-nav-button ${pathname?.startsWith("/ernie") ? "is-active" : ""}`}
               >
                 <IconSparkle />
                 Ernie AI
