@@ -83,7 +83,7 @@ as $$
 begin
   -- One rebuild at a time (two at once could collide on the same rows).
   perform pg_advisory_xact_lock(hashtext('sales_chain_member_cache'));
-  delete from public.sales_chain_member_cache;
+  delete from public.sales_chain_member_cache where true;
   insert into public.sales_chain_member_cache (outlet_id, chain, auto_name)
   select b.outlet_id, b.chain, b.auto_name from public.sales_chain_members_build() b;
 end;
