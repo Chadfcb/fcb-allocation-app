@@ -785,7 +785,7 @@ export default function Sidebar({
   ];
 
   const showMainGroup =
-    role === "admin" || showErnie || showTasks || can("tanks") || can("brew_planner") || can("sales_dashboard") || visibleDistributors.length > 0;
+    role === "admin" || showTasks || can("tanks") || can("brew_planner") || can("sales_dashboard") || visibleDistributors.length > 0;
   const showDepartments =
     visibleFinance.length > 0 ||
     visibleOperations.length > 0 ||
@@ -868,6 +868,47 @@ export default function Sidebar({
         </div>
 
         <nav className="flex flex-col gap-5">
+          {/* Ernie AI — its own item at the very top, above Main (2026-10-26,
+              per Chad: "move Ernie AI out of the Main area, and above Main,
+              so its its own thing"). No group label. */}
+          {showErnie && (
+            <div className="flex flex-col gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  toggleErnie();
+                  dismissNew("section:ernie");
+                }}
+                className={parentClass(ernieExpanded)}
+              >
+                <IconSparkle />
+                Ernie AI
+                {parentRight(
+                  sectionShowsNew(
+                    "section:ernie",
+                    ERNIE_LINKS.map((link) => link.href),
+                  ),
+                  ernieExpanded,
+                )}
+              </button>
+              {ernieExpanded && (
+                <div className="fcb-nav-sub-group">
+                  {ERNIE_LINKS.map((link) => (
+                    <Link
+                      key={link.href}
+                      href={link.href}
+                      className={linkClass(link.href)}
+                      onClick={() => dismissNew(link.href)}
+                    >
+                      {link.label}
+                      {showsNew(link.href) && <NewBadge />}
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {showMainGroup && (
             <div className="flex flex-col gap-1.5">
               <button type="button" onClick={() => setMainOpen((v) => !v)} className="fcb-nav-label">
@@ -923,8 +964,8 @@ export default function Sidebar({
 
                   {/* Distributors (2026-10-22, per Chad) — one page per
                       distributor; each page is its own access checkbox, so a
-                      rep sees only theirs. In Main, below Sales Dashboard and
-                      above Ernie AI (moved from Departments 10/22, per Chad). */}
+                      rep sees only theirs. In Main, below Brew Planner and above
+                      Tasks (moved from Departments 10/22, per Chad). */}
                   {visibleDistributors.length > 0 && (
                     <>
                       <button
@@ -945,44 +986,6 @@ export default function Sidebar({
                       {distributorsExpanded && (
                         <div className="fcb-nav-sub-group">
                           {visibleDistributors.map((link) => (
-                            <Link
-                              key={link.href}
-                              href={link.href}
-                              className={linkClass(link.href)}
-                              onClick={() => dismissNew(link.href)}
-                            >
-                              {link.label}
-                              {showsNew(link.href) && <NewBadge />}
-                            </Link>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {showErnie && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          toggleErnie();
-                          dismissNew("section:ernie");
-                        }}
-                        className={parentClass(ernieExpanded)}
-                      >
-                        <IconSparkle />
-                        Ernie AI
-                        {parentRight(
-                          sectionShowsNew(
-                            "section:ernie",
-                            ERNIE_LINKS.map((link) => link.href),
-                          ),
-                          ernieExpanded,
-                        )}
-                      </button>
-                      {ernieExpanded && (
-                        <div className="fcb-nav-sub-group">
-                          {ERNIE_LINKS.map((link) => (
                             <Link
                               key={link.href}
                               href={link.href}
