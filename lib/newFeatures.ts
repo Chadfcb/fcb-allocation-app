@@ -32,6 +32,18 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    id: "feature:brew-planner-why",
+    page: "/brew-planner",
+    label: "Brew Planner: Why this recommendation — plain-English write-up per base beer (click a row) + one-line reason in the table",
+    added: "2026-10-26",
+  },
+  {
+    id: "feature:brew-planner-units",
+    page: "/brew-planner",
+    label: "Brew Planner: units key above Base beers, (bbl) in every column, cases + kegs under each number, hover help on headers",
+    added: "2026-10-26",
+  },
+  {
     id: "feature:inventory-record",
     page: "/inventory",
     label: "Inventory & Allocation: Our Inventory Record — Enter count, Other out, Labeled, Delivered, Count Differences, Activity",

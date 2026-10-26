@@ -4,10 +4,13 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { logChange } from "@/lib/audit";
+import { useNewFeature } from "@/lib/newFeatures";
+import NewBadge from "@/components/NewBadge";
 import {
   BASES,
   DEFAULT_SETTINGS,
   addDays,
+  bblPerUnit,
   fmtDay,
   plan,
   r1,
@@ -41,6 +44,191 @@ function mangoLine(p: Plan): string | null {
   const m = p.brands.find((b) => b.pullOff);
   if (!m || p.rec.action !== "Brew") return null;
   return `pull ~${r1(m.fromBatch)} bbl for ${m.name}`;
+}
+
+
+// ---------------------------------------------------------------------------
+// Plain-English units + "Why this recommendation" (2026-10-26, per Chad: "we
+// need an area that gives a detailed description as to why it is recommending
+// the beers to brew" / the Base beers rows — "is it cases? CE's? Barrels of
+// beer? its way to vague"). Every number on this page is bbl of finished
+// beer; these helpers turn bbl into cases + kegs and spell out the math.
+// Nothing here changes the planner's math (lib/brewPlanner.ts).
+// ---------------------------------------------------------------------------
+type Mix = { kegShare: number | null; caseBbl: number; caseWord: string };
+
+const CASE_WORDS: [number, string][] = [
+  [0.09677, "16oz cases"],
+  [0.07258, "12oz cases"],
+  [0.05806, "19.2oz cases"],
+];
+
+// This base beer's keg / can split (LilyPad, last 3 full months) and the size
+// of its cases (from its can products in the app).
+function mixFor(base: Plan["base"], data: PlannerData): Mix {
+  let k = 0;
+  let c = 0;
+  for (const br of base.brands) {
+    k += data.lily.kegCe[br.key] ?? 0;
+    c += data.lily.canCe[br.key] ?? 0;
+  }
+  const sizes = [
+    ...new Set(
+      data.products
+        .filter((x) => x.base === base.key && !/bbl/i.test(x.name))
+        .map((x) => bblPerUnit(x.name))
+        .filter((v) => v > 0),
+    ),
+  ];
+  const caseBbl = sizes.length ? sizes.reduce((a, v) => a + v, 0) / sizes.length : 0.09677;
+  const caseWord = sizes.length === 1 ? CASE_WORDS.find(([v]) => Math.abs(v - sizes[0]) < 0.001)?.[1] ?? "cases" : "cases";
+  return { kegShare: k + c > 0 ? k / (k + c) : null, caseBbl, caseWord };
+}
+
+// bbl → "≈ 33 16oz cases + 12 ½-bbl kegs" (at this beer's can / keg mix).
+function conv(bbl: number, m: Mix): string | null {
+  if (!(bbl > 0.05)) return null;
+  if (m.kegShare === null) {
+    return `≈ ${Math.round(bbl / m.caseBbl)} ${m.caseWord} or ${pl(Math.round(bbl / 0.5), "½-bbl keg", "½-bbl kegs")}`;
+  }
+  const cases = Math.round((bbl * (1 - m.kegShare)) / m.caseBbl);
+  const kegs = Math.round((bbl * m.kegShare) / 0.5);
+  const parts = [cases > 0 ? `${cases} ${m.caseWord}` : null, kegs > 0 ? pl(kegs, "½-bbl keg", "½-bbl kegs") : null].filter(Boolean);
+  return parts.length ? `≈ ${parts.join(" + ")}` : null;
+}
+const pl = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+const wks = (bbl: number, rate: number) => (rate > 0 ? r1(Math.max(bbl, 0) / rate) : "–");
+
+// One line for the table's "This cycle" column.
+function shortReason(p: Plan, S: Settings): string {
+  const r = p.rec;
+  const rate = r.rateNext ?? p.demand;
+  if (r.action === "Brew") {
+    if ((r.nextLand ?? 0) <= 0) return `Waiting ${S.cycleWeeks} more weeks, distributors would run out before the next batch is ready.`;
+    return `Waiting ${S.cycleWeeks} more weeks leaves only ${wks(r.nextLand ?? 0, rate)} weeks of beer when it's ready (needs ${S.safetyWeeks}).`;
+  }
+  if (rate <= 0) return "No sales showing.";
+  if ((r.nextLand ?? 0) >= rate * S.safetyWeeks) return `Still ${wks(r.nextLand ?? 0, rate)} weeks of beer even if you wait ${S.cycleWeeks} weeks.`;
+  return `Only ${r1(Math.max(r.need ?? 0, 0))} bbl short, under the ${S.minBrew} bbl minimum.`;
+}
+
+type Para = { head: string; text: string; tone?: "warn" };
+
+// The full write-up for one base beer, in the order the planner thinks.
+function explain(p: Plan, S: Settings, m: Mix): Para[] {
+  const out: Para[] = [];
+  const r = p.rec;
+  const lead = S.lead[p.base.key] ?? p.base.lead;
+  const y = S.yieldPct / 100;
+  const total = p.demand + p.commitNow;
+  const c = (bbl: number) => {
+    const x = conv(bbl, m);
+    return x ? ` (${x})` : "";
+  };
+
+  // 1. What's selling
+  if (p.demand <= 0 && p.commitNow <= 0) {
+    out.push({ head: "What's selling", text: "No sales are showing for this beer in LilyPad or in our deliveries, so there's nothing to plan for." });
+  } else {
+    const src: string[] = [];
+    if (p.pots.recurring > 0.05) src.push(`${r1(p.pots.recurring)} bbl from stores that buy it regularly`);
+    if (p.pots.newCounted > 0.05) src.push(`${r1(p.pots.newCounted)} bbl from new stores (first order in the last 60 days${S.newPct !== 100 ? `, counted at ${S.newPct}%` : ""})`);
+    if (p.pots.estimated > 0.05) src.push(`${r1(p.pots.estimated)} bbl estimated from what we've shipped (Superior, Coast, or beers LilyPad doesn't track)`);
+    let text = `Distributors are selling about ${r1(p.demand)} bbl a week${c(p.demand)}.`;
+    if (src.length) text += ` That's ${src.join(", ")}.`;
+    if (p.commitNow > 0.05) text += ` Commitments add ${r1(p.commitNow)} bbl a week by the time a new batch would be ready.`;
+    if (p.pots.lost > 0.05) text += ` Stores that stopped ordering (no order in 60+ days) used to buy ${r1(p.pots.lost)} bbl a week; that isn't counted.`;
+    const selling = p.brands.filter((b) => Math.round(b.share * 100) > 0);
+    if (selling.length) text += ` By brand: ${selling.map((b) => `${b.name} ${Math.round(b.share * 100)}%`).join(", ")}.`;
+    text += " Based on LilyPad store sales over the last 3 full months, with the latest month counted more.";
+    out.push({ head: "What's selling", text });
+  }
+
+  // 2. What we have now
+  {
+    const have = p.dstock + p.wh;
+    let text = `Right now there's ${r1(p.dstock)} bbl at distributors and ${r1(p.wh)} bbl in our warehouse: ${r1(have)} bbl${c(have)}`;
+    text += total > 0 ? `, about ${wks(have, total)} weeks of sales.` : ".";
+    if (p.tanks.length) {
+      text += ` In tank: ${p.tanks
+        .map((t) => `${t.tank} ${r1(t.bbl)} bbl (${t.ready ? "ready now, counted from next week" : `packaged ~${fmtDay(t.pkg)}`})`)
+        .join(", ")}. After about ${100 - S.yieldPct}% packaging loss that's ${r1(p.tanks.reduce((a, t) => a + t.out, 0))} bbl of finished beer.`;
+    } else text += " Nothing is in tank for it.";
+    const low = p.rows.filter((x) => x.rate > 0.2 && x.stock / x.rate < 2);
+    if (low.length) text += ` Running low: ${low.map((x) => `${x.dist} (${wks(x.stock, x.rate)} wks)`).join(", ")}.`;
+    out.push({ head: "What we have now", text });
+  }
+
+  if (total <= 0) return out;
+
+  // 3. When a new batch would be ready
+  {
+    const arriving = p.tanks.filter((t) => t.pkg <= p.land);
+    const arrivingBbl = arriving.reduce((a, t) => a + t.out, 0);
+    let text = `A batch brewed today would be packaged about ${fmtDay(p.land)} (${lead} days, set in Settings). Until then distributors sell about ${r1((p.demand * lead) / 7)} bbl`;
+    text += arriving.length
+      ? `, and ${arriving.map((t) => t.tank).join(" + ")} ${arriving.length === 1 ? "adds" : "add"} ${r1(arrivingBbl)} bbl when packaged.`
+      : ", and no tank packages before then.";
+    text +=
+      p.atLand > 0
+        ? ` That leaves about ${r1(p.atLand)} bbl (${wks(p.atLand, total)} weeks) on ${fmtDay(p.land)}.`
+        : ` That's ${r1(-p.atLand)} bbl short: distributors would run out before ${fmtDay(p.land)}.`;
+    out.push({ head: "When a new batch would be ready", text });
+  }
+
+  // 4. The call
+  const nextLand = r.nextLand ?? 0;
+  const rate = r.rateNext ?? total;
+  if (r.action === "Brew") {
+    let text =
+      nextLand > 0
+        ? `If you waited one more cycle (${S.cycleWeeks} weeks), the next batch would be ready with only ${r1(nextLand)} bbl left, about ${wks(nextLand, rate)} weeks. That's under the ${S.safetyWeeks}-week safety line, so brew now.`
+        : `If you waited one more cycle (${S.cycleWeeks} weeks), distributors would run out before that batch was ready, so brew now.`;
+    const required = r.required ?? 0;
+    const need = r.need ?? 0;
+    text += ` To cover the ${S.cycleWeeks} weeks until the following batch plus ${S.targetWeeks} weeks of stock takes ${r1(required)} bbl.`;
+    text +=
+      p.atLand > 0.05
+        ? ` Minus the ${r1(p.atLand)} bbl still there, that's ${r1(need * y)} bbl of finished beer, or ${r1(need)} bbl in tank at ${S.yieldPct}% yield.`
+        : ` Nothing will be left by then, so all of it has to come from this batch: ${r1(need)} bbl in tank at ${S.yieldPct}% yield.`;
+    const sizes = String(S.sizes).split(/[ ,]+/).map(Number).filter((x) => x > 0).sort((a, b) => a - b);
+    const biggest = sizes[sizes.length - 1];
+    if (r.warn && /went down/.test(r.warn)) text += ` ${r.warn}`;
+    else if (r.bbl === biggest && need > biggest) text += ` ${biggest} bbl is the largest batch size, so brew ${biggest} bbl.`;
+    else text += ` The next batch size up is ${r.bbl} bbl.`;
+    if (r.sell !== undefined) text += ` ${r.bbl} bbl${c(r.bbl * y)} lasts about ${Math.round(r.sell)} days after it's packaged.`;
+    out.push({ head: `Why brew ${r.bbl} bbl`, text });
+    const pull = p.brands.find((b) => b.pullOff);
+    const split = p.brands.filter((b) => b.fromBatch >= 0.05);
+    if (pull && pull.fromBatch >= 0.05) {
+      out.push({
+        head: "How to split the batch",
+        text: `${split.map((b) => `${b.name} ${r1(b.fromBatch)} bbl`).join(", ")}: each brand's share of sales. Pull ~${r1(pull.fromBatch)} bbl off for ${pull.name}, then can or keg it.`,
+      });
+    } else if (split.length > 1) {
+      out.push({ head: "How to split the batch", text: `${split.map((b) => `${b.name} ${r1(b.fromBatch)} bbl`).join(", ")}: each brand's share of sales.` });
+    }
+    if (r.warn && !/went down/.test(r.warn)) out.push({ head: "Watch out", text: r.warn, tone: "warn" });
+  } else {
+    let text: string;
+    if (rate <= 0) text = "No sales are showing, so there's nothing to brew for.";
+    else if (nextLand >= rate * S.safetyWeeks)
+      text = `Even if you wait one more cycle (${S.cycleWeeks} weeks), there's still ${r1(nextLand)} bbl, about ${wks(nextLand, rate)} weeks, when that batch would be ready. That's above the ${S.safetyWeeks}-week safety line, so it can wait.`;
+    else
+      text = `It would need only ${r1(Math.max(r.need ?? 0, 0))} bbl, under the ${S.minBrew} bbl smallest batch worth brewing, so it can wait a cycle.`;
+    out.push({ head: "Why hold", text });
+  }
+
+  // 5. How sure
+  {
+    const notes: string[] = [];
+    const estShare = total > 0 ? p.pots.estimated / total : 0;
+    if (estShare >= 0.25) notes.push(`${Math.round(estShare * 100)}% of the selling rate is estimated from our deliveries (no store sales data), so treat it as a rough number.`);
+    if (p.recWithout) notes.push(`Without the commitments this would be ${p.recWithout.action === "Brew" ? `brew ${p.recWithout.bbl} bbl` : "hold"}.`);
+    notes.push("Change the targets, safety line or days to package in Settings and this updates right away.");
+    out.push({ head: "How sure is this", text: notes.join(" ") });
+  }
+  return out;
 }
 
 function Chart({ p, S }: { p: Plan; S: Settings }) {
@@ -156,22 +344,33 @@ function PotsBox({ p, S }: { p: Plan; S: Settings }) {
   );
 }
 
-function Detail({ p, S }: { p: Plan; S: Settings }) {
+function Detail({ p, S, mix }: { p: Plan; S: Settings; mix: Mix }) {
   const box = "rounded-lg border border-neutral-800 bg-neutral-900/60 p-3 min-w-0";
   const th = "px-1.5 py-1 text-right text-[10.5px] font-semibold uppercase tracking-wide text-neutral-500 first:text-left";
   const td = "px-1.5 py-1 text-right tabular-nums first:text-left";
-  const ml = mangoLine(p);
+  const paras = explain(p, S, mix);
   return (
     <div className="grid gap-4 lg:grid-cols-[1.1fr_1fr]">
-      <div className={box}>
-        <h3 className="mb-2 text-sm font-semibold">{p.rec.action === "Brew" ? `Brew ${p.rec.bbl} bbl` : "Hold"}: why</h3>
-        <p className="mb-1.5 text-[13px] leading-relaxed text-neutral-300">{p.rec.why}</p>
-        {p.rec.action === "Brew" && p.rec.sell !== undefined && (
-          <p className="mb-1.5 text-[13px] text-neutral-300">After packaging it lasts about <b>{Math.round(p.rec.sell)} days</b> at today&apos;s selling rate.</p>
-        )}
-        {p.rec.warn && <p className="mb-1.5 text-[13px] text-amber-300">{p.rec.warn}</p>}
-        {ml && <p className="mb-1.5 text-[13px] text-neutral-200"><b>{ml[0].toUpperCase() + ml.slice(1)}</b> (its share of sales), then can or keg it.</p>}
-        <Chart p={p} S={S} />
+      <div className="flex min-w-0 flex-col gap-4">
+        <div className={box}>
+          <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+            Why this recommendation:
+            <span className={p.rec.action === "Brew" ? PILL_BREW : PILL_HOLD}>{p.rec.action === "Brew" ? `Brew ${p.rec.bbl} bbl` : "Hold"}</span>
+          </h3>
+          <ol className="flex flex-col gap-2.5">
+            {paras.map((x, i) => (
+              <li key={i} className={`border-l-2 pl-3 ${x.tone === "warn" ? "border-amber-400" : "border-neutral-700"}`}>
+                <div className={`text-[12px] font-semibold uppercase tracking-wide ${x.tone === "warn" ? "text-amber-300" : "text-neutral-400"}`}>{x.head}</div>
+                <p className="mt-0.5 whitespace-normal text-[13px] leading-relaxed text-neutral-200">{x.text}</p>
+              </li>
+            ))}
+          </ol>
+          <p className="mt-2.5 text-[11px] text-neutral-500">All amounts are barrels (bbl) of beer. 1 bbl = 31 gallons ≈ 2 half-barrel kegs.</p>
+        </div>
+        <div className={box}>
+          <h3 className="mb-2 text-sm font-semibold">Beer outside the tanks, next 10 weeks (bbl)</h3>
+          <Chart p={p} S={S} />
+        </div>
       </div>
       <div className="flex min-w-0 flex-col gap-4">
         <PotsBox p={p} S={S} />
@@ -180,7 +379,7 @@ function Detail({ p, S }: { p: Plan; S: Settings }) {
             <h3 className="mb-2 text-sm font-semibold">Brand split</h3>
             <div className="overflow-x-auto">
               <table className="w-full text-[12.5px]">
-                <thead><tr><th className={th}>Brand</th><th className={th}>Share</th><th className={th}>bbl / wk</th><th className={th}>At dist.</th><th className={th}>Weeks</th><th className={th}>Kegs / cans</th>{p.rec.action === "Brew" && <th className={th}>From batch</th>}</tr></thead>
+                <thead><tr><th className={th}>Brand</th><th className={th}>Share</th><th className={th}>bbl / wk</th><th className={th}>At dist. (bbl)</th><th className={th}>Weeks left</th><th className={th}>Kegs / cans</th>{p.rec.action === "Brew" && <th className={th}>From batch</th>}</tr></thead>
                 <tbody>
                   {p.brands.map((b) => (
                     <tr key={b.key} className="border-t border-neutral-800">
@@ -203,7 +402,7 @@ function Detail({ p, S }: { p: Plan; S: Settings }) {
           <h3 className="mb-2 text-sm font-semibold">By distributor</h3>
           <div className="overflow-x-auto">
             <table className="w-full text-[12.5px]">
-              <thead><tr><th className={th}>Distributor</th><th className={th}>Data</th><th className={th}>bbl / wk</th><th className={th}>Has bbl</th><th className={th}>Weeks</th></tr></thead>
+              <thead><tr><th className={th}>Distributor</th><th className={th}>Data</th><th className={th}>bbl / wk</th><th className={th}>Has (bbl)</th><th className={th}>Weeks left</th></tr></thead>
               <tbody>
                 {p.rows.length === 0 && <tr><td className={`${td} text-neutral-500`} colSpan={5}>No distributor stock or sales.</td></tr>}
                 {p.rows.map((x) => (
@@ -223,7 +422,7 @@ function Detail({ p, S }: { p: Plan; S: Settings }) {
         <div className={box}>
           <h3 className="mb-2 text-sm font-semibold">In tank</h3>
           <table className="w-full text-[12.5px]">
-            <thead><tr><th className={th}>Tank</th><th className={th}>Batch</th><th className={th}>bbl</th><th className={th}>Packaged</th></tr></thead>
+            <thead><tr><th className={th}>Tank</th><th className={th}>Batch</th><th className={th}>In tank (bbl)</th><th className={th}>Packaged</th></tr></thead>
             <tbody>
               {p.tanks.length === 0 && <tr><td className={`${td} text-neutral-500`} colSpan={4}>Nothing in tank.</td></tr>}
               {p.tanks.map((t) => (
@@ -274,6 +473,9 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
   };
 
   const P = useMemo(() => BASES.map((b) => plan(data, S, b)), [data, S]);
+  const mixes = useMemo(() => Object.fromEntries(BASES.map((b) => [b.key, mixFor(b, data)])) as Record<string, Mix>, [data]);
+  const whyNew = useNewFeature("feature:brew-planner-why");
+  const unitsNew = useNewFeature("feature:brew-planner-units");
   const brews = P.filter((p) => p.rec.action === "Brew");
   const holds = P.filter((p) => p.rec.action !== "Brew");
   const today = new Date(`${data.today}T12:00:00`);
@@ -324,6 +526,18 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
 
   const th = "px-2.5 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500 first:text-left whitespace-nowrap";
   const td = "px-2.5 py-3 text-right align-top tabular-nums whitespace-nowrap first:text-left";
+  const sub = "block text-[11px] font-normal text-neutral-500";
+  // Column headers say their unit; hover for a one-line explanation.
+  const COLS: { label: string; tip: string }[] = [
+    { label: "Base beer", tip: "One brew. Brands made from the same beer are listed under it." },
+    { label: "Selling per week (bbl)", tip: "What distributors sell to stores each week, in barrels. From LilyPad store sales, last 3 full months (latest counted more); Superior, Coast and beers LilyPad doesn't track are estimated from our deliveries." },
+    { label: "At distributors (bbl)", tip: "Barrels sitting in distributor warehouses now: each one's newest Ekos count (estimated for Superior and Coast)." },
+    { label: "Our warehouse (bbl)", tip: "Barrels of packaged beer in our warehouse, from this week's Inventory & Allocation." },
+    { label: "In tank (bbl)", tip: "Barrels in our fermenters for this beer, with when they'll be packaged." },
+    { label: "Weeks of beer left", tip: "(At distributors + our warehouse) ÷ selling per week. Doesn't count beer still in tank. Red under 2, amber under 4." },
+    { label: "Runs out", tip: "The week distributors + our warehouse would hit zero at today's selling rate, counting tanks as they get packaged." },
+    { label: "This cycle", tip: "Brew (and how many barrels to brew) or Hold, with the main reason. Click the row for the full explanation." },
+  ];
 
   return (
     <div className="flex flex-col gap-5">
@@ -367,14 +581,30 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
       <section className={CARD} aria-label="Base beers">
         <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
           <h2 className="text-base font-semibold">Base beers</h2>
-          <span className="text-xs text-neutral-500">Click a beer for the details</span>
+          <span className="flex items-center gap-1.5 text-xs text-neutral-500">
+            Click a beer to see why it&apos;s recommended
+            {whyNew.isNew && <NewBadge inline />}
+          </span>
+        </div>
+        {/* Units key (2026-10-26) — clicking it clears its New! tag. */}
+        <div
+          className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-neutral-800 bg-white/[0.02] px-4 py-2.5 text-[12.5px] text-neutral-300"
+          onClick={() => unitsNew.dismiss()}
+        >
+          {unitsNew.isNew && <NewBadge inline />}
+          <span>
+            <b className="text-neutral-100">All numbers are barrels (bbl) of beer.</b> 1 bbl = 31 gallons ≈ 2 half-barrel kegs (6 sixtels) ≈ 10 cases of
+            16oz 4-packs ≈ 14 cases of 12oz 6-packs. The gray line under a number turns it into cases and kegs, using that beer&apos;s recent can / keg mix
+            from LilyPad. Hover a column name for what it means.
+          </span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr>
-                <th className={th}>Base beer</th><th className={th}>Selling / wk</th><th className={th}>At distributors</th><th className={th}>Our warehouse</th>
-                <th className={th}>In tank</th><th className={th}>Weeks of cover</th><th className={th}>Runs out</th><th className={th}>This cycle</th>
+                {COLS.map((c) => (
+                  <th key={c.label} className={`${th} cursor-help`} title={c.tip}>{c.label}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -382,17 +612,23 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
                 const next = p.tanks.filter((t) => !t.ready).sort((a, b) => a.pkg.getTime() - b.pkg.getTime())[0];
                 const ready = p.tanks.some((t) => t.ready);
                 const isOpen = open.has(p.base.key);
+                const mix = mixes[p.base.key];
+                const cv = (bbl: number) => conv(bbl, mix);
                 return (
                   <Fragment key={p.base.key}>
                     <tr
                       className="cursor-pointer border-t border-neutral-800 hover:bg-white/[0.03]"
                       tabIndex={0}
                       aria-expanded={isOpen}
-                      onClick={() => toggle(p.base.key)}
+                      onClick={() => {
+                        toggle(p.base.key);
+                        whyNew.dismiss();
+                      }}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
                           toggle(p.base.key);
+                          whyNew.dismiss();
                         }
                       }}
                     >
@@ -401,26 +637,37 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
                         <span className="block max-w-[260px] whitespace-normal text-xs text-neutral-500">{p.base.brands.map((b) => b.name).join(" · ")}</span>
                       </td>
                       <td className={td}>
-                        {r1(p.demand)}
-                        {p.commitNow > 0 && <span className="block text-[11px] text-[#c9a6f2]">+{r1(p.commitNow)} committed</span>}
+                        {r1(p.demand)} bbl
+                        {cv(p.demand) && <span className={sub}>{cv(p.demand)} a week</span>}
+                        {p.commitNow > 0 && <span className="block text-[11px] text-[#c9a6f2]">+{r1(p.commitNow)} bbl committed</span>}
                         <PotBar p={p} />
                       </td>
-                      <td className={td}>{r1(p.dstock)}</td>
-                      <td className={td}>{r1(p.wh)}</td>
                       <td className={td}>
-                        {p.inTank ? r1(p.inTank) : "–"}
-                        <span className="block text-[11px] text-neutral-500">{[next ? `~${fmtDay(next.pkg)}` : null, ready ? "ready now" : null].filter(Boolean).join(" · ")}</span>
+                        {r1(p.dstock)} bbl
+                        {cv(p.dstock) && <span className={sub}>{cv(p.dstock)}</span>}
                       </td>
-                      <td className={td}><Cover w={p.cover} /></td>
-                      <td className={td}>{p.runout ? fmtDay(p.runout) : p.demand ? "10+ wks" : "–"}</td>
                       <td className={td}>
-                        <span className={p.rec.action === "Brew" ? PILL_BREW : PILL_HOLD}>{p.rec.action === "Brew" ? `Brew ${p.rec.bbl} bbl` : "Hold"}</span>
+                        {r1(p.wh)} bbl
+                        {cv(p.wh) && <span className={sub}>{cv(p.wh)}</span>}
+                      </td>
+                      <td className={td}>
+                        {p.inTank ? `${r1(p.inTank)} bbl` : "–"}
+                        <span className={sub}>{[next ? `packaged ~${fmtDay(next.pkg)}` : null, ready ? "ready now" : null].filter(Boolean).join(" · ")}</span>
+                      </td>
+                      <td className={td}>
+                        <Cover w={p.cover} />
+                        {p.cover !== null && <span className={sub}>weeks</span>}
+                      </td>
+                      <td className={td}>{p.runout ? fmtDay(p.runout) : p.demand ? "10+ wks" : "–"}</td>
+                      <td className={`${td} whitespace-normal`}>
+                        <span className={`${p.rec.action === "Brew" ? PILL_BREW : PILL_HOLD} whitespace-nowrap`}>{p.rec.action === "Brew" ? `Brew ${p.rec.bbl} bbl` : "Hold"}</span>
                         {mangoLine(p) && <span className="mt-1 block text-[11px] text-neutral-500">{mangoLine(p)}</span>}
+                        <span className="ml-auto mt-1 block max-w-[220px] text-[11px] leading-snug text-neutral-400">{shortReason(p, S)}</span>
                       </td>
                     </tr>
                     {isOpen && (
                       <tr className="bg-neutral-900/40">
-                        <td colSpan={8} className="p-4"><Detail p={p} S={S} /></td>
+                        <td colSpan={8} className="p-4"><Detail p={p} S={S} mix={mix} /></td>
                       </tr>
                     )}
                   </Fragment>

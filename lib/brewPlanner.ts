@@ -259,7 +259,19 @@ export interface BrandRow { key: string; name: string; pullOff: boolean; share: 
 export interface TankRow { tank: string; bbl: number; start: string | null; stage: string | null; label: string; ready: boolean; pkg: Date; out: number; days: number | null }
 // Where demand comes from (bbl / week). Lost isn't counted — shown so you can see what went away.
 export interface Pots { recurring: number; new: number; newCounted: number; estimated: number; commitments: number; lost: number }
-export interface Rec { action: "Brew" | "Hold"; bbl: number; why: string; need?: number; sell?: number; warn?: string | null }
+// required / nextLand / rateNext are passed out (2026-10-26) only so the page can
+// explain the call in plain English ("Why this recommendation") — no math changed.
+export interface Rec {
+  action: "Brew" | "Hold";
+  bbl: number;
+  why: string;
+  need?: number; // bbl to brew before packaging loss
+  sell?: number;
+  warn?: string | null;
+  required?: number; // bbl needed to cover the cycle + target weeks
+  nextLand?: number; // bbl left when a batch brewed one cycle later would be ready
+  rateNext?: number; // bbl / week selling then (incl. commitments)
+}
 export interface Plan {
   base: BaseDef;
   demand: number; // counted selling rate today, without commitments
@@ -310,7 +322,7 @@ function decide(S: Settings, sizes: number[], y: number, demand: number, list: C
     else if (nextLand >= rateNext * S.safetyWeeks)
       why = `If you wait a cycle, there's still ${r1(nextLand)} bbl (${r1(nextLand / rateNext)} weeks) when that batch would be ready.`;
     else why = `Short by only ${r1(Math.max(need, 0))} bbl, under the ${S.minBrew} bbl minimum.`;
-    return { action: "Hold", bbl: 0, why };
+    return { action: "Hold", bbl: 0, why, need, required, nextLand, rateNext };
   }
   const rateLand = demand + commitAt(list, land);
   let size = sizes.find((s) => s >= need) ?? sizes[sizes.length - 1];
@@ -331,6 +343,9 @@ function decide(S: Settings, sizes: number[], y: number, demand: number, list: C
     need,
     sell,
     warn,
+    required,
+    nextLand,
+    rateNext,
     why: `Brewed today it's ready about ${fmtDay(land)}. By then about ${r1(Math.max(atLand, 0))} bbl is left outside the tanks. You need ${r1(
       required,
     )} bbl to cover ${S.cycleWeeks} weeks to the next batch plus ${S.targetWeeks} weeks of stock: ${r1(need)} bbl to brew before packaging loss.`,
