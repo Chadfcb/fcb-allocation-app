@@ -6,10 +6,12 @@ import { syncEkosPurchaseOrders } from "@/lib/syncs/ekosPurchaseOrders";
 import { syncEkosDistributorInventory } from "@/lib/syncs/ekosDistributorInventory";
 import { translateEkosInventory } from "@/lib/syncs/ekosNameMap";
 import { syncEkosTanks } from "@/lib/syncs/ekosTanks";
+import { syncEkosPackaging } from "@/lib/syncs/ekosPackaging";
 import {
   closeEkosSession,
   readEkosDistributorInventory,
   readEkosOpenPurchaseOrders,
+  readEkosPackaging,
   readEkosTanks,
 } from "@/lib/syncs/ekosReader";
 import { closeLilypadSession } from "@/lib/syncs/lilypadReader";
@@ -85,6 +87,17 @@ export const SYNC_SOURCES: SyncSourceDef[] = [
     run: async () => {
       const read = await readEkosTanks();
       return syncEkosTanks(createAdminClient(), read);
+    },
+  },
+  {
+    // Added 2026-10-26 (claude/ekos-packaging-inventory-plan.md).
+    key: "ekos_packaging",
+    label: "Ekos — Packaging",
+    description:
+      "Every case and keg packaged off a tank in Ekos → adds to our On Hand on Inventory & Allocation, and takes the cans, lids, trays, Pak-Techs, labels and kegs it used off the Packaging and Label Inventory.",
+    run: async () => {
+      const read = await readEkosPackaging();
+      return syncEkosPackaging(createAdminClient(), read);
     },
   },
   {

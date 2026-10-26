@@ -3,6 +3,7 @@ import { launchBrowser } from "@/lib/ernie/browser";
 import type { EkosPurchaseOrder, EkosPoItem } from "@/lib/syncs/ekosPurchaseOrders";
 import type { EkosInventoryRow } from "@/lib/syncs/ekosNameMap";
 import type { EkosBatch, EkosBatchTask, EkosBomRow, EkosTankMapItem, EkosTaskInputs, EkosTanksRead } from "@/lib/syncs/ekosTanks";
+import type { EkosPackagingRead, EkosPackagingRun } from "@/lib/syncs/ekosPackaging";
 import { snap, watchPage } from "@/lib/syncs/snapshots";
 
 // Ekos reader for the Automatic Syncs (Admin → Ekos Sync) — added
@@ -15,6 +16,8 @@ import { snap, watchPage } from "@/lib/syncs/snapshots";
 //   2. Distributor Inventory (every page of the report)
 //   3. Tanks (added 2026-10-05): the tank map, the In-Progress batch list,
 //      and each in-tank batch's tasks + Fermentation Log readings
+//   4. Packaging (added 2026-10-26): every packaging run on each In-Progress
+//      batch and each recently Completed batch (lib/syncs/ekosPackaging.ts)
 // Page layout was read from Ekos on 2026-10-03 (with Chad signed in, read
 // only) and is written down in claude/ekos-sync-reference.md. If Ekos
 // changes its pages, this stops with a clear error and Chad gets an email —
@@ -632,6 +635,7 @@ interface ProjectListRecord {
   statusTitle?: string;
   productTitle?: string;
   startDate?: string;
+  endDate?: string; // added 2026-10-26 (packaging: when a Completed batch was closed)
   locations?: string;
   units?: number;
 }
@@ -794,6 +798,119 @@ async function readInProgressBatches(frame: Frame, map: EkosTankMapItem[]): Prom
     });
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Packaging (added 2026-10-26) — claude/ekos-packaging-inventory-plan.md
+// ---------------------------------------------------------------------------
+
+// How far back Completed batches are read. A batch packaged and closed
+// between two morning syncs still gets its last runs read; anything older
+// has nothing new to add.
+const PACKAGING_COMPLETED_DAYS = 21;
+
+interface PackagingEntryRecord {
+  task_rowguid?: string;
+  item_title?: string;
+  type_title?: string;
+  status_title?: string;
+  date?: string;
+  units_packaged?: { value?: number | null } | null;
+  wip_units_packaged?: { value?: number | null } | null;
+  isplanned?: boolean;
+}
+
+// Every packaging run (Date | Item | Quantity | Status — the PACKAGING panel
+// on a batch) for every In-Progress batch and every batch Completed in the
+// last PACKAGING_COMPLETED_DAYS days. Read with the same lookups Ekos's own
+// batch screen makes (projectListGet, packaging_entries_get) — read only.
+export async function readEkosPackaging(): Promise<EkosPackagingRead> {
+  const { page } = await getEkosSession();
+  const { frame } = await readTankMap(page);
+  const base = new URL(frame.url()).pathname.replace(/\/default\.aspx$/i, "");
+  const call = async (method: "GET" | "POST", path: string, body?: string, form = false): Promise<unknown> => {
+    const text = await frame.evaluate(
+      async (url: string, m: string, b: string | null, f: boolean) => {
+        const r = await fetch(url, {
+          method: m,
+          credentials: "include",
+          ...(b !== null ? { body: b } : {}),
+          ...(f ? { headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" } } : {}),
+        });
+        return r.ok ? r.text() : `__HTTP_${r.status}`;
+      },
+      `${base}/_processors/${path}${path.includes("?") ? "&" : "?"}${Math.floor(Math.random() * 1e5)}`,
+      method,
+      body ?? null,
+      form,
+    );
+    if (text.startsWith("__HTTP_")) throw new Error(`Ekos refused a packaging lookup (${text.slice(7)}) — nothing was changed.`);
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new Error("Ekos answered a packaging lookup with something other than data — the reader needs an update. Nothing was changed.");
+    }
+  };
+
+  const LIST = "projectdashboard.ashx?action=projectListGet&sortKey=date&direction=desc";
+  type Filter = { batchStatus?: { title?: string; isChecked?: boolean }[] } & Record<string, unknown>;
+  const listBatches = async (statusTest: RegExp, rows: number): Promise<ProjectListRecord[]> => {
+    const saved = (await call("POST", LIST, "{}")) as { projectFilter?: Filter };
+    const filter = saved?.projectFilter;
+    if (!filter || !Array.isArray(filter.batchStatus) || !filter.batchStatus.some((s) => statusTest.test(s.title ?? ""))) {
+      throw new Error("Ekos's batch-list filter looks different than expected — the reader needs an update. Nothing was changed.");
+    }
+    for (const s of filter.batchStatus) s.isChecked = statusTest.test(s.title ?? "");
+    filter.rowIndex = 0;
+    filter.rowsReturned = rows;
+    filter.searchString = "";
+    const reply = (await call("POST", LIST, JSON.stringify(filter), true)) as { projectList?: ProjectListRecord[] };
+    if (!Array.isArray(reply?.projectList)) {
+      throw new Error("Ekos's batch list came back in a shape the reader doesn't know — nothing was changed.");
+    }
+    if (reply.projectList.some((r) => !statusTest.test(r.statusTitle ?? ""))) {
+      throw new Error("Ekos's batch list didn't switch to the asked-for batches — the reader needs an update. Nothing was changed.");
+    }
+    return reply.projectList;
+  };
+
+  const inProgress = await listBatches(/^In-Progress/i, 500);
+  // Newest first; a batch's end date is when it was closed.
+  const since = new Date(Date.now() - PACKAGING_COMPLETED_DAYS * 864e5).toISOString().slice(0, 10);
+  const completed = (await listBatches(/^Completed/i, 150)).filter((r) => (datePart(r.endDate) ?? "") >= since);
+
+  const runs: EkosPackagingRun[] = [];
+  const batchesRead: string[] = [];
+  const all = [...inProgress, ...completed].filter((r) => r.rowguid);
+  for (let i = 0; i < all.length; i += 6) {
+    const chunk = all.slice(i, i + 6);
+    const replies = await Promise.all(
+      chunk.map((b) => call("GET", `projectOverview.ashx?action=packaging_entries_get&project=${encodeURIComponent(b.rowguid!)}`)),
+    );
+    chunk.forEach((b, k) => {
+      const reply = replies[k];
+      if (reply !== null && !Array.isArray(reply)) {
+        throw new Error(`Batch ${b.title}'s packaging came back in a shape the reader doesn't know — nothing was changed.`);
+      }
+      batchesRead.push(b.rowguid!);
+      for (const e of (reply ?? []) as PackagingEntryRecord[]) {
+        if (!e.task_rowguid || !e.item_title) continue;
+        runs.push({
+          taskRowguid: e.task_rowguid,
+          batchGuid: b.rowguid!,
+          batchTitle: b.title ?? "",
+          itemTitle: e.item_title.trim(),
+          typeTitle: e.type_title ?? null,
+          status: e.status_title ?? "",
+          packagedOn: usDate(e.date) ?? datePart(e.date),
+          units: typeof e.units_packaged?.value === "number" ? e.units_packaged.value : 0,
+          wipBbl: typeof e.wip_units_packaged?.value === "number" ? e.wip_units_packaged.value : null,
+          isPlanned: !!e.isplanned,
+        });
+      }
+    });
+  }
+  return { runs, batchesRead, inProgressCount: inProgress.length, completedCount: completed.length };
 }
 
 // Reports → All Reports → "Batch - Bill of Materials" (Chad's choice for the

@@ -32,6 +32,12 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    id: "feature:inventory-record",
+    page: "/inventory",
+    label: "Inventory & Allocation: Our Inventory Record — Enter count, Other out, Labeled, Delivered, Count Differences, Activity",
+    added: "2026-10-26",
+  },
+  {
     id: "feature:tanks-back-to-cellar",
     page: "/tanks",
     label: "Tanks: clicking a Status row zooms in to that tank's label; Back to cellar view button glides back",

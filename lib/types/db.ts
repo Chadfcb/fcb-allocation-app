@@ -107,6 +107,9 @@ export interface Week {
   status: WeekStatus;
   created_by: string | null;
   created_at: string;
+  // Weeks from 10/26/2026 on (sql/inventory_running_record.sql): On Hand /
+  // Unlabeled come from the running record, supplies come off at packaging.
+  uses_record?: boolean;
 }
 
 export type StatusFlag =

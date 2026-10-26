@@ -51,7 +51,7 @@ async function gather(admin: Admin): Promise<PlannerData> {
     admin.from("distributors").select("id, name"),
     admin.from("sales_data_meta").select("as_of, imported_at").order("imported_at", { ascending: false }).limit(1).maybeSingle(),
     admin.from("ekos_tanks").select("tank_name, volume_bbl, product_name, batch_title, start_date, stage, synced_at"),
-    admin.from("weeks").select("id, label, week_start").order("week_start", { ascending: false }).limit(6),
+    admin.from("weeks").select("id, label, week_start, uses_record").order("week_start", { ascending: false }).limit(6),
   ]);
   const prodName = new Map((products ?? []).map((p) => [p.id as string, p.name as string]));
   const dName = new Map((distributors ?? []).map((x) => [x.id as string, distName(x.name as string)]));
@@ -174,7 +174,15 @@ async function gather(admin: Admin): Promise<PlannerData> {
       admin.from("inventory_snapshots").select("updated_at").eq("week_id", week.id).order("updated_at", { ascending: false }).limit(1).maybeSingle(),
     ]);
     whUpdated = (snap?.updated_at as string) ?? null;
-    const deliveredDists = new Set(((weekPos ?? []) as { distributor_id: string; po_status: string | null }[]).filter((p) => p.po_status === "delivered").map((p) => p.distributor_id));
+    // Running record weeks (from 10/26/2026): on_hand already has delivered
+    // orders taken out, and "to be packaged" is info only — Ekos packaging
+    // adds it to on_hand once it's packaged (and it's still counted in the tank).
+    const usesRecord = !!(week as { uses_record?: boolean } | undefined)?.uses_record;
+    const deliveredDists = new Set(
+      usesRecord
+        ? []
+        : ((weekPos ?? []) as { distributor_id: string; po_status: string | null }[]).filter((p) => p.po_status === "delivered").map((p) => p.distributor_id)
+    );
     const out = new Map<string, number>();
     if (deliveredDists.size) {
       const { data: wa } = await admin.from("allocations").select("distributor_id, product_id, quantity").eq("week_id", week.id).in("distributor_id", [...deliveredDists]);
@@ -183,7 +191,7 @@ async function gather(admin: Admin): Promise<PlannerData> {
     for (const r of (whRows ?? []) as { product_id: string; on_hand: number; unlabeled: number; to_be_packaged: number }[]) {
       const br = brandOf(r.product_id);
       if (!br) continue;
-      const units = Math.max(0, (Number(r.on_hand) || 0) + (Number(r.unlabeled) || 0) + (Number(r.to_be_packaged) || 0) - (out.get(r.product_id) ?? 0));
+      const units = Math.max(0, (Number(r.on_hand) || 0) + (Number(r.unlabeled) || 0) + (usesRecord ? 0 : Number(r.to_be_packaged) || 0) - (out.get(r.product_id) ?? 0));
       warehouse[br.brand] = (warehouse[br.brand] ?? 0) + units * bpu(r.product_id);
     }
   }

@@ -158,3 +158,35 @@ export function computeConsumption(
 
   return { packagingConsumed, labelConsumed, unrecognizedProducts };
 }
+
+// Weeks on the running record (from 10/26/2026) — "Orders need": the supplies
+// open orders will STILL use. Beer already labeled and on hand used its
+// supplies when it was packaged, so only the part of each order that isn't on
+// the shelf yet counts:
+//   - covered by unlabeled cases → labels + Pak-Techs only (labeling)
+//   - not packaged at all        → the full recipe
+// Chad, 2026-10-26: the team builds distributor orders on this page and
+// watches packaging/label inventory go down as they allocate.
+export function computeOrdersNeed(
+  products: Product[],
+  openOrderedFor: (productId: string) => number,
+  onHandFor: (productId: string) => number,
+  unlabeledFor: (productId: string) => number
+): ConsumptionResult {
+  const fullFor = (id: string) => {
+    const short = Math.max(0, openOrderedFor(id) - Math.max(0, onHandFor(id)));
+    return Math.max(0, short - Math.max(0, unlabeledFor(id)));
+  };
+  const result = computeConsumption(products, fullFor);
+  for (const p of products) {
+    const info = derivePackaging(p.name);
+    if (info.kind !== "can") continue;
+    const short = Math.max(0, openOrderedFor(p.id) - Math.max(0, onHandFor(p.id)));
+    const labelOnly = short - fullFor(p.id);
+    if (labelOnly <= 0) continue;
+    const recipe = CAN_RECIPES[info.size];
+    if (recipe.paktekItem) result.packagingConsumed[recipe.paktekItem] += labelOnly * recipe.pakteksPerCase;
+    result.labelConsumed[p.id] = (result.labelConsumed[p.id] ?? 0) + labelOnly * recipe.labelsPerCase;
+  }
+  return result;
+}

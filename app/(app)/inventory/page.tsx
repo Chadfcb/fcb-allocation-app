@@ -23,7 +23,8 @@ import type {
   PoStatus,
 } from "@/lib/types/db";
 import { STATUS_FLAG_LABELS, STATUS_FLAG_COLORS, PO_STATUS_LABELS, PO_STATUS_COLORS } from "@/lib/types/db";
-import { PACKAGING_ITEMS, derivePackaging, computeConsumption } from "@/lib/packaging";
+import { PACKAGING_ITEMS, derivePackaging, computeConsumption, computeOrdersNeed } from "@/lib/packaging";
+import InventoryRecordPanel from "@/components/InventoryRecordPanel";
 import { computePalletsForDistributor } from "@/lib/pallets";
 import { chipText, tone } from "@/lib/appearance";
 
@@ -334,6 +335,14 @@ export default function InventoryPage() {
   // internal scrollbar.
   const [labelInventoryExpanded, setLabelInventoryExpanded] = useState(false);
 
+  // Running record weeks (from 10/26/2026 — sql/inventory_running_record.sql):
+  // what Ekos packaging actually used this week (cans, lids … by item key;
+  // labels by product). Orders no longer take supplies off.
+  const [suppliesUsed, setSuppliesUsed] = useState<{ packaging: Record<string, number>; labels: Record<string, number> }>({
+    packaging: {},
+    labels: {},
+  });
+
   // All · Purple · Green switches on the Packaging and Label Inventory
   // blocks — independent of each other, always start on All.
   const [packagingColorFilter, setPackagingColorFilter] = useState<ConsumptionColorFilter>("all");
@@ -396,6 +405,33 @@ export default function InventoryPage() {
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
+
+  const loadSuppliesUsed = useCallback(
+    async (weekId: string) => {
+      const { data } = await supabase.rpc("inventory_supplies_used", { p_week: weekId });
+      const packagingUsed: Record<string, number> = {};
+      const labelsUsed: Record<string, number> = {};
+      for (const r of (data ?? []) as { kind: string; item_key: string | null; product_id: string | null; used: number }[]) {
+        if (r.kind === "packaging" && r.item_key) packagingUsed[r.item_key] = Number(r.used) || 0;
+        if (r.kind === "label" && r.product_id) labelsUsed[r.product_id] = Number(r.used) || 0;
+      }
+      setSuppliesUsed({ packaging: packagingUsed, labels: labelsUsed });
+    },
+    [supabase]
+  );
+
+  // After a count / Other out / Labeled (InventoryRecordPanel): this week's
+  // On Hand + Unlabeled (filled in by the database) and supplies used.
+  const reloadRecord = useCallback(async () => {
+    if (!week?.id) return;
+    const { data } = await supabase.from("inventory_with_remaining").select("*").eq("week_id", week.id);
+    const invMap: Record<string, InventoryWithRemaining> = {};
+    (data as InventoryWithRemaining[] | null)?.forEach((row) => {
+      invMap[row.product_id] = row;
+    });
+    setInventory(invMap);
+    if (week.uses_record) await loadSuppliesUsed(week.id);
+  }, [supabase, week, loadSuppliesUsed]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -513,6 +549,10 @@ export default function InventoryPage() {
       });
       setInventory(invMap);
 
+      if ((weekData as Week).uses_record) {
+        await loadSuppliesUsed(weekData.id);
+      }
+
       const allocMap: Record<string, AllocationCell> = {};
       (allocResult.data as Allocation[] | null)?.forEach((row) => {
         allocMap[`${row.product_id}:${row.distributor_id}`] = {
@@ -555,7 +595,7 @@ export default function InventoryPage() {
     }
 
     setLoading(false);
-  }, [supabase]);
+  }, [supabase, loadSuppliesUsed]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional fetch-on-mount
@@ -749,10 +789,24 @@ export default function InventoryPage() {
     };
   }, [supabase, week?.id, userId]);
 
+  // Running record weeks: On Hand + Unlabeled ("To Package" is info only —
+  // it's added once Ekos says it was packaged).
+  const recordWeek = !!week?.uses_record;
+
   function totalFor(productId: string) {
     const inv = inventory[productId];
     if (!inv) return 0;
+    if (recordWeek) return Number(inv.on_hand) + Number(inv.unlabeled);
     return inv.on_hand + inv.unlabeled + inv.to_be_packaged;
+  }
+
+  // Allocations whose distributor's PO isn't marked Delivered yet.
+  function openAllocatedFor(productId: string) {
+    return distributors.reduce(
+      (sum, d) =>
+        pos[d.id]?.po_status === "delivered" ? sum : sum + (allocations[`${productId}:${d.id}`]?.quantity ?? 0),
+      0
+    );
   }
 
   function allocatedFor(productId: string) {
@@ -763,6 +817,8 @@ export default function InventoryPage() {
   }
 
   function remainingFor(productId: string) {
+    // Running record weeks: a delivered order is already out of On Hand.
+    if (recordWeek) return totalFor(productId) - openAllocatedFor(productId);
     return totalFor(productId) - allocatedFor(productId);
   }
 
@@ -823,6 +879,15 @@ export default function InventoryPage() {
   }
   const packagingConsumption = consumptionFor(packagingColorFilter);
   const labelConsumption = consumptionFor(labelColorFilter);
+
+  // Running record weeks: what open orders will still use (only the part not
+  // already on the shelf — see lib/packaging.ts computeOrdersNeed).
+  const ordersNeed = computeOrdersNeed(
+    products,
+    openAllocatedFor,
+    (id) => Number(inventory[id]?.on_hand ?? 0),
+    (id) => Number(inventory[id]?.unlabeled ?? 0)
+  );
 
   // Only can-based products need a label row — kegs and tap handles don't.
   const labelProducts = products
@@ -2215,29 +2280,40 @@ export default function InventoryPage() {
         >
           <div className="mb-2 flex items-center justify-between gap-2">
             <h2 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
-              Packaging Inventory <span className="font-normal normal-case text-neutral-500">— Automatically adjusted as allocations are entered</span>
-              {consumptionFilterTag(packagingColorFilter) && (
+              Packaging Inventory{" "}
+              <span className="font-normal normal-case text-neutral-500">
+                {recordWeek
+                  ? "— Used = packaged in Ekos this week · Orders need = what open orders still need packaged"
+                  : "— Automatically adjusted as allocations are entered"}
+              </span>
+              {!recordWeek && consumptionFilterTag(packagingColorFilter) && (
                 <span className="ml-2 rounded bg-yellow-500/15 px-1.5 py-0.5 font-normal normal-case text-yellow-300">
                   {consumptionFilterTag(packagingColorFilter)}
                 </span>
               )}
             </h2>
-            <ConsumptionFilterSwitch value={packagingColorFilter} onChange={setPackagingColorFilter} />
+            {!recordWeek && <ConsumptionFilterSwitch value={packagingColorFilter} onChange={setPackagingColorFilter} />}
           </div>
           <table className="w-full text-xs">
             <thead>
               <tr className="text-neutral-500">
                 <th className="px-1.5 py-1 text-left">Item</th>
                 <th className="px-1.5 py-1 text-right">On Hand</th>
-                <th className="px-1.5 py-1 text-right">Consumed</th>
+                <th className="px-1.5 py-1 text-right">{recordWeek ? "Used" : "Consumed"}</th>
                 <th className="px-1.5 py-1 text-right">Remaining</th>
+                {recordWeek && <th className="px-1.5 py-1 text-right">Orders need</th>}
+                {recordWeek && <th className="px-1.5 py-1 text-right">After orders</th>}
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-900">
               {PACKAGING_ITEMS.map((item) => {
                 const onHand = packaging[item.key]?.on_hand_qty ?? 0;
-                const consumed = packagingConsumption.packagingConsumed[item.key] ?? 0;
+                const consumed = recordWeek
+                  ? suppliesUsed.packaging[item.key] ?? 0
+                  : packagingConsumption.packagingConsumed[item.key] ?? 0;
                 const remaining = onHand - consumed;
+                const need = ordersNeed.packagingConsumed[item.key] ?? 0;
+                const after = remaining - need;
                 return (
                   <tr key={item.key}>
                     <td className="px-1.5 py-1 text-neutral-300">{item.label}</td>
@@ -2259,6 +2335,12 @@ export default function InventoryPage() {
                     >
                       {remaining}
                     </td>
+                    {recordWeek && <td className="px-1.5 py-1 text-right text-neutral-400">{need}</td>}
+                    {recordWeek && (
+                      <td className={`px-1.5 py-1 text-right font-semibold ${after < 0 ? "text-red-400" : "text-neutral-200"}`}>
+                        {after}
+                      </td>
+                    )}
                   </tr>
                 );
               })}
@@ -2366,15 +2448,18 @@ export default function InventoryPage() {
         >
           <div className="mb-2 flex shrink-0 items-center justify-between gap-2">
             <h2 className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
-              Label Inventory <span className="font-normal normal-case text-neutral-500">— Automatically adjusted as allocations are entered</span>
-              {consumptionFilterTag(labelColorFilter) && (
+              Label Inventory{" "}
+              <span className="font-normal normal-case text-neutral-500">
+                {recordWeek ? "— Used = labeled in Ekos packaging this week" : "— Automatically adjusted as allocations are entered"}
+              </span>
+              {!recordWeek && consumptionFilterTag(labelColorFilter) && (
                 <span className="ml-2 rounded bg-yellow-500/15 px-1.5 py-0.5 font-normal normal-case text-yellow-300">
                   {consumptionFilterTag(labelColorFilter)}
                 </span>
               )}
             </h2>
             <div className="flex shrink-0 items-center gap-2">
-            <ConsumptionFilterSwitch value={labelColorFilter} onChange={setLabelColorFilter} />
+            {!recordWeek && <ConsumptionFilterSwitch value={labelColorFilter} onChange={setLabelColorFilter} />}
             <button
               onClick={() => setLabelInventoryExpanded((prev) => !prev)}
               title={
@@ -2394,15 +2479,19 @@ export default function InventoryPage() {
                 <tr className="text-neutral-500">
                   <th className="sticky top-0 bg-neutral-950 px-1.5 py-1 text-left">Product</th>
                   <th className="sticky top-0 bg-neutral-950 px-1.5 py-1 text-right">On Hand</th>
-                  <th className="sticky top-0 bg-neutral-950 px-1.5 py-1 text-right">Consumed</th>
+                  <th className="sticky top-0 bg-neutral-950 px-1.5 py-1 text-right">{recordWeek ? "Used" : "Consumed"}</th>
                   <th className="sticky top-0 bg-neutral-950 px-1.5 py-1 text-right">Remaining</th>
+                  {recordWeek && <th className="sticky top-0 bg-neutral-950 px-1.5 py-1 text-right">Orders need</th>}
+                  {recordWeek && <th className="sticky top-0 bg-neutral-950 px-1.5 py-1 text-right">After orders</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-900">
                 {labelProducts.map((p) => {
                   const onHand = labelInventory[p.id]?.on_hand_qty ?? 0;
-                  const consumed = labelConsumption.labelConsumed[p.id] ?? 0;
+                  const consumed = recordWeek ? suppliesUsed.labels[p.id] ?? 0 : labelConsumption.labelConsumed[p.id] ?? 0;
                   const remaining = onHand - consumed;
+                  const need = ordersNeed.labelConsumed[p.id] ?? 0;
+                  const after = remaining - need;
                   return (
                     <tr key={p.id}>
                       <td className="whitespace-nowrap px-1.5 py-1 text-neutral-300">{p.name}</td>
@@ -2424,6 +2513,12 @@ export default function InventoryPage() {
                       >
                         {remaining}
                       </td>
+                      {recordWeek && <td className="px-1.5 py-1 text-right text-neutral-400">{need}</td>}
+                      {recordWeek && (
+                        <td className={`px-1.5 py-1 text-right font-semibold ${after < 0 ? "text-red-400" : "text-neutral-200"}`}>
+                          {after}
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -2592,6 +2687,15 @@ export default function InventoryPage() {
             )}
           </div>
         </div>
+      )}
+
+      {recordWeek && userId && (
+        <InventoryRecordPanel
+          weekId={week.id}
+          products={products}
+          userId={userId}
+          onChanged={reloadRecord}
+        />
       )}
 
       <div className="rounded-lg border border-neutral-800 bg-neutral-950">
@@ -3059,6 +3163,16 @@ export default function InventoryPage() {
                   </td>
                   {(["on_hand", "unlabeled", "to_be_packaged"] as const).map((field) => (
                     <td key={field} className="px-2 py-1.5 text-right">
+                      {recordWeek && field !== "to_be_packaged" ? (
+                        <span
+                          className={`inline-block w-16 px-1.5 py-0.5 text-right ${
+                            Number(inventory[p.id]?.[field] ?? 0) < 0 ? "text-red-400" : "text-neutral-100"
+                          }`}
+                          title="From the running record: last count + packaged in Ekos − delivered − other out. Use Enter count / Other out below to change it."
+                        >
+                          {Number(inventory[p.id]?.[field] ?? 0)}
+                        </span>
+                      ) : (
                       <input
                         type="number"
                         className="w-16 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-neutral-100"
@@ -3067,6 +3181,7 @@ export default function InventoryPage() {
                           handleInventoryChange(p.id, field, Number(e.target.value) || 0)
                         }
                       />
+                      )}
                     </td>
                   ))}
                   <td className="px-2 py-1.5 text-right font-semibold text-neutral-300">
