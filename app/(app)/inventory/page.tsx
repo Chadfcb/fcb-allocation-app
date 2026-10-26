@@ -2734,9 +2734,6 @@ export default function InventoryPage() {
               <th className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right">
                 Unlabeled
               </th>
-              <th className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right">
-                To Package
-              </th>
               <th className="sticky top-0 z-10 h-8 whitespace-nowrap bg-neutral-900 px-2 text-right font-semibold">
                 Total
               </th>
@@ -2843,7 +2840,7 @@ export default function InventoryPage() {
               </th>
               {isAdmin && activeEditMode === "distributors" ? (
                 <th
-                  colSpan={4}
+                  colSpan={3}
                   className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2 text-left normal-case"
                 >
                   <div className="flex items-center gap-1">
@@ -2906,7 +2903,6 @@ export default function InventoryPage() {
                   <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
                   <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
                   <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
-                  <th className="sticky top-8 z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
                 </>
               )}
               {distributors.map((d) => (
@@ -2927,7 +2923,6 @@ export default function InventoryPage() {
               <th className="sticky top-[60px] left-0 z-20 h-7 whitespace-nowrap bg-neutral-900 px-3 text-left font-normal">
                 PO # (Ekos)
               </th>
-              <th className="sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
               <th className="sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
               <th className="sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
               <th className="sticky top-[60px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
@@ -2954,7 +2949,6 @@ export default function InventoryPage() {
               <th className="sticky top-[88px] left-0 z-20 h-7 whitespace-nowrap bg-neutral-900 px-3 text-left font-normal">
                 PO Status
               </th>
-              <th className="sticky top-[88px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
               <th className="sticky top-[88px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
               <th className="sticky top-[88px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
               <th className="sticky top-[88px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
@@ -3012,7 +3006,6 @@ export default function InventoryPage() {
               <th className="sticky top-[116px] left-0 z-20 h-7 whitespace-nowrap bg-neutral-900 px-3 text-left font-normal">
                 Delivery Date
               </th>
-              <th className="sticky top-[116px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
               <th className="sticky top-[116px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
               <th className="sticky top-[116px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
               <th className="sticky top-[116px] z-10 h-7 whitespace-nowrap bg-neutral-900 px-2"></th>
@@ -3099,7 +3092,7 @@ export default function InventoryPage() {
                 if (d.label.trim().toLowerCase() === PALLET_SUMMARY_DIVIDER_LABEL) {
                   return (
                     <tr key={rowKey(row)} className="bg-neutral-900/70">
-                      <td colSpan={5} className="px-3 py-1.5">
+                      <td colSpan={4} className="px-3 py-1.5">
                         <div className="flex items-center justify-between gap-2">
                           {labelRow}
                           <span className="whitespace-nowrap text-[10px] normal-case text-neutral-500">
@@ -3125,7 +3118,7 @@ export default function InventoryPage() {
 
                 return (
                   <tr key={rowKey(row)} className="bg-neutral-900/70">
-                    <td colSpan={6 + distributors.length} className="px-3 py-1.5">
+                    <td colSpan={5 + distributors.length} className="px-3 py-1.5">
                       {labelRow}
                     </td>
                   </tr>
@@ -3161,9 +3154,11 @@ export default function InventoryPage() {
                       )}
                     </div>
                   </td>
-                  {(["on_hand", "unlabeled", "to_be_packaged"] as const).map((field) => (
+                  {/* "To Package" column removed 2026-10-26 (Chad: "its not needed currently") —
+                      the to_be_packaged column stays in the database, it just isn't shown. */}
+                  {(["on_hand", "unlabeled"] as const).map((field) => (
                     <td key={field} className="px-2 py-1.5 text-right">
-                      {recordWeek && field !== "to_be_packaged" ? (
+                      {recordWeek ? (
                         <span
                           className={`inline-block w-16 px-1.5 py-0.5 text-right ${
                             Number(inventory[p.id]?.[field] ?? 0) < 0 ? "text-red-400" : "text-neutral-100"
@@ -3267,7 +3262,7 @@ export default function InventoryPage() {
             })}
             {isAdmin && activeEditMode === "items" && (
               <tr className="border-t border-neutral-800">
-                <td colSpan={6 + distributors.length} className="bg-neutral-950 px-3 py-2">
+                <td colSpan={5 + distributors.length} className="bg-neutral-950 px-3 py-2">
                   <div className={`flex flex-wrap items-center gap-2 ${EDIT_PANEL}`}>
                     <input
                       type="text"
@@ -3307,7 +3302,7 @@ export default function InventoryPage() {
             )}
             {isAdmin && activeEditMode === "dividers" && (
               <tr>
-                <td colSpan={6 + distributors.length} className="bg-neutral-950 px-3 py-2">
+                <td colSpan={5 + distributors.length} className="bg-neutral-950 px-3 py-2">
                   <div className={`flex flex-wrap items-center gap-2 ${EDIT_PANEL}`}>
                     <input
                       type="text"
