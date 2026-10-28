@@ -17,9 +17,8 @@ import {
   checkUpc,
   downloadBarcodePng,
   downloadBarcodeSvg,
+  printBarcode,
 } from "@/lib/barcode";
-import { useNewFeature, upcBarcodeFeatureId } from "@/lib/newFeatures";
-import NewBadge from "@/components/NewBadge";
 
 // POS_LABEL_SIZE_LABELS (in lib/posLabels.ts) reads "19.2 oz Labels" —
 // fine for the Labels file library, wrong wording here. Same three sizes,
@@ -87,9 +86,6 @@ export default function UpcTableClient({
   // Full-size barcode preview (one row at a time).
   const [previewRow, setPreviewRow] = useState<UpcEntry | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
-  const barcodeNew = useNewFeature(
-    upcBarcodeFeatureId(`/upcs/${brand}/${size.replace(".", "-")}`),
-  );
 
   useEffect(() => {
     if (!previewRow) return;
@@ -101,13 +97,17 @@ export default function UpcTableClient({
   }, [previewRow]);
 
   function openPreview(row: UpcEntry) {
-    barcodeNew.dismiss();
     setDownloadError(null);
     setPreviewRow(row);
   }
 
+  function printRowBarcode(row: UpcEntry) {
+    const check = checkUpc(row.upc);
+    if (!check.ok) return;
+    printBarcode(barcodeSvg(check.kind, check.digits), barcodeFileName(row.product_name, check.digits));
+  }
+
   async function downloadBarcode(row: UpcEntry, format: "png" | "svg") {
-    barcodeNew.dismiss();
     setDownloadError(null);
     const check = checkUpc(row.upc);
     if (!check.ok) return;
@@ -259,7 +259,6 @@ export default function UpcTableClient({
               <th className="px-3 py-2">UPC</th>
               <th className="px-3 py-2">
                 Barcode
-                {barcodeNew.isNew && <NewBadge inline />}
               </th>
               <th className="px-3 py-2 text-right">Actions</th>
             </tr>
@@ -425,8 +424,15 @@ export default function UpcTableClient({
                   <div className="mt-4 flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => downloadBarcode(previewRow, "png")}
+                      onClick={() => printRowBarcode(previewRow)}
                       className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-black hover:bg-neutral-200"
+                    >
+                      Print (actual size)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => downloadBarcode(previewRow, "png")}
+                      className="rounded-md border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-800"
                     >
                       Download PNG
                     </button>
@@ -438,7 +444,8 @@ export default function UpcTableClient({
                       Download SVG
                     </button>
                     <span className="text-xs text-neutral-500">
-                      PNG for labels and documents · SVG for printers and designers (any size)
+                      Actual size: 1.52 × 1.07 in. Downloads keep that size in Word and label
+                      software; when printing, use 100% / Actual size, not &quot;Fit&quot;.
                     </span>
                   </div>
                   {downloadError && (

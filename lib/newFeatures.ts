@@ -22,7 +22,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { DISTRIBUTOR_PAGES, distributorHref } from "@/lib/distributorPages";
-import { UPC_BRANDS } from "@/lib/appPages";
 
 export interface NewFeature {
   id: string; // unique, prefixed "feature:"
@@ -31,22 +30,7 @@ export interface NewFeature {
   added: string; // YYYY-MM-DD
 }
 
-/** New! id for the Barcode column on one UPC's page (by its sidebar href). */
-export function upcBarcodeFeatureId(href: string): string {
-  return `feature:upc-barcodes:${href}`;
-}
-
 export const NEW_FEATURES: NewFeature[] = [
-  // Barcode column on every UPC's page (one entry per page, so each page's
-  // sidebar link lights up).
-  ...UPC_BRANDS.flatMap((b) =>
-    b.sizes.map((s) => ({
-      id: upcBarcodeFeatureId(s.href),
-      page: s.href,
-      label: `UPC's > ${b.label} > ${s.label}: Barcode column — preview (click for full size) + Download PNG / SVG`,
-      added: "2026-10-28",
-    })),
-  ),
   {
     id: "feature:brew-planner-why",
     page: "/brew-planner",

@@ -63,6 +63,16 @@ const WIDTH = QUIET + 95 + QUIET;
 const HEIGHT = TOP + GUARD_H + 8;
 const FONT = "Helvetica, Arial, sans-serif";
 
+// Actual size (added 2026-10-28, Chad: "downloading the upc is printing it
+// across an entire page, it needs to print actual size"). The standard
+// (100%) UPC bar width is 0.013 in, so the whole barcode incl. its white
+// margins is 117 × 0.013 = 1.52 in wide by 82 × 0.013 = 1.07 in tall.
+// The SVG says its size in inches, the PNG carries its print resolution
+// (DPI), and Print sends it to the printer at exactly this size.
+const MODULE_IN = 0.013;
+export const BARCODE_WIDTH_IN = WIDTH * MODULE_IN;
+export const BARCODE_HEIGHT_IN = HEIGHT * MODULE_IN;
+
 /** The barcode as an SVG string (black bars on white). Only call with ok digits. */
 export function barcodeSvg(kind: BarcodeKind, digits: string): string {
   const d = digits.split("").map(Number);
@@ -116,7 +126,7 @@ export function barcodeSvg(kind: BarcodeKind, digits: string): string {
   }
 
   return (
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${WIDTH} ${HEIGHT}" width="${WIDTH * 3}" height="${HEIGHT * 3}" shape-rendering="crispEdges">` +
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${WIDTH} ${HEIGHT}" width="${BARCODE_WIDTH_IN.toFixed(3)}in" height="${BARCODE_HEIGHT_IN.toFixed(3)}in" shape-rendering="crispEdges">` +
     `<rect width="${WIDTH}" height="${HEIGHT}" fill="#ffffff"/>` +
     `<g fill="#000000">${rects.join("")}</g>` +
     `<g fill="#000000" font-family="${FONT}">${texts.join("")}</g>` +
@@ -146,9 +156,62 @@ export function downloadBarcodeSvg(svg: string, fileName: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// CRC-32 (PNG chunk checksum).
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(bytes: Uint8Array): number {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
 /**
- * Download the barcode as a PNG. 8 px per module ≈ 600 dpi at the standard
- * UPC size (1.47" wide), so it stays sharp when printed at 100%.
+ * Stamp the PNG's print resolution (its "pHYs" chunk) so Word, label
+ * software, image viewers etc. place it at actual size instead of
+ * stretching it. Browsers don't write this on their own.
+ */
+function setPngDpi(png: Uint8Array, pxPerInch: number): Uint8Array {
+  const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  const chunks: Uint8Array[] = [png.subarray(0, 8)]; // PNG signature
+  let pos = 8;
+  while (pos < png.length) {
+    const len = view.getUint32(pos);
+    const type = String.fromCharCode(...png.subarray(pos + 4, pos + 8));
+    const end = pos + 12 + len;
+    if (type !== "pHYs") chunks.push(png.subarray(pos, end)); // drop any old one
+    if (type === "IHDR") {
+      const ppm = Math.round(pxPerInch / 0.0254); // pixels per meter
+      const c = new Uint8Array(21);
+      const cv = new DataView(c.buffer);
+      cv.setUint32(0, 9);
+      c.set([0x70, 0x48, 0x59, 0x73], 4); // "pHYs"
+      cv.setUint32(8, ppm);
+      cv.setUint32(12, ppm);
+      c[16] = 1; // unit = meter
+      cv.setUint32(17, crc32(c.subarray(4, 17)));
+      chunks.push(c);
+    }
+    pos = end;
+  }
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let o = 0;
+  for (const c of chunks) {
+    out.set(c, o);
+    o += c.length;
+  }
+  return out;
+}
+
+/**
+ * Download the barcode as a PNG at actual size (1.52 × 1.07 in). 8 px per
+ * bar width = 615 dpi, so it stays sharp; the DPI is stamped in the file.
  */
 export async function downloadBarcodePng(svg: string, fileName: string, pxPerModule = 8) {
   const img = new Image();
@@ -169,7 +232,44 @@ export async function downloadBarcodePng(svg: string, fileName: string, pxPerMod
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
   if (!blob) return;
-  const url = URL.createObjectURL(blob);
+  const png = setPngDpi(new Uint8Array(await blob.arrayBuffer()), pxPerModule / MODULE_IN);
+  const url = URL.createObjectURL(new Blob([png as BlobPart], { type: "image/png" }));
   triggerDownload(url, `${fileName}.png`);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/**
+ * Print the barcode at actual size (1.52 × 1.07 in) — no pop-up window, the
+ * browser's print dialog opens straight away. Printing at 100% / "Actual
+ * size" (the browser default) keeps it true to size.
+ */
+export function printBarcode(svg: string, caption: string) {
+  const frame = document.createElement("iframe");
+  frame.style.position = "fixed";
+  frame.style.width = "0";
+  frame.style.height = "0";
+  frame.style.border = "0";
+  frame.style.right = "0";
+  frame.style.bottom = "0";
+  document.body.appendChild(frame);
+  const doc = frame.contentDocument;
+  const win = frame.contentWindow;
+  if (!doc || !win) {
+    frame.remove();
+    return;
+  }
+  const esc = (t: string) => t.replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch] as string);
+  doc.open();
+  doc.write(
+    `<!doctype html><html><head><title>${esc(caption)}</title><style>` +
+      `@page{size:auto;margin:0.5in}html,body{margin:0;padding:0;background:#fff}` +
+      `svg{display:block;width:${BARCODE_WIDTH_IN.toFixed(3)}in;height:${BARCODE_HEIGHT_IN.toFixed(3)}in}` +
+      `</style></head><body>${svg}</body></html>`,
+  );
+  doc.close();
+  setTimeout(() => {
+    win.focus();
+    win.print();
+    setTimeout(() => frame.remove(), 1000);
+  }, 100);
 }

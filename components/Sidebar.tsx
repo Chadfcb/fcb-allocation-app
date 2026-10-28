@@ -62,6 +62,9 @@ import {
   UPC_BRANDS,
 } from "@/lib/appPages";
 
+// The single New! on the UPC's row for the barcode column (2026-10-28).
+const UPC_BARCODES_NEW_ID = "section:upcs-barcodes";
+
 const NEW_SIDEBAR_IDS: string[] = [
   // Only actual leaf pages and true sub-tree parents (like a brand under
   // Labels/UPC's) need to go in this list. A top-level parent — Calendars,
@@ -88,30 +91,11 @@ const NEW_SIDEBAR_IDS: string[] = [
   // one-off custom labels like Spartan Ale.
   "section:pos-labels-other",
   "/pos/labels/other/12oz",
-  // UPC's — new expandable brand+size tree added under Operations
-  // (2026-09-05), set up exactly like Labels. Every page under it is brand
-  // new, so every brand and every size leaf are flagged (the UPC's parent
-  // itself picks this up automatically, per the note above). (Audit Log
-  // moved the same day too, but that's a relocation of something that
-  // already existed, not new content, so it isn't flagged.)
-  "section:upc-fcb",
-  "/upcs/fcb/19-2oz",
-  "/upcs/fcb/16oz",
-  "/upcs/fcb/12oz",
-  "section:upc-speakeasy",
-  "/upcs/speakeasy/19-2oz",
-  "/upcs/speakeasy/16oz",
-  "/upcs/speakeasy/12oz",
-  "section:upc-sonoma-cider",
-  "/upcs/sonoma-cider/19-2oz",
-  "/upcs/sonoma-cider/16oz",
-  "/upcs/sonoma-cider/12oz",
-  "section:upc-oobli",
-  "/upcs/oobli/16oz",
-  "section:upc-ugly-fresca",
-  "/upcs/ugly-fresca/19-2oz",
-  "/upcs/ugly-fresca/16oz",
-  "/upcs/ugly-fresca/12oz",
+  // UPC's barcodes (2026-10-28): ONE New! on the UPC's row only, gone as
+  // soon as someone opens UPC's — per Chad, not one per page ("having to go
+  // click on every one ... is so much of a waste of time"). The old
+  // 2026-09-05 per-brand / per-size UPC's entries were removed the same day.
+  UPC_BARCODES_NEW_ID,
   // Chain Authorizations / Chain Mandates — new Sales sub-links, added
   // 2026-09-05, per Chad.
   "/sales/chain-authorizations",
@@ -781,7 +765,7 @@ export default function Sidebar({
   const operationsDescendantIds = [
     ...visibleOperations.map((link) => link.href),
     ...(showPosTree ? ["section:pos-labels", ...labelsDescendantIds()] : []),
-    ...(showUpcTree ? ["section:upcs", ...upcDescendantIds()] : []),
+    ...(showUpcTree ? ["section:upcs", UPC_BARCODES_NEW_ID, ...upcDescendantIds()] : []),
   ];
 
   const showMainGroup =
@@ -1120,12 +1104,13 @@ export default function Sidebar({
                                 onClick={() => {
                                   togglePosTree("upcs");
                                   dismissNew("section:upcs");
+                                  dismissNew(UPC_BARCODES_NEW_ID);
                                 }}
                                 className="fcb-nav-sub is-parent"
                               >
                                 UPC&apos;s
                                 {parentRight(
-                                  sectionShowsNew("section:upcs", upcDescendantIds()),
+                                  sectionShowsNew("section:upcs", [UPC_BARCODES_NEW_ID, ...upcDescendantIds()]),
                                   !!posTreeExpanded["upcs"],
                                 )}
                               </button>
