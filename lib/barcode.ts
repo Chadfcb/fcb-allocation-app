@@ -241,9 +241,12 @@ export async function downloadBarcodePng(svg: string, fileName: string, pxPerMod
 /**
  * Print the barcode at actual size (1.52 × 1.07 in) — no pop-up window, the
  * browser's print dialog opens straight away. Printing at 100% / "Actual
- * size" (the browser default) keeps it true to size.
+ * size" (the browser default) keeps it true to size. The product name (and
+ * a smaller brand/size line) prints above it (2026-10-28, Chad: "we have no
+ * idea of knowing what product this UPC belongs to unless its scanned") —
+ * print only; the downloads stay barcode-only for use on labels.
  */
-export function printBarcode(svg: string, caption: string) {
+export function printBarcode(svg: string, caption: string, title: string, subtitle = "") {
   const frame = document.createElement("iframe");
   frame.style.position = "fixed";
   frame.style.width = "0";
@@ -263,8 +266,14 @@ export function printBarcode(svg: string, caption: string) {
   doc.write(
     `<!doctype html><html><head><title>${esc(caption)}</title><style>` +
       `@page{size:auto;margin:0.5in}html,body{margin:0;padding:0;background:#fff}` +
+      `body{font-family:Helvetica,Arial,sans-serif;color:#000}` +
+      `.t{font-size:14pt;font-weight:700;line-height:1.2;margin:0 0 2pt}` +
+      `.s{font-size:9pt;line-height:1.2;margin:0 0 4pt;color:#333}` +
       `svg{display:block;width:${BARCODE_WIDTH_IN.toFixed(3)}in;height:${BARCODE_HEIGHT_IN.toFixed(3)}in}` +
-      `</style></head><body>${svg}</body></html>`,
+      `</style></head><body>` +
+      `<div class="t">${esc(title)}</div>` +
+      (subtitle ? `<div class="s">${esc(subtitle)}</div>` : "") +
+      `${svg}</body></html>`,
   );
   doc.close();
   setTimeout(() => {

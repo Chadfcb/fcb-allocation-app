@@ -104,7 +104,12 @@ export default function UpcTableClient({
   function printRowBarcode(row: UpcEntry) {
     const check = checkUpc(row.upc);
     if (!check.ok) return;
-    printBarcode(barcodeSvg(check.kind, check.digits), barcodeFileName(row.product_name, check.digits));
+    printBarcode(
+      barcodeSvg(check.kind, check.digits),
+      barcodeFileName(row.product_name, check.digits),
+      row.product_name,
+      `${POS_LABEL_BRAND_LABELS[brand]} — ${UPC_SIZE_LABELS[size]} · UPC ${check.digits}`,
+    );
   }
 
   async function downloadBarcode(row: UpcEntry, format: "png" | "svg") {
