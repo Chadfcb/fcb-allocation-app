@@ -1,26 +1,26 @@
 "use client";
 
 // Sales Dashboard → Distributor Inventory tab (added 2026-10-28, per Chad —
-// see lib/distInventory.ts). Read-only, built for the sales manager:
-//   1. Running low or out — every distributor, out of stock first.
-//   2. One card per distributor (name · rep, last updated, "N out · N low");
-//      click → that distributor's full stock list.
-//   3. Click any product → its sales at that distributor (cases last 30 / 90
-//      days and year to date vs last year, cases by month, who's buying it and
-//      who stopped). Click an account → the usual account pop-up.
+// see lib/distInventory.ts). Reworked the same day, per Chad: "i asked for it
+// to be the same way as they were in the distributor section … I only want the
+// individual distributor blocks". So: one "Stock at <distributor>" block per
+// distributor, built like the block on each distributor page (its own red
+// "Running low or out" list inside, then the full list, Export). Read-only.
+// Click any product → its sales at that distributor (cases last 30 / 90 days
+// and year to date vs last year, cases by month, who's buying it and who
+// stopped). Click an account → the usual account pop-up.
 // The Operations → Distributor Inventory page (editable grid) is unchanged.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Supa } from "@/components/SalesDashboardClient";
 import { AccountPopup } from "@/components/DistributorPageClient";
-import { CARD, MUTED, Change, Dot, ExportButton, Modal, Pill, Row, Stat, exportSheets } from "@/components/SalesDashboardHome";
+import { CARD, MUTED, Change, ExportButton, Modal, Pill, Row, Stat, exportSheets } from "@/components/SalesDashboardHome";
 import { DISTRIBUTOR_PAGES, FILE_INVENTORY_DISTRIBUTORS, NO_INVENTORY_DISTRIBUTORS } from "@/lib/distributorPages";
 import { REP_BY_DISTRIBUTOR } from "@/lib/salesAccounts";
-import { distColor, fmtDay, fmtN, pctChange } from "@/lib/salesDashHome";
+import { fmtDay, fmtN, pctChange } from "@/lib/salesDashHome";
 import { daysBetween, isLow, isOut, lilyProductsOf, sizeOfProduct, type ProductSales, type StockData, type StockItem } from "@/lib/distInventory";
 
 const DISTS = DISTRIBUTOR_PAGES.map((d) => d.name);
-const repOf = (d: string) => REP_BY_DISTRIBUTOR[d] ?? "No FCB rep";
 
 // "Thu 10/22/26, 4:12 AM" — Pacific time (same as the distributor pages).
 function fmtStamp(ts: string): string {
@@ -35,13 +35,12 @@ function stockLine(dist: string, s: StockData | undefined): string {
   if (!s?.updated_at) {
     if (NO_INVENTORY_DISTRIBUTORS.includes(dist)) return `${dist} doesn't report inventory yet`;
     if (FILE_INVENTORY_DISTRIBUTORS.includes(dist)) return "No inventory file uploaded yet";
-    return "No inventory report yet";
+    return "No inventory report for this distributor yet";
   }
   return `${s.source === "ekos" ? "Updated from Ekos" : "Imported from file"}: ${fmtStamp(s.updated_at)}`;
 }
 
 const fmt1 = (n: number) => n.toLocaleString("en-US", { maximumFractionDigits: 1 });
-const leftText = (i: StockItem) => (isOut(i) ? "Out" : `${i.weeks_left} wks`);
 
 type Pick = { dist: string; item: StockItem };
 
@@ -49,10 +48,8 @@ export default function SalesDistInventory({ supabase }: { supabase: Supa }) {
   const [stock, setStock] = useState<Record<string, StockData>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
-  const [openDist, setOpenDist] = useState<string | null>(null);
   const [pick, setPick] = useState<Pick | null>(null);
   const [account, setAccount] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     const res = await Promise.all(DISTS.map((d) => Promise.resolve(supabase.rpc("sales_territory_stock", { p_dist: d })).then((r) => [d, r] as const)));
@@ -88,144 +85,30 @@ export default function SalesDistInventory({ supabase }: { supabase: Supa }) {
     };
   }, [supabase, load]);
 
-  // Every distributor's low / out items, out of stock first, then fewest weeks left.
-  const low = useMemo(() => {
-    const out: Pick[] = [];
-    for (const d of DISTS) for (const i of stock[d]?.inventory ?? []) if (isOut(i) || isLow(i)) out.push({ dist: d, item: i });
-    return out.sort((a, b) => Number(isOut(b.item)) - Number(isOut(a.item)) || (a.item.weeks_left ?? 0) - (b.item.weeks_left ?? 0) || a.dist.localeCompare(b.dist));
-  }, [stock]);
-
-  const exportLow = async () => {
-    setBusy(true);
-    try {
-      await exportSheets("Distributors - running low or out.xlsx", [
-        {
-          name: "Running low or out",
-          title: `Running low or out — every distributor (under 2 weeks of stock, or out)`,
-          cols: [
-            { header: "Distributor", key: "dist", width: 16 },
-            { header: "Rep", key: "rep", width: 12 },
-            { header: "Product", key: "product", width: 44 },
-            { header: "On hand", key: "on_hand" },
-            { header: "Sells per week", key: "per_week" },
-            { header: "Weeks on hand", key: "weeks" },
-          ],
-          rows: low.map((l) => ({ dist: l.dist, rep: repOf(l.dist), product: l.item.product, on_hand: l.item.on_hand, per_week: l.item.per_week, weeks: isOut(l.item) ? "Out" : (l.item.weeks_left ?? "") })),
-        },
-      ]);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   if (loading) return <p className={`text-sm ${MUTED}`}>Loading distributor inventory…</p>;
 
   return (
     <div className="flex flex-col gap-4">
-      <p className={`text-[12.5px] ${MUTED}`}>
-        What each distributor has of our beer in their warehouse. Updated every weekday morning from Ekos (Superior from their Monday file). Click a distributor for its full list, or any product for its sales.
-      </p>
-
-      {/* 1. Running low or out */}
-      <section className={`${CARD} flex min-w-0 flex-col gap-3`} style={{ borderColor: "rgba(239,68,68,0.35)" }}>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-[15px] font-semibold text-[#ffab9c]">Running low or out ({low.length})</h2>
-            <p className={`text-[12.5px] ${MUTED}`}>Out of stock, or under 2 weeks left at the rate it&apos;s selling · every distributor</p>
-          </div>
-          {low.length > 0 && <ExportButton onClick={exportLow} busy={busy} />}
-        </div>
-        {low.length === 0 ? (
-          <p className={`text-sm ${MUTED}`}>Nothing is running low right now.</p>
-        ) : (
-          <div className="max-h-[340px] overflow-y-auto pr-1">
-            <div className="grid grid-cols-[auto_minmax(0,1fr)_auto_auto] items-center gap-x-4 gap-y-0.5 text-[13px]">
-              <span className="text-[11px] text-neutral-500">Distributor</span>
-              <span className="text-[11px] text-neutral-500">Product</span>
-              <span className="text-right text-[11px] text-neutral-500">On hand</span>
-              <span className="text-right text-[11px] text-neutral-500">Left</span>
-              {low.map((l) => (
-                <button
-                  key={`${l.dist}|${l.item.product}`}
-                  type="button"
-                  onClick={() => setPick(l)}
-                  className="col-span-4 grid grid-cols-subgrid items-center rounded-md py-1 text-left hover:bg-white/[0.03]"
-                >
-                  <span className="flex items-center gap-2 whitespace-nowrap text-neutral-200">
-                    <Dot color={distColor(l.dist)} />
-                    {l.dist}
-                  </span>
-                  <span className="min-w-0 truncate text-neutral-100">{l.item.product}</span>
-                  <span className="text-right font-mono text-neutral-300">{fmtN(l.item.on_hand)}</span>
-                  <span className={`text-right font-mono font-semibold ${isOut(l.item) ? "text-red-400" : "text-[#ffab9c]"}`}>{leftText(l.item)}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* 2. One card per distributor */}
-      <section className="flex flex-col gap-2">
-        <h2 className="text-[15px] font-semibold text-neutral-100">Inventory by distributor</h2>
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3">
-          {DISTS.map((d) => {
-            const s = stock[d];
-            const items = s?.inventory ?? [];
-            const nOut = items.filter(isOut).length;
-            const nLow = items.filter(isLow).length;
-            const cases = items.reduce((t, i) => t + (Number(i.on_hand) || 0), 0);
-            return (
-              <button
-                key={d}
-                type="button"
-                onClick={() => setOpenDist(d)}
-                className={`${CARD} flex flex-col gap-2 text-left transition hover:border-[#6abc46]/40`}
-              >
-                <span className="flex items-center gap-2">
-                  <Dot color={distColor(d)} glow />
-                  <span className="text-[15px] font-semibold text-neutral-100">{d}</span>
-                  <span className={`text-[12.5px] ${MUTED}`}>· {repOf(d)}</span>
-                </span>
-                <span className="text-[12px] text-neutral-500">{errors[d] ?? stockLine(d, s)}</span>
-                <span className="flex items-end justify-between gap-2">
-                  <span className="flex flex-col">
-                    <span className="font-mono text-xl font-light text-neutral-50">{items.length ? fmtN(cases) : "—"}</span>
-                    <span className="text-[11px] text-neutral-500">{items.length ? `on hand · ${items.length} product${items.length === 1 ? "" : "s"}` : "nothing reported"}</span>
-                  </span>
-                  {items.length > 0 &&
-                    (nOut + nLow > 0 ? (
-                      <span className="rounded-full bg-red-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-[#ffab9c]">
-                        {[nOut ? `${nOut} out` : null, nLow ? `${nLow} low` : null].filter(Boolean).join(" · ")}
-                      </span>
-                    ) : (
-                      <span className="rounded-full bg-[#6abc46]/15 px-2.5 py-0.5 text-[11px] font-semibold text-[#9edc7f]">Stocked</span>
-                    ))}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
-      {openDist && !pick && !account && (
-        <DistStockPopup dist={openDist} data={stock[openDist]} onClose={() => setOpenDist(null)} onPick={(item) => setPick({ dist: openDist, item })} />
-      )}
-      {pick && !account && (
-        <ProductSalesPopup supabase={supabase} pick={pick} onClose={() => setPick(null)} onOpenAccount={(id) => setAccount(id)} />
-      )}
+      <div className="flex flex-wrap gap-4">
+        {DISTS.map((d) => (
+          <StockBlock key={d} dist={d} data={stock[d]} error={errors[d]} onPick={(item) => setPick({ dist: d, item })} />
+        ))}
+      </div>
+      {pick && !account && <ProductSalesPopup supabase={supabase} pick={pick} onClose={() => setPick(null)} onOpenAccount={(id) => setAccount(id)} />}
       {account && <AccountPopup supabase={supabase} outletId={account} onClose={() => setAccount(null)} />}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// One distributor's full stock list
+// One distributor's block — same as "Stock at <dist>" on the distributor pages
 // ---------------------------------------------------------------------------
-function DistStockPopup({ dist, data, onClose, onPick }: { dist: string; data: StockData | undefined; onClose: () => void; onPick: (i: StockItem) => void }) {
+function StockBlock({ dist, data, error, onPick }: { dist: string; data: StockData | undefined; error?: string; onPick: (i: StockItem) => void }) {
   const [busy, setBusy] = useState(false);
   const items = data?.inventory ?? [];
+  const low = items.filter((i) => isOut(i) || isLow(i));
   const line = stockLine(dist, data);
+  const rep = REP_BY_DISTRIBUTOR[dist];
   const exportStock = async () => {
     setBusy(true);
     try {
@@ -239,7 +122,7 @@ function DistStockPopup({ dist, data, onClose, onPick }: { dist: string; data: S
             { header: "Sells per week", key: "per_week" },
             { header: "Weeks on hand", key: "weeks_left" },
           ],
-          rows: items.map((i) => ({ ...i, weeks_left: isOut(i) ? "Out" : (i.weeks_left ?? "") })),
+          rows: items.map((i) => ({ ...i, weeks_left: i.weeks_left ?? "" })),
         },
       ]);
     } finally {
@@ -247,31 +130,48 @@ function DistStockPopup({ dist, data, onClose, onPick }: { dist: string; data: S
     }
   };
   return (
-    <Modal title={`Stock at ${dist} · ${repOf(dist)}`} sub={`Their inventory · ${line} · click a product for its sales`} onClose={onClose} actions={items.length ? <ExportButton onClick={exportStock} busy={busy} /> : undefined}>
-      {items.length === 0 ? (
-        <p className={`text-sm ${MUTED}`}>Nothing to show yet.</p>
-      ) : (
-        <div className="max-h-[60vh] overflow-y-auto pr-1">
-          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-4 gap-y-0.5 text-[13px]">
+    <section className={`${CARD} flex min-w-0 flex-[1_1_420px] flex-col gap-3`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-[15px] font-semibold text-neutral-100">
+            Stock at {dist}
+            {rep && <span className={`ml-1.5 text-[13px] font-normal ${MUTED}`}>· {rep}</span>}
+          </h2>
+          <p className={`text-[12.5px] ${MUTED}`}>Their inventory · {error ?? line}</p>
+        </div>
+        {items.length > 0 && <ExportButton onClick={exportStock} busy={busy} />}
+      </div>
+      {low.length > 0 && (
+        <div className="flex flex-col gap-1.5 rounded-xl border border-red-500/30 bg-red-500/5 p-3">
+          <span className="text-xs font-semibold text-[#ffab9c]">Running low or out ({low.length})</span>
+          {low.map((i) => (
+            <button key={i.product} type="button" onClick={() => onPick(i)} className="flex justify-between gap-3 text-left text-[13px] hover:underline">
+              <span className="min-w-0 truncate text-neutral-200">{i.product}</span>
+              <span className="whitespace-nowrap font-mono text-neutral-300">{i.on_hand <= 0 ? "Out" : `${i.weeks_left} wks`}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {items.length > 0 && (
+        <div className="max-h-64 overflow-y-auto">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-4 gap-y-1.5 text-[13px]">
             <span className="text-[11px] text-neutral-500">Product</span>
             <span className="text-right text-[11px] text-neutral-500">On hand</span>
             <span className="text-right text-[11px] text-neutral-500">Per week</span>
             <span className="text-right text-[11px] text-neutral-500">Weeks on hand</span>
-            {items.map((i) => {
-              const bad = isOut(i) || isLow(i);
-              return (
-                <button key={i.product} type="button" onClick={() => onPick(i)} className="col-span-4 grid grid-cols-subgrid items-center rounded-md py-1 text-left hover:bg-white/[0.03]">
-                  <span className="min-w-0 truncate text-neutral-100">{i.product}</span>
-                  <span className="text-right font-mono">{fmtN(i.on_hand)}</span>
-                  <span className="text-right font-mono text-neutral-400">{fmt1(i.per_week)}</span>
-                  <span className={`text-right font-mono ${bad ? "font-semibold text-[#ffab9c]" : "text-neutral-300"}`}>{isOut(i) ? "Out" : (i.weeks_left ?? "—")}</span>
-                </button>
-              );
-            })}
+            {items.map((i) => (
+              <button key={i.product} type="button" onClick={() => onPick(i)} title="Click for this product's sales" className="col-span-4 grid grid-cols-subgrid text-left hover:bg-white/[0.03]">
+                <span className="min-w-0 truncate text-neutral-200">{i.product}</span>
+                <span className="text-right font-mono">{fmtN(i.on_hand)}</span>
+                <span className="text-right font-mono text-neutral-400">{fmtN(i.per_week)}</span>
+                <span className={`text-right font-mono ${i.weeks_left !== null && i.weeks_left < 2 ? "text-[#ffab9c]" : "text-neutral-300"}`}>{i.weeks_left ?? "—"}</span>
+              </button>
+            ))}
           </div>
         </div>
       )}
-    </Modal>
+      {!items.length && <p className={`text-[13px] ${MUTED}`}>Nothing to show yet.</p>}
+    </section>
   );
 }
 
