@@ -66,7 +66,18 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
     { name:'FV16', bbl:30, px:646, py:337, vol:18.662471, code:'NPT', product:'Nectarine Pie of the Tiger',    batch:'1295',               color:'#FFAE6B' },
     { name:'FV15', bbl:60, px:767, py:340 },
   ];
-  const FT_PER_PX = 0.135, CX = 490, CZ = 210;
+  // Real building (Chad, 2026-10-26 — claude/building-front-photo.md): 620 F St is a brick
+  // box ≈ 51 ft wide (F St front) × 132 ft deep. Chad marked FRONT / BACK on a screenshot of
+  // this view: the building's long side runs along the tank rows — the FRONT door is at the
+  // packaging end (+x), the BACK wall is past FV06/FV11/FV17 (−x), the back row of tanks +
+  // the packaging run along the far long wall (−z) and the near side (+z) is the open aisle.
+  // Same arrangement as before; spacing tightened from 0.135 to the Ekos map's own scale
+  // (≈ 0.06 ft per map pixel) so tanks + packaging fit inside the 132 ft.
+  // BLD_W / BLD_D / IN_X / IN_Z are the building's own width / depth; in the scene the depth
+  // runs along x and the width along z (the building is turned a quarter turn — see bld).
+  const BLD_W = 58, BLD_D = 150, WALL_T = 0.75;   // Fresno County parcel map: APN 467-081-09 = 58 × 150 ft rectangle, building fills the lot (Chad: "58 ft")
+  const IN_X = BLD_W/2 - WALL_T, IN_Z = BLD_D/2 - WALL_T;   // inside faces of the walls (building's own frame)
+  const FT_PER_PX = 0.09, CX = 571, CZ = 322;               // 0.09 (Chad: "the cellar guy cant walk between tanks") → 3½–6 ft between tanks; ≈ 26 ft open floor behind the back tanks (Chad's floor plan); back row ≈ 2½ ft off the far wall
 
   // ---------- Beer looks (Chad, 2026-10-05): one standard beer color for everything, either
   // clear or hazy; ciders a bit redder (apple juice) and clear; Prohibition a deep red, clear.
@@ -92,13 +103,13 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
   const scene = new THREE.Scene();
   scene.fog = new THREE.Fog(0x0b100e, 160, 340);
   const camera = new THREE.PerspectiveCamera(36, 1, 0.5, 900);
-  camera.position.set(12, 68, 113);
+  camera.position.set(0, 78, 126);   // outside the open-aisle side, looking in over that wall at the tanks (2026-10-26)
 
   scene.add(new THREE.HemisphereLight(0xdfeee6, 0x0b100e, 0.6));
   const key = new THREE.DirectionalLight(0xffffff, 1.0); key.position.set(30, 50, 35); scene.add(key);
   // Overhead cellar lights (Chad's idea, 2026-10-04): a row of lights up near the ceiling gives
   // the polished steel crisp shine/hotspots, all lit from the same place like a real cellar.
-  for (const [x, z] of [[-30, -6], [0, -6], [30, -6], [-30, 14], [0, 14], [30, 14]]){
+  for (const [x, z] of [[-40, -12], [-18, -12], [4, -12], [26, -12], [52, -18], [-40, 20]]){   // over the tanks + the packaging, inside the building
     const lamp = new THREE.PointLight(0xfff6e8, 0.42, 110, 1.2); lamp.position.set(x, 32, z); scene.add(lamp);
   }
   const rim = new THREE.DirectionalLight(0x9fd88a, 0.35); rim.position.set(-35, 25, -30); scene.add(rim);
@@ -141,6 +152,331 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
   const shadowTex = radialTex('rgba(0,0,0,0.55)','rgba(0,0,0,0)');
   const ring = new THREE.Mesh(new THREE.RingGeometry(1.45,1.52,96), new THREE.MeshBasicMaterial({ color:0x6abc46, transparent:true, opacity:0, depthWrite:false, side:THREE.DoubleSide }));
   ring.rotation.x = -Math.PI/2; ring.position.y = 0.04; scene.add(ring);
+
+  // ---------- The building (Chad, 2026-10-26 — claude/building-front-photo.md) ----------
+  // 620 F St: brick box ≈ 51 × 132 ft, no roof drawn (so the top-down view still works).
+  // Front (F St, +z): red brick, 17 ft side wings, a 21 ft centre tower with a recessed panel +
+  // round emblem, the silver roll-up door (partly down) over an open storefront with black
+  // swing gates, two black sign boxes with gooseneck lights, the maroon steel man door, white
+  // efflorescence along the bottom. Back (-z): brick painted mustard yellow, "FULL CIRCLE
+  // BREWING CO." across the top, a light gray roll-up door, a second (open) doorway and a tall
+  // narrow window. Both long sides: plain brick with three wall lights (Chad: "the other side,
+  // looks exactly like this side"). Sizes measured from Chad's photos (man door = 3 × 7 ft) and
+  // Google satellite (≈ ±3 ft).
+  // Any wall between the camera and the inside fades to see-through (like The Sims), so the
+  // tanks are always visible; walls you're looking at from inside stay solid brick.
+  const BRICK_TILE = 8, unitBox = new THREE.BoxGeometry(1, 1, 1);                       // one texture tile = 8 × 8 ft of wall
+  function brickTex(painted){
+    const N = 1024, c = document.createElement('canvas'); c.width = c.height = N; const g = c.getContext('2d');
+    let seed = painted ? 23 : 5; const rnd = () => (seed = (seed*16807) % 2147483647) / 2147483647;
+    const COURSE = N/32, LEN = N/12, M = 4;  // 2⅔" bricks + ⅜" mortar → 32 courses per 8 ft; 8" long
+    g.fillStyle = painted ? '#8f7a2e' : '#b3aa9b'; g.fillRect(0, 0, N, N);   // mortar
+    for (let r=0;r<32;r++){
+      const off = r % 2 ? LEN/2 : 0;
+      for (let i=-1;i<13;i++){
+        const x = i*LEN + off, y = r*COURSE;
+        let col;
+        if (painted){ const l = 41 + rnd()*5; col = 'hsl(' + (45 + rnd()*3) + ',' + (50 + rnd()*7) + '%,' + l + '%)'; }   // muted mustard (Chad's photo)
+        else { const h = 8 + rnd()*12, sat = 42 + rnd()*20, l = 30 + rnd()*14 + (rnd() > 0.93 ? -8 : 0); col = 'hsl(' + h + ',' + sat + '%,' + l + '%)'; }
+        g.fillStyle = col; g.fillRect(x + M/2, y + M/2, LEN - M, COURSE - M);
+        if (!painted && rnd() > 0.6){            // a little texture on some bricks
+          g.fillStyle = 'rgba(0,0,0,' + (0.05 + rnd()*0.1) + ')'; g.fillRect(x + M/2 + rnd()*LEN*0.6, y + M/2, LEN*0.3, COURSE - M);
+        }
+      }
+    }
+    const img = g.getImageData(0, 0, N, N), d = img.data;   // fine grain
+    for (let i=0;i<d.length;i+=4){ const n = (rnd() - 0.5)*(painted ? 10 : 18); d[i] += n; d[i+1] += n; d[i+2] += n; }
+    g.putImageData(img, 0, 0);
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.encoding = THREE.sRGBEncoding;
+    t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    return t;
+  }
+  const brickRedTex = brickTex(false), brickYellowTex = brickTex(true);
+  // Box with UVs taken from its place in the world, so bricks line up across every piece of wall
+  function wallBox(mat, x0, x1, y0, y1, z0, z1){
+    const geo = new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0);
+    geo.translate((x0 + x1)/2, (y0 + y1)/2, (z0 + z1)/2);
+    const pos = geo.attributes.position, nor = geo.attributes.normal, uv = geo.attributes.uv;
+    for (let i=0;i<pos.count;i++){
+      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i), nx = Math.abs(nor.getX(i)), ny = Math.abs(nor.getY(i));
+      if (ny > 0.5) uv.setXY(i, x/BRICK_TILE, z/BRICK_TILE);
+      else uv.setXY(i, (nx > 0.5 ? z : x)/BRICK_TILE, y/BRICK_TILE);
+    }
+    return new THREE.Mesh(geo, mat);
+  }
+  // Each wall fades on its own, so each gets its own copies of the materials it uses
+  const walls = [];
+  const bld = new THREE.Group(); bld.rotation.y = Math.PI/2; scene.add(bld);   // building's front (+z) faces scene +x
+  const toBld = (p, o = {}) => { o.x = -p.z; o.y = p.y; o.z = p.x; return o; };  // scene point → building's own frame
+  function makeWall(name, outside){
+    const w = { name, outside, group: new THREE.Group(), mats: new Map(), op: 1 };
+    w.mat = base => { if (!w.mats.has(base)){ const m = base.clone(); m.userData.baseOp = base.opacity; m.userData.baseTr = base.transparent; m.userData.baseDW = base.depthWrite; w.mats.set(base, m); } return w.mats.get(base); };
+    w.box = (base, x0, x1, y0, y1, z0, z1) => { const m = wallBox(Array.isArray(base) ? base.map(w.mat) : w.mat(base), x0, x1, y0, y1, z0, z1); w.group.add(m); return m; };
+    w.add = (geo, base, x, y, z) => { const m = new THREE.Mesh(geo, w.mat(base)); m.position.set(x, y, z); w.group.add(m); return m; };
+    bld.add(w.group); walls.push(w);
+    return w;
+  }
+  const L = h => new THREE.Color(h).convertSRGBToLinear();
+  const brickMat = new THREE.MeshStandardMaterial({ map: brickRedTex, color: 0xffffff, roughness: 0.92, metalness: 0 });
+  const yellowPaint = new THREE.MeshStandardMaterial({ map: brickYellowTex, color: 0xffffff, roughness: 0.85, metalness: 0 });
+  const capMat = new THREE.MeshStandardMaterial({ color: L('#9a948a'), roughness: 0.9, metalness: 0 });
+  const blackMat = new THREE.MeshStandardMaterial({ color: L('#141615'), roughness: 0.6, metalness: 0.2 });
+  const metalMat = new THREE.MeshStandardMaterial({ color: L('#3a3d3c'), roughness: 0.5, metalness: 0.6 });
+  const doorRedMat = new THREE.MeshStandardMaterial({ color: L('#5e2620'), roughness: 0.55, metalness: 0.35 });
+  const lampMat = new THREE.MeshStandardMaterial({ color: L('#202322'), roughness: 0.5, metalness: 0.5, emissive: L('#fff1d0'), emissiveIntensity: 0 });
+  const bulbMat = new THREE.MeshBasicMaterial({ color: 0xfff3d6 });
+  const whiteBoxMat = new THREE.MeshStandardMaterial({ color: L('#d9d9d4'), roughness: 0.6, metalness: 0 });
+  function slatTex(light){        // roll-up door: horizontal slats
+    const c = document.createElement('canvas'); c.width = 64; c.height = 256; const g = c.getContext('2d');
+    g.fillStyle = light ? '#c9cbc8' : '#9fa3a1'; g.fillRect(0, 0, 64, 256);
+    for (let y=0;y<256;y+=16){ g.fillStyle = light ? '#a4a7a4' : '#7a7e7c'; g.fillRect(0, y, 64, 3); g.fillStyle = 'rgba(255,255,255,0.18)'; g.fillRect(0, y + 4, 64, 2); }
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.encoding = THREE.sRGBEncoding; return t;
+  }
+  const slatFrontTex = slatTex(false), slatBackTex = slatTex(true);
+  function canvasTex(w, h, draw){
+    const c = document.createElement('canvas'); c.width = w; c.height = h; const g = c.getContext('2d'); draw(g, w, h);
+    const t = new THREE.CanvasTexture(c); t.encoding = THREE.sRGBEncoding; t.anisotropy = renderer.capabilities.getMaxAnisotropy(); return t;
+  }
+  // flat picture on a wall (signs, lettering, staining); faceOut = which way it faces
+  function decal(w, tex, x, y, z, width, height, faceOut, opts = {}){
+    const base = new THREE.MeshStandardMaterial({ map: tex, transparent: true, depthWrite: false, roughness: opts.rough ?? 0.8, metalness: 0,
+      emissive: opts.glow ? 0xffffff : 0x000000, emissiveMap: opts.glow ? tex : null, emissiveIntensity: opts.glow || 0,
+      polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(width, height), w.mat(base));
+    m.position.set(x, y, z);
+    m.rotation.y = { '+z': 0, '-z': Math.PI, '+x': Math.PI/2, '-x': -Math.PI/2 }[faceOut];
+    w.group.add(m); return m;
+  }
+  // gooseneck wall light: arm out from the wall, curved down, shade + warm bulb
+  function gooseneck(w, x, y, z, faceOut){
+    const n = { '+z': [0, 1], '-z': [0, -1], '+x': [1, 0], '-x': [-1, 0] }[faceOut];
+    const g = new THREE.Group(); g.position.set(x, y, z); g.rotation.y = Math.atan2(n[0], n[1]);   // local +z = out from the wall
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.8, 8), w.mat(lampMat)); rod.rotation.x = Math.PI/2; rod.position.set(0, 0, 0.4); g.add(rod);
+    const drop = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.25, 8), w.mat(lampMat)); drop.position.set(0, -0.1, 0.78); g.add(drop);
+    const shade = new THREE.Mesh(new THREE.ConeGeometry(0.42, 0.32, 16, 1, true), w.mat(lampMat)); shade.position.set(0, -0.3, 0.78); g.add(shade);
+    const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 8), w.mat(bulbMat)); bulb.position.set(0, -0.42, 0.78); g.add(bulb);
+    const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.06, 12), w.mat(lampMat)); plate.rotation.x = Math.PI/2; plate.position.set(0, 0, 0.03); g.add(plate);
+    w.group.add(g); return g;
+  }
+  const HF = BLD_D/2, HW = BLD_W/2, T = WALL_T;
+  const WING_H = 17, TOWER_H = 21;
+
+  // ----- FRONT (F St), outer face at z = +HF -----
+  {
+    const w = makeWall('front', p => p.z - HF);
+    const z0 = HF - T, z1 = HF, zt = HF + 0.4;                       // tower stands 0.4 ft proud
+    const fx = f => -HW + f*BLD_W;                                    // across the front, as a fraction of the width (from Chad's street photo)
+    const TX0 = fx(0.294), TX1 = fx(0.643), RX0 = fx(0.466) - 5, RX1 = fx(0.466) + 5, RU_H = 13;   // tower + 10 ft roll-up opening
+    const DX0 = fx(0.91) - 1.5, DX1 = fx(0.91) + 1.5, D_H = 7;                                     // 3 × 7 man door
+    w.box(brickMat, -HW, TX0, 0, WING_H, z0, z1);                    // left wing
+    w.box(brickMat, TX0, RX0, 0, TOWER_H, z0, zt);                   // tower, left of the roll-up
+    w.box(brickMat, RX1, TX1, 0, TOWER_H, z0, zt);                   // tower, right of the roll-up
+    w.box(brickMat, RX0, RX1, RU_H, TOWER_H, z0, zt);                // over the roll-up
+    w.box(brickMat, TX1, DX0, 0, WING_H, z0, z1);                    // right wing
+    w.box(brickMat, DX0, DX1, D_H, WING_H, z0, z1);                  // over the man door
+    w.box(brickMat, DX1, HW, 0, WING_H, z0, z1);
+    w.box(brickMat, HW - 1.2, HW, 0, WING_H + 0.3, z1, z1 + 0.25);   // corner pilaster
+    // parapet caps
+    w.box(capMat, -HW - 0.05, TX0, WING_H, WING_H + 0.25, z0 - 0.05, z1 + 0.08);
+    w.box(capMat, TX1, HW + 0.05, WING_H, WING_H + 0.25, z0 - 0.05, z1 + 0.08);
+    w.box(capMat, TX0 - 0.05, TX1 + 0.05, TOWER_H, TOWER_H + 0.3, z0 - 0.05, zt + 0.1);
+    // recessed panel at the top of the tower: a brick frame stands out around it
+    const PX0 = RX0 - 0.5, PX1 = RX1 + 0.5, PY0 = 14.3, PY1 = 20.0, F = 0.55, zp = zt + 0.22;
+    w.box(brickMat, PX0, PX1, PY1 - F, PY1, zt, zp); w.box(brickMat, PX0, PX1, PY0, PY0 + F, zt, zp);
+    w.box(brickMat, PX0, PX0 + F, PY0, PY1, zt, zp); w.box(brickMat, PX1 - F, PX1, PY0, PY1, zt, zp);
+    // round emblem in the middle of the panel
+    const emb = w.add(new THREE.CylinderGeometry(0.95, 0.95, 0.18, 32), capMat, (PX0 + PX1)/2, (PY0 + PY1)/2, zt + 0.1); emb.rotation.x = Math.PI/2;
+    const embIn = w.add(new THREE.CylinderGeometry(0.62, 0.62, 0.22, 32), new THREE.MeshStandardMaterial({ color: L('#6f675d'), roughness: 0.9 }), (PX0 + PX1)/2, (PY0 + PY1)/2, zt + 0.12); embIn.rotation.x = Math.PI/2;
+    // concrete bands either side of the roll-up head
+    w.box(capMat, TX0 - 0.02, RX0, RU_H - 0.45, RU_H + 0.35, zt, zt + 0.12);
+    w.box(capMat, RX1, TX1 + 0.02, RU_H - 0.45, RU_H + 0.35, zt, zt + 0.12);
+    // roll-up door: silver slats, rolled down to ≈ 9.4 ft (like the photo), open below
+    const RU_BOT = 9.4, slat = slatFrontTex.clone(); slat.needsUpdate = true; slat.repeat.set(1, (RU_H - RU_BOT)/4);
+    w.box(new THREE.MeshStandardMaterial({ map: slat, roughness: 0.45, metalness: 0.55 }), RX0, RX1, RU_BOT, RU_H, z0 + 0.25, z0 + 0.4);
+    w.box(metalMat, RX0, RX1, RU_BOT - 0.15, RU_BOT, z0 + 0.22, z0 + 0.43);                // bottom bar
+    // storefront frame under it (header + side posts), doors wide open
+    w.box(metalMat, RX0 + 0.1, RX1 - 0.1, RU_BOT - 0.9, RU_BOT - 0.55, z0 + 0.1, z0 + 0.3);
+    w.box(metalMat, RX0 + 0.1, RX0 + 0.4, 0, RU_BOT - 0.55, z0 + 0.1, z0 + 0.3);
+    w.box(metalMat, RX1 - 0.4, RX1 - 0.1, 0, RU_BOT - 0.55, z0 + 0.1, z0 + 0.3);
+    // black metal swing gates, swung open out toward the sidewalk
+    for (const [hx, dir] of [[RX0 + 0.05, 1], [RX1 - 0.05, -1]]){
+      const gate = new THREE.Group(); gate.position.set(hx, 0, zt + 0.05);
+      const leafW = 2.6, leafH = 8.2;
+      const bar = (x0, x1, y0, y1) => { const m = new THREE.Mesh(unitBox, w.mat(blackMat)); m.scale.set(0.09, y1 - y0, x1 - x0); m.position.set(0, (y0 + y1)/2, (x0 + x1)/2); gate.add(m); };
+      bar(0, leafW, 0.25, 0.4); bar(0, leafW, leafH - 0.15, leafH); bar(0, leafW, 4.0, 4.12);
+      for (let i=0;i<=8;i++){ const z = i*leafW/8; bar(Math.max(0, z - 0.04), Math.min(leafW, z + 0.04), 0.25, leafH); }
+      gate.rotation.y = dir > 0 ? 0.25 : -0.25;
+      w.group.add(gate);
+    }
+    // orange cones at the doorway
+    const coneMat = new THREE.MeshStandardMaterial({ color: L('#e2584a'), roughness: 0.6 });
+    for (const cx of [RX0 - 0.6, RX1 + 0.6]){ w.add(new THREE.ConeGeometry(0.42, 1.6, 16), coneMat, cx, 0.8, zt + 1.4); w.add(new THREE.BoxGeometry(1.0, 0.1, 1.0), coneMat, cx, 0.05, zt + 1.4); }
+    // man door: maroon steel, set back a little, with a lever
+    w.box(doorRedMat, DX0, DX1, 0, D_H, z0 + 0.2, z0 + 0.38);
+    w.box(metalMat, DX0 - 0.15, DX0, 0, D_H + 0.15, z0, z1 + 0.05); w.box(metalMat, DX1, DX1 + 0.15, 0, D_H + 0.15, z0, z1 + 0.05);
+    w.box(metalMat, DX0 - 0.15, DX1 + 0.15, D_H, D_H + 0.15, z0, z1 + 0.05);
+    w.box(metalMat, DX0 + 0.25, DX0 + 0.75, 3.3, 3.42, z0 + 0.38, z0 + 0.5);
+    // sign boxes: black frame, sign inside
+    const neonTex = canvasTex(512, 512, (g, W, H) => {
+      g.fillStyle = '#0d0e10'; g.fillRect(0, 0, W, H);
+      g.fillStyle = '#5a1f1a'; g.fillRect(40, 40, W - 80, H - 80); g.fillStyle = '#121214'; g.fillRect(56, 56, W - 112, H - 112);
+      g.shadowColor = '#ff6fa8'; g.shadowBlur = 18; g.fillStyle = '#ffb3d0'; g.textAlign = 'center';
+      g.font = 'bold 54px ' + FONT; g.fillText('CRAFT', W/2 - 70, 170); g.fillText('BEER', W/2 - 70, 236);
+      g.font = '600 30px ' + FONT; g.fillText('BREWED HERE', W/2 - 70, 300);
+      g.shadowColor = '#bfefff'; g.strokeStyle = '#e9fbff'; g.lineWidth = 7;
+      g.beginPath(); g.arc(W/2 + 110, 250, 62, 0, Math.PI*2); g.stroke();
+      g.beginPath(); g.arc(W/2 + 88, 240, 13, 0, Math.PI*2); g.arc(W/2 + 132, 240, 13, 0, Math.PI*2); g.stroke();
+    });
+    const logoTex = canvasTex(512, 512, (g, W, H) => {
+      g.fillStyle = '#0d0e10'; g.fillRect(0, 0, W, H);
+      g.fillStyle = '#5e231c'; g.fillRect(70, 70, W - 140, H - 140); g.fillStyle = '#16100d'; g.fillRect(86, 86, W - 172, H - 172);
+      const cx = W/2, cy = H/2; g.strokeStyle = '#f1ede4'; g.fillStyle = '#f1ede4'; g.lineWidth = 6;
+      g.beginPath(); g.arc(cx, cy, 128, 0, Math.PI*2); g.stroke();
+      g.font = 'bold 26px ' + FONT; g.textAlign = 'center'; g.textBaseline = 'middle';
+      const txt = 'FULL CIRCLE  BREWING CO  ·  ';
+      for (let i=0;i<txt.length;i++){ const a = -Math.PI*0.95 + i/txt.length*Math.PI*2; g.save(); g.translate(cx + Math.cos(a)*104, cy + Math.sin(a)*104); g.rotate(a + Math.PI/2); g.fillText(txt[i], 0, 0); g.restore(); }
+      // simple skull
+      g.beginPath(); g.ellipse(cx, cy - 6, 52, 48, 0, 0, Math.PI*2); g.fill(); g.fillRect(cx - 32, cy + 24, 64, 34);
+      g.fillStyle = '#16100d'; g.beginPath(); g.ellipse(cx - 21, cy - 4, 15, 17, 0, 0, Math.PI*2); g.ellipse(cx + 21, cy - 4, 15, 17, 0, 0, Math.PI*2); g.fill();
+      g.beginPath(); g.moveTo(cx, cy + 12); g.lineTo(cx - 8, cy + 26); g.lineTo(cx + 8, cy + 26); g.fill();
+      for (let i=-2;i<=2;i++) g.fillRect(cx + i*12 - 1.5, cy + 36, 3, 22);
+    });
+    for (const [cx, tex, glow] of [[fx(0.186), neonTex, 0.9], [fx(0.747), logoTex, 0.15]]){
+      const y0 = 6, S = 5;
+      w.box(blackMat, cx - S/2, cx + S/2, y0, y0 + S, z1, z1 + 0.35);
+      decal(w, tex, cx, y0 + S/2, z1 + 0.37, S - 0.4, S - 0.4, '+z', { glow, rough: 0.5 });
+      gooseneck(w, cx, y0 + S + 3.3, z1, '+z');
+    }
+    w.box(whiteBoxMat, fx(0.86) - 0.55, fx(0.86) + 0.55, 13.0, 14.3, z1, z1 + 0.35);         // small white box high near the right corner
+    // white efflorescence along the bottom of the brick (not over the doorways)
+    const effTex = canvasTex(2048, 256, (g, W, H) => {
+      let sd = 31; const r = () => (sd = (sd*16807) % 2147483647) / 2147483647;
+      for (let i=0;i<260;i++){
+        const x = r()*W, y = H - r()*r()*H*0.95, rad = 8 + r()*34;
+        const gr = g.createRadialGradient(x, y, 0, x, y, rad); gr.addColorStop(0, 'rgba(236,234,228,' + (0.10 + r()*0.22) + ')'); gr.addColorStop(1, 'rgba(236,234,228,0)');
+        g.fillStyle = gr; g.fillRect(x - rad, y - rad, rad*2, rad*2);
+      }
+    });
+    const EFF_H = 5.2;
+    for (const [a, b, zz] of [[-HW, TX0, z1], [TX0, RX0, zt], [RX1, TX1, zt], [TX1, DX0, z1], [DX1, HW - 1.2, z1]]){
+      const tex = effTex.clone(); tex.needsUpdate = true; tex.repeat.set((b - a)/BLD_W, 1); tex.offset.set((a + HW)/BLD_W, 0);
+      decal(w, tex, (a + b)/2, EFF_H/2, zz + 0.01, b - a, EFF_H, '+z', { rough: 0.95 });
+    }
+  }
+
+  // ----- BACK (alley side), outer face at z = -HF — painted mustard yellow -----
+  {
+    const w = makeWall('back', p => -HF - p.z);
+    const z0 = -HF, z1 = -HF + T, H = WING_H;
+    const yellowMat = [yellowPaint, yellowPaint, yellowPaint, yellowPaint, brickMat, yellowPaint];   // painted outside, plain brick inside
+    // seen from outside (looking toward the front), +x is on your LEFT
+    // Chad's floor plan: two roll-up doors on the tank side, a man door past them. Photo: the one by
+    // the corner is closed (light gray), the other is raised (open). Building +x = tank side.
+    const RU0 = 12.4, RU1 = 22.4, RU_H = 12;   // closed light gray roll-up
+    const OP0 = -6.8, OP1 = 2.2, OP_H = 12;    // second roll-up, raised → open doorway
+    const MD0 = -14.3, MD1 = -11.3, MD_H = 7;  // man door
+    w.box(yellowMat, -HW, HW, RU_H, H, z0, z1);                      // band over the doors
+    w.box(yellowMat, RU1, HW, 0, RU_H, z0, z1);
+    w.box(yellowMat, OP1, RU0, 0, RU_H, z0, z1);
+    w.box(yellowMat, MD1, OP0, 0, RU_H, z0, z1);
+    w.box(yellowMat, MD0, MD1, MD_H, RU_H, z0, z1);
+    w.box(yellowMat, -HW, MD0, 0, RU_H, z0, z1);
+    w.box(capMat, -HW - 0.05, HW + 0.05, H, H + 0.25, z0 - 0.08, z1 + 0.05);
+    const slat = slatBackTex.clone(); slat.needsUpdate = true; slat.repeat.set(1, RU_H/4);
+    w.box(new THREE.MeshStandardMaterial({ map: slat, roughness: 0.5, metalness: 0.3 }), RU0, RU1, 0, RU_H, z0 + 0.3, z0 + 0.45);
+    w.box(metalMat, RU0 - 0.2, RU0, 0, RU_H, z0 - 0.05, z1); w.box(metalMat, RU1, RU1 + 0.2, 0, RU_H, z0 - 0.05, z1);
+    w.box(metalMat, OP0 - 0.2, OP0, 0, OP_H, z0 - 0.05, z1); w.box(metalMat, OP1, OP1 + 0.2, 0, OP_H, z0 - 0.05, z1);
+    w.box(new THREE.MeshStandardMaterial({ map: slatBackTex, roughness: 0.5, metalness: 0.3 }), OP0, OP1, OP_H - 0.9, OP_H, z0 + 0.3, z0 + 0.45);   // raised door showing at the top
+    w.box(doorRedMat, MD0, MD1, 0, MD_H, z0 + 0.2, z0 + 0.38);                                     // steel man door
+    w.box(metalMat, MD0 - 0.15, MD0, 0, MD_H + 0.15, z0 - 0.05, z1); w.box(metalMat, MD1, MD1 + 0.15, 0, MD_H + 0.15, z0 - 0.05, z1);
+    w.box(metalMat, MD0 - 0.15, MD1 + 0.15, MD_H, MD_H + 0.15, z0 - 0.05, z1);
+    const letters = canvasTex(2048, 160, (g, W, Hh) => {
+      g.fillStyle = '#2b1e13'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.font = 'bold 132px "Arial Narrow", "Roboto Condensed", Impact, ' + FONT;
+      g.fillText('FULL CIRCLE BREWING CO.', W/2, Hh/2 + 6, W - 40);
+      g.globalCompositeOperation = 'destination-out';           // weathered paint
+      let sd = 9; const r = () => (sd = (sd*16807) % 2147483647) / 2147483647;
+      for (let i=0;i<900;i++){ g.fillStyle = 'rgba(0,0,0,' + (0.2 + r()*0.5) + ')'; g.fillRect(r()*W, r()*Hh, 2 + r()*5, 1 + r()*3); }
+    });
+    decal(w, letters, 0, 14.6, z0 - 0.01, BLD_W - 5, 3.6*(BLD_W - 5)/46, '-z', { rough: 0.85 });
+    gooseneck(w, -HW + 1.6, 15.6, z0, '-z');
+  }
+
+  // ----- SIDES: plain brick, three wall lights each (yard side = -x, gravel-lot side = +x) -----
+  for (const [name, sx] of [['left', -1], ['right', 1]]){
+    const w = makeWall(name, sx < 0 ? p => -HW - p.x : p => p.x - HW);
+    const x0 = sx < 0 ? -HW : HW - T, x1 = sx < 0 ? -HW + T : HW;
+    w.box(brickMat, x0, x1, 0, WING_H, -HF + T, HF - T);
+    w.box(capMat, x0 - 0.05, x1 + 0.05, WING_H, WING_H + 0.25, -HF + T, HF - T);
+    for (const z of [-55, 0, 55]) gooseneck(w, sx < 0 ? x0 : x1, 15.2, z, sx < 0 ? '-x' : '+x');
+  }
+
+  // sidewalk + street in front (F St)
+  {
+    const side = new THREE.Mesh(new THREE.PlaneGeometry(BLD_W + 60, 9), new THREE.MeshStandardMaterial({ color: L('#8c8a84'), roughness: 0.95 }));
+    side.rotation.x = -Math.PI/2; side.position.set(0, 0.012, HF + 4.5); bld.add(side);
+    const street = new THREE.Mesh(new THREE.PlaneGeometry(BLD_W + 400, 36), new THREE.MeshStandardMaterial({ color: L('#2c2e2d'), roughness: 0.95 }));
+    street.rotation.x = -Math.PI/2; street.position.set(0, 0.008, HF + 9 + 18); bld.add(street);
+    const curb = new THREE.Mesh(new THREE.BoxGeometry(BLD_W + 60, 0.5, 0.5), new THREE.MeshStandardMaterial({ color: L('#a19e96'), roughness: 0.9 }));
+    curb.position.set(0, 0.25, HF + 9); bld.add(curb);
+  }
+
+  // ----- Rooms along the aisle-side wall at the back (Chad's floor plan, 2026-10-26) -----
+  // Office, lab, bathrooms, storage in a row from the back wall, ≈ 47% of the length, ≈ 14 ft
+  // deep, doors facing the brewery floor. 10 ft white walls, open top so you can look in.
+  const ROOMS = { x0: -IN_Z, x1: -IN_Z + 0.47*BLD_D, z0: IN_X - 14, z1: IN_X, h: 10 };
+  {
+    const fxr = f => -IN_Z + f*BLD_D;   // along the building, from the back wall
+    const wallMat = new THREE.MeshStandardMaterial({ color: L('#e7e4dc'), roughness: 0.9 });
+    const trimMat = new THREE.MeshStandardMaterial({ color: L('#8d918f'), roughness: 0.6, metalness: 0.3 });
+    const roomDoorMat = new THREE.MeshStandardMaterial({ color: L('#b9bcb8'), roughness: 0.5, metalness: 0.2 });
+    const T2 = 0.4, { x0, x1, z0, z1, h } = ROOMS;
+    const box = (mat, ax, bx, ay, by, az, bz) => { const m = new THREE.Mesh(unitBox, mat); m.scale.set(bx - ax, by - ay, bz - az); m.position.set((ax + bx)/2, (ay + by)/2, (az + bz)/2); scene.add(m); return m; };
+    const rooms = [['OFFICE', 0, 0.09, 0.08], ['LAB', 0.09, 0.19, 0.11], ['RESTROOMS', 0.19, 0.34, 0.21], ['STORAGE', 0.34, 0.47, 0.44]];
+    // front wall of the rooms, with a 3 × 7 door opening for each
+    const doors = rooms.map(r => fxr(r[3])).sort((a, b) => a - b);
+    let cur = x0;
+    for (const dx of doors){
+      box(wallMat, cur, dx - 1.5, 0, h, z0, z0 + T2);
+      box(wallMat, dx - 1.5, dx + 1.5, 7, h, z0, z0 + T2);
+      box(roomDoorMat, dx - 1.45, dx + 1.45, 0, 7, z0 + 0.1, z0 + 0.25);                // closed door
+      box(trimMat, dx + 0.95, dx + 1.25, 3.3, 3.42, z0 - 0.06, z0 + 0.1);               // handle
+      cur = dx + 1.5;
+    }
+    box(wallMat, cur, x1, 0, h, z0, z0 + T2);
+    box(wallMat, x1 - T2, x1, 0, h, z0, z1);                                             // end wall
+    for (const r of rooms.slice(1)) box(wallMat, fxr(r[1]) - T2/2, fxr(r[1]) + T2/2, 0, h, z0, z1);   // walls between rooms
+    for (const r of rooms){                                                              // name plate over each door
+      const tex = canvasTex(256, 64, (g, W, H) => { g.fillStyle = '#1d211f'; g.fillRect(0, 0, W, H); g.fillStyle = '#f2f2ee'; g.font = 'bold 34px ' + FONT; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(r[0], W/2, H/2 + 2); });
+      const plate = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 0.65), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6 }));
+      plate.position.set(fxr(r[3]), 7.7, z0 - 0.02); plate.rotation.y = Math.PI; scene.add(plate);
+    }
+    box(trimMat, x0, x1, h, h + 0.12, z0 - 0.05, z0 + T2 + 0.05);                       // top trim
+  }
+
+  // Fade a wall when it stands between the camera and what it's looking at inside: the camera
+  // is outside that wall and the look-at point is inside it. Look at the building itself from
+  // outside (slide the view so it's aimed at the wall) and the wall stays solid brick.
+  const WALL_FADED = 0.25, wlP = {}, wlT = {};
+  function updateWalls(dt){
+    const p = toBld(camera.position, wlP), tg = toBld(controls.target, wlT);
+    for (const w of walls){
+      const out = fp.active ? -1 : Math.min(w.outside(p), -w.outside(tg) - 1);   // ft outside that wall's face (and target ≥ 1 ft inside it)
+      const k = Math.min(1, Math.max(0, (out + 1)/5));
+      const want = 1 - (1 - WALL_FADED)*k;
+      if (Math.abs(want - w.op) < 1e-3 && w.done) continue;
+      w.op += (want - w.op)*Math.min(1, dt*6); if (Math.abs(want - w.op) < 2e-3) w.op = want;
+      w.done = w.op === want;
+      const solid = w.op > 0.995;
+      for (const m of w.mats.values()){
+        m.opacity = m.userData.baseOp*w.op;
+        const tr = m.userData.baseTr || !solid;
+        if (m.transparent !== tr){ m.transparent = tr; m.needsUpdate = true; }
+        m.depthWrite = solid ? m.userData.baseDW : false;
+      }
+    }
+  }
 
   // Soft studio reflections, used only by the solid stainless (empty) tanks
   let steelEnv = null;
@@ -965,6 +1301,22 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
     return S;
   }
   const kegCounts = { half: kegs ? Math.max(0, Math.floor(Number(kegs.half) || 0)) : 0, sixth: kegs ? Math.max(0, Math.floor(Number(kegs.sixth) || 0)) : 0 };
+  // ---------- Where the packaging goes inside the building (2026-10-26) ----------
+  // Same as before (Chad: "exactly where they are"): one line on the back-row line, starting a
+  // little past CID-3 and running toward the front wall — 1/2 bbl kegs, 1/6 bbl kegs, cans,
+  // lids, label rack. Each item asks for a block of floor (length along the line, rows deep);
+  // a block that would hit the front wall starts a new line beside the last one, toward the
+  // open aisle. x = block's start, z = first row's centre line.
+  const INV_L = (917 - CX)*FT_PER_PX + 5.0, INV_R = IN_Z - 1.5;
+  const inv = { x: INV_L, z: (68 - CZ)*FT_PER_PX, front: (68 - CZ)*FT_PER_PX };
+  function invPlace(width, rows, rowStep, itemD, gap){
+    if (inv.x > INV_L && inv.x + gap + width > INV_R){ inv.z = inv.front + 4.5 + itemD/2; inv.x = INV_L; }
+    else if (inv.x > INV_L) inv.x += gap;
+    const at = { x: inv.x, z: inv.z };
+    inv.x += width;
+    inv.front = Math.max(inv.front, inv.z + (rows - 1)*rowStep + itemD/2);
+    return at;
+  }
   const kegStacks = [];             // { kind, x, z, levels:[n kegs per pallet] }
   if (kegs){
     for (const kind of KEG_KINDS){
@@ -975,18 +1327,14 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
         kegStacks.push({ kind, levels });
       }
     }
-    // Lined up with the back row of tanks (Chad, 2026-10-06), starting just right of CID-3:
-    // 1/2 bbl stacks left to right, then the 1/6 bbl stacks to their right. Each size fills
-    // up to 4 stacks across; more starts a new row in front of it (toward the front of the
-    // cellar), like warehouse rows (Chad picked "New row in front").
-    const BACK_Z = (68 - CZ)*FT_PER_PX;            // CID-3's line (back row)
-    const X0 = (917 - CX)*FT_PER_PX + 10.3;         // ≈ 6.5 ft clear of CID-3 (doubled — Chad: "too close")
-    const PER_ROW = 4, DX = PAL_X + 1.0, DZ = PAL_Z + 1.5, KIND_GAP = 3.0;
-    let x0 = X0;
+    // Inside the building (2026-10-26): one line across the building behind the tanks, left
+    // wall → right wall: 1/2 bbl stacks, then 1/6 bbl. Each size fills up to 4 stacks across;
+    // more starts a new row in front of it (Chad picked "New row in front", 2026-10-06).
+    const PER_ROW = 4, DX = PAL_X + 1.0, DZ = PAL_Z + 1.5;
     for (const kind of KEG_KINDS){
       const mine = kegStacks.filter(st => st.kind === kind); if (!mine.length) continue;
-      mine.forEach((st, i) => { st.x = x0 + (i % PER_ROW)*DX; st.z = BACK_Z + Math.floor(i/PER_ROW)*DZ; });
-      x0 += Math.min(mine.length, PER_ROW)*DX - 1.0 + KIND_GAP;
+      const at = invPlace(Math.min(mine.length, PER_ROW)*DX - 1.0, Math.ceil(mine.length/PER_ROW), DZ, PAL_Z, 3.0);
+      mine.forEach((st, i) => { st.x = at.x + PAL_X/2 + (i % PER_ROW)*DX; st.z = at.z + Math.floor(i/PER_ROW)*DZ; });
     }
   }
   const LEVEL_H = PAL_H + KEG_KINDS[0].h + 0.02;
@@ -1080,19 +1428,14 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
     ].map(([r, y]) => new THREE.Vector2(r*R, y*h));
     return new THREE.LatheGeometry(prof, 10);   // low-poly: thousands of cans
   }
-  const canStart = (() => {
-    const right = kegStacks.length ? Math.max(...kegStacks.map(s => s.x)) + PAL_X/2 : (917 - CX)*FT_PER_PX + 8.5;
-    return right + 3.0 + CPAL_X/2;
-  })();
   const canPallets = [];
   {
-    const BACK = (68 - CZ)*FT_PER_PX, DX = CPAL_X + 1.0, DZ = CPAL_Z + 1.5, PER_ROW = 4;
-    let x0 = canStart;
+    const DX = CPAL_X + 1.0, DZ = CPAL_Z + 1.5, PER_ROW = 4;
     for (const kind of CAN_KINDS){
       const n = canCounts[kind.key], per = PER_LAYER*kind.layers, nPal = Math.max(1, Math.ceil(n/per));
+      const at = invPlace(Math.min(nPal, PER_ROW)*DX - 1.0, Math.ceil(nPal/PER_ROW), DZ, CPAL_Z, 3.0);
       const pals = [];
-      for (let i=0;i<nPal;i++) pals.push({ kind, cans: Math.max(0, Math.min(per, n - i*per)), x: x0 + (i % PER_ROW)*DX, z: BACK + Math.floor(i/PER_ROW)*DZ, no: i + 1, of: nPal });
-      x0 += Math.min(nPal, PER_ROW)*DX - 1.0 + 3.0;
+      for (let i=0;i<nPal;i++) pals.push({ kind, cans: Math.max(0, Math.min(per, n - i*per)), x: at.x + CPAL_X/2 + (i % PER_ROW)*DX, z: at.z + Math.floor(i/PER_ROW)*DZ, no: i + 1, of: nPal });
       canPallets.push(...pals);
     }
   }
@@ -1148,9 +1491,9 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
   const cardMat = new THREE.MeshStandardMaterial({ color:new THREE.Color(0xa47c4c).convertSRGBToLinear(), roughness:0.9, metalness:0 });
   const lidPallets = [];
   {
-    const right = canPallets.length ? Math.max(...canPallets.map(p => p.x)) + CPAL_X/2 : canStart;
     const nPal = Math.max(1, Math.ceil(lidCount/LIDS_FULL)), DX = LPAL_X + 1.0, DZ = 6.0;
-    for (let i=0;i<nPal;i++) lidPallets.push({ lids: Math.max(0, Math.min(LIDS_FULL, lidCount - i*LIDS_FULL)), x: right + 3.0 + LPAL_X/2 + (i % 4)*DX, z: (68 - CZ)*FT_PER_PX + Math.floor(i/4)*DZ, no: i + 1, of: nPal });
+    const at = invPlace(Math.min(nPal, 4)*DX - 1.0, Math.ceil(nPal/4), DZ, LPAL_Z, 3.0);
+    for (let i=0;i<nPal;i++) lidPallets.push({ lids: Math.max(0, Math.min(LIDS_FULL, lidCount - i*LIDS_FULL)), x: at.x + LPAL_X/2 + (i % 4)*DX, z: at.z + Math.floor(i/4)*DZ, no: i + 1, of: nPal });
   }
   {
     const sleeves = lidPallets.reduce((a, p) => a + Math.ceil(p.lids/LID_PER_SLEEVE), 0);
@@ -1215,8 +1558,8 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
   const MID_GAP = rackSlots*STACK_W + 0.6 > 9 ? 0.45 : 0;   // room for the middle upright between bays
   const RACK_W = rackSlots*STACK_W + 0.6 + MID_GAP;
   const slotX = i => -RACK_W/2 + 0.3 + STACK_W/2 + i*STACK_W + (MID_GAP && i >= Math.ceil(rackSlots/2) ? MID_GAP : 0);
-  const rackRight = lidPallets.length ? Math.max(...lidPallets.map(p => p.x)) + LPAL_X/2 : canStart;
-  const rack = { x: rackRight + 4.0 + RACK_W/2, z: (68 - CZ)*FT_PER_PX, w: RACK_W };
+  const rackAt = labels ? invPlace(RACK_W, 1, 0, RACK_D, 4.0) : { x: 0, z: 0 };
+  const rack = { x: rackAt.x + RACK_W/2, z: rackAt.z, w: RACK_W };
   const lblStacks = [];
   if (labels){
     const lin = h => new THREE.Color(h).convertSRGBToLinear();
@@ -1339,8 +1682,10 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
   });
   // all windows on one line in the air (Chad: "line them up"): just above the tallest pallet stack
   const tagY = Math.max(0, ...tagSpecs.map(t => t.top)) + 1.2;
-  const tagZ = tagSpecs.length ? Math.min(...tagSpecs.map(t => t.z)) : 0;
-  tagSpecs.forEach(t => { t.z = tagZ; });
+  // (inside the building the items can run on more than one line — each line's windows share
+  // that line's z instead of all being pulled to the back line)
+  for (const t of tagSpecs){ const line = tagSpecs.filter(o => Math.abs(o.z - t.z) < 3); t.lineZ = Math.min(...line.map(o => o.z)); }
+  tagSpecs.forEach(t => { t.z = t.lineZ; });
   const countTags = tagSpecs.map(t => {
     const el = document.createElement('div');
     el.setAttribute('aria-hidden', 'true');
@@ -1370,6 +1715,8 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
   const tagV = new THREE.Vector3();
   function updateCountTags(){
     const w = tagHost.clientWidth, h = tagHost.clientHeight, vis = [];
+    // outside the building with a solid wall in between → the windows (inside) are hidden too
+    if (walls.some(wl => wl.op > 0.6 && wl.outside(toBld(camera.position, wlP)) > 0)){ for (const t of countTags) t.el.style.visibility = 'hidden'; return; }
     for (const t of countTags){
       tagV.copy(t.pos).project(camera);
       const dist = camera.position.distanceTo(t.pos);
@@ -1600,7 +1947,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
   // ---------- Camera controls: left-drag turns, right-drag slides, scroll zooms ----------
   // (focusTank / flyTo — the Status section's zoom-in — are right after the controls.)
   const controls = new OrbitControls(camera, canvas);
-  controls.target.set(0, 4, 0);
+  controls.target.set(-8, 4, -4);
   controls.enableDamping = true; controls.dampingFactor = 0.08;
   controls.minDistance = 6; controls.maxDistance = 260;
   controls.maxPolarAngle = 1.48; controls.minPolarAngle = 0.15;
@@ -1609,7 +1956,8 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
   controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
   // (top raised from 16 to 120 ft on 2026-10-05 so W A S D free roam can keep its look-at point up
   // where the camera is looking — see updateRoam)
-  const PAN_MIN = new THREE.Vector3(-75, 0.5, -48), PAN_MAX = new THREE.Vector3(150, 120, 48);   // right edge 75 → 150 ft for the keg + can pallets + label rack (2026-10-06)
+  // (2026-10-26) the building + room around it to look at the outside walls
+  const PAN_MIN = new THREE.Vector3(-BLD_D/2 - 30, 0.5, -BLD_W/2 - 30), PAN_MAX = new THREE.Vector3(BLD_D/2 + 30, 120, BLD_W/2 + 30);
   // ---------- Zoom to a tank (Chad, 2026-10-23): clicking a row in the Status section glides the
   // camera (about 1 s) to the front of that tank — the whole tank in view (lid to floor, ~85% of
   // the view's height since v1.42; v1.40 came in to the label and was "zooming too much"), label
@@ -1877,7 +2225,8 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
   function freeSpot(x, z){ return blockers.every(b => Math.hypot(x - b.x, z - b.z) > b.r); }
   function pushOut(p){        // never inside a tank (or its legs)
     for (const b of blockers){ const dx = p.x - b.x, dz = p.z - b.z, d = Math.hypot(dx, dz); if (d < b.r){ const k = b.r/(d || 1e-3); p.x = b.x + dx*k; p.z = b.z + dz*k; } }
-    p.x = Math.max(-75, Math.min(150, p.x)); p.z = Math.max(-48, Math.min(48, p.z));
+    p.x = Math.max(-IN_Z + PERSON_R, Math.min(IN_Z - PERSON_R, p.x)); p.z = Math.max(-IN_X + PERSON_R, Math.min(IN_X - PERSON_R, p.z));   // stays inside the brick walls (length = x, width = z)
+    if (p.x < ROOMS.x1 + PERSON_R && p.z > ROOMS.z0 - PERSON_R) p.z = ROOMS.z0 - PERSON_R;   // not through the office/lab/bathroom/storage walls
   }
   const ai = { mode: 'walk', target: null, tank: null, wait: 0, look: 0 };
   function pickTank(){
@@ -1890,7 +2239,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
     }
     ai.tank = t; ai.target = { x: t.group.position.x, z: t.group.position.z + t.Rft + 4 }; ai.mode = 'walk';
   }
-  { const s = { x: 2, z: 8 }; pushOut(s); guy.position.set(s.x, 0, s.z); }
+  { const s = { x: 10, z: 10 }; pushOut(s); guy.position.set(s.x, 0, s.z); }   // in the aisle in front of the tanks
   pickTank();
   let walkPhase = 0, guyYaw = 0;
   function poseGuy(speed, dt, lookUp){
@@ -2109,7 +2458,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
     camera.fov = w < 600 ? 50 : 36; camera.updateProjectionMatrix();
   }
   const ro = new ResizeObserver(resize); ro.observe(canvas); resize();
-  if (canvas.clientWidth < 600) camera.position.sub(controls.target).setLength(230).add(controls.target);
+  if (canvas.clientWidth < 600) camera.position.sub(controls.target).setLength(190).add(controls.target);
 
   const clock = new THREE.Clock();
   let raf = 0;
@@ -2138,6 +2487,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
     updateGuy(dt, tm);
     updateRoam(dt);
     updateFlight(performance.now());
+    updateWalls(dt);
     if (!fp.active) controls.update();
     renderer.render(scene, camera);
     positionSnap();
@@ -2170,7 +2520,7 @@ export function createTankScene({ canvas, snapEl, onSelect, font, mono, live, ke
       free(o.geometry);
       for (const m of [].concat(o.material || [])){ free(m.map); free(m); }
     });
-    free(steelEnv); free(floorTex); free(shadowTex); free(palletTex); free(kegTex);
+    free(steelEnv); free(floorTex); free(shadowTex); free(palletTex); free(kegTex); free(brickRedTex); free(brickYellowTex); free(slatFrontTex); free(slatBackTex);
     renderer.dispose();
   }
   // getView/setView (2026-10-05): the app's preview controls rebuild the scene with changed

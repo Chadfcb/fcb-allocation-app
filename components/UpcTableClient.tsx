@@ -11,6 +11,15 @@ import { createClient } from "@/lib/supabase/client";
 import { logChange } from "@/lib/audit";
 import type { PosLabelBrand, PosLabelSize, UpcEntry } from "@/lib/types/db";
 import { POS_LABEL_BRAND_LABELS } from "@/lib/posLabels";
+import {
+  barcodeFileName,
+  barcodeSvg,
+  checkUpc,
+  downloadBarcodePng,
+  downloadBarcodeSvg,
+} from "@/lib/barcode";
+import { useNewFeature, upcBarcodeFeatureId } from "@/lib/newFeatures";
+import NewBadge from "@/components/NewBadge";
 
 // POS_LABEL_SIZE_LABELS (in lib/posLabels.ts) reads "19.2 oz Labels" —
 // fine for the Labels file library, wrong wording here. Same three sizes,
@@ -20,6 +29,37 @@ const UPC_SIZE_LABELS: Record<PosLabelSize, string> = {
   "16oz": "16 oz",
   "12oz": "12 oz",
 };
+
+// Barcode column (added 2026-10-28, per Chad: "i need a preview and download
+// link of the actual barcodes of the UPC's"). Drawn in the browser from the
+// UPC itself (lib/barcode.ts) — nothing stored, so an edited UPC redraws.
+
+// Small barcode in a table cell. Click → full-size preview. A UPC that
+// can't be drawn shows why instead.
+function BarcodeThumb({ upc, onOpen }: { upc: string; onOpen?: () => void }) {
+  const check = checkUpc(upc);
+  if (!check.ok) {
+    return <span className="text-xs text-red-400">{check.reason}</span>;
+  }
+  const svg = barcodeSvg(check.kind, check.digits);
+  const img = (
+    <span
+      className="block h-10 w-[58px] overflow-hidden rounded-sm bg-white [&>svg]:h-full [&>svg]:w-full"
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
+  );
+  if (!onOpen) return img;
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      title="Click to see full size and download"
+      className="rounded-sm ring-offset-2 ring-offset-neutral-950 hover:ring-2 hover:ring-[#6ABC46]/60"
+    >
+      {img}
+    </button>
+  );
+}
 
 export default function UpcTableClient({
   brand,
@@ -43,6 +83,43 @@ export default function UpcTableClient({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editProduct, setEditProduct] = useState("");
   const [editUpc, setEditUpc] = useState("");
+
+  // Full-size barcode preview (one row at a time).
+  const [previewRow, setPreviewRow] = useState<UpcEntry | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const barcodeNew = useNewFeature(
+    upcBarcodeFeatureId(`/upcs/${brand}/${size.replace(".", "-")}`),
+  );
+
+  useEffect(() => {
+    if (!previewRow) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setPreviewRow(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [previewRow]);
+
+  function openPreview(row: UpcEntry) {
+    barcodeNew.dismiss();
+    setDownloadError(null);
+    setPreviewRow(row);
+  }
+
+  async function downloadBarcode(row: UpcEntry, format: "png" | "svg") {
+    barcodeNew.dismiss();
+    setDownloadError(null);
+    const check = checkUpc(row.upc);
+    if (!check.ok) return;
+    const svg = barcodeSvg(check.kind, check.digits);
+    const name = barcodeFileName(row.product_name, check.digits);
+    try {
+      if (format === "svg") downloadBarcodeSvg(svg, name);
+      else await downloadBarcodePng(svg, name);
+    } catch {
+      setDownloadError("Couldn't make the download — try the SVG instead.");
+    }
+  }
 
   const load = useCallback(async () => {
     const {
@@ -180,13 +257,17 @@ export default function UpcTableClient({
             <tr className="border-b border-neutral-800 bg-neutral-900 text-left text-xs uppercase tracking-wide text-neutral-500">
               <th className="px-3 py-2">Product</th>
               <th className="px-3 py-2">UPC</th>
+              <th className="px-3 py-2">
+                Barcode
+                {barcodeNew.isNew && <NewBadge inline />}
+              </th>
               <th className="px-3 py-2 text-right">Actions</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={3} className="px-3 py-8 text-center text-neutral-500">
+                <td colSpan={4} className="px-3 py-8 text-center text-neutral-500">
                   No UPC&apos;s yet for {POS_LABEL_BRAND_LABELS[brand]} —{" "}
                   {UPC_SIZE_LABELS[size]}. Add one below to get started.
                 </td>
@@ -210,6 +291,9 @@ export default function UpcTableClient({
                         className="w-full rounded-md border border-neutral-700 bg-neutral-950 px-2 py-1 text-neutral-100"
                       />
                     </td>
+                    <td className="px-3 py-2">
+                      <BarcodeThumb upc={editUpc} />
+                    </td>
                     <td className="px-3 py-2 text-right">
                       <button
                         type="button"
@@ -232,6 +316,20 @@ export default function UpcTableClient({
                   <>
                     <td className="px-3 py-2 text-neutral-200">{row.product_name}</td>
                     <td className="px-3 py-2 font-mono text-neutral-300">{row.upc}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center gap-3">
+                        <BarcodeThumb upc={row.upc} onOpen={() => openPreview(row)} />
+                        {checkUpc(row.upc).ok && (
+                          <button
+                            type="button"
+                            onClick={() => downloadBarcode(row, "png")}
+                            className="text-xs text-[#8FD16E] hover:underline"
+                          >
+                            Download
+                          </button>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-3 py-2 text-right">
                       <button
                         type="button"
@@ -288,6 +386,72 @@ export default function UpcTableClient({
           + Add
         </button>
       </div>
+
+      {previewRow && (() => {
+        const check = checkUpc(previewRow.upc);
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+            onClick={() => setPreviewRow(null)}
+          >
+            <div
+              className="w-full max-w-lg rounded-lg border border-neutral-800 bg-neutral-900 p-5"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-base font-semibold text-neutral-100">
+                    {previewRow.product_name}
+                  </h2>
+                  <p className="text-xs text-neutral-500">
+                    {POS_LABEL_BRAND_LABELS[brand]} — {UPC_SIZE_LABELS[size]}
+                    {check.ok ? ` · ${check.kind} ${check.digits}` : ""}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPreviewRow(null)}
+                  className="rounded-md border border-neutral-700 px-2 py-1 text-xs text-neutral-300 hover:bg-neutral-800"
+                >
+                  Close
+                </button>
+              </div>
+              {check.ok ? (
+                <>
+                  <div
+                    className="rounded-md bg-white p-3 [&>svg]:h-auto [&>svg]:w-full"
+                    dangerouslySetInnerHTML={{ __html: barcodeSvg(check.kind, check.digits) }}
+                  />
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => downloadBarcode(previewRow, "png")}
+                      className="rounded-md bg-white px-3 py-1.5 text-sm font-medium text-black hover:bg-neutral-200"
+                    >
+                      Download PNG
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => downloadBarcode(previewRow, "svg")}
+                      className="rounded-md border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-800"
+                    >
+                      Download SVG
+                    </button>
+                    <span className="text-xs text-neutral-500">
+                      PNG for labels and documents · SVG for printers and designers (any size)
+                    </span>
+                  </div>
+                  {downloadError && (
+                    <p className="mt-2 text-xs text-red-400">{downloadError}</p>
+                  )}
+                </>
+              ) : (
+                <p className="text-sm text-red-400">{check.reason}</p>
+              )}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

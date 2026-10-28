@@ -216,7 +216,7 @@ export function pagesForErnie(role: Role | undefined, sections: AnySectionKey[],
   }
   if (can("upcs")) {
     out.push(
-      `/upcs/<brand>/<size> — Operations > UPC's: UPC codes. ` +
+      `/upcs/<brand>/<size> — Operations > UPC's: UPC codes per product, each with its barcode (preview + PNG / SVG download). ` +
         UPC_BRANDS.map((b) => `${b.label}: ${b.sizes.map((s) => s.href).join(", ")}`).join("; "),
     );
   }
