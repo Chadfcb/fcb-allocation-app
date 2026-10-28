@@ -216,14 +216,14 @@ export function pagesForErnie(role: Role | undefined, sections: AnySectionKey[],
   }
   if (can("upcs")) {
     out.push(
-      `/upcs/<brand>/<size> — Operations > UPC's: UPC codes per product, each with its barcode (preview + PNG / SVG download). ` +
+      `/upcs/<brand>/<size> — Sales > UPC's: UPC codes per product, each with its barcode (preview + PNG / SVG download). ` +
         UPC_BRANDS.map((b) => `${b.label}: ${b.sizes.map((s) => s.href).join(", ")}`).join("; "),
     );
   }
   for (const l of SALES_LINKS) if (can(l.section)) out.push(line("Sales > ", l));
-  for (const l of DISTRIBUTOR_LINKS) if (can(l.section)) out.push(line("Distributors > ", l));
+  for (const l of DISTRIBUTOR_LINKS) if (can(l.section)) out.push(line("Sales > Distributors > ", l));
   for (const l of CALENDARS_LINKS) if (can(l.section)) out.push(line("Calendars > ", l));
-  for (const l of POS_LINKS) if (can(l.section)) out.push(line("POS > ", l));
+  for (const l of POS_LINKS) if (can(l.section)) out.push(line("Sales > POS > ", l));
   for (const l of ADMIN_LINKS) {
     if (l.section ? can(l.section) : role === "admin") out.push(line("Admin > ", l));
   }

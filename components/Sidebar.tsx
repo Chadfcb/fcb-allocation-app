@@ -160,8 +160,9 @@ const NEW_SIDEBAR_IDS: string[] = [
 const FINANCE_STORAGE_KEY = "fcb-sidebar-finance-expanded";
 const OPERATIONS_STORAGE_KEY = "fcb-sidebar-operations-expanded";
 const SALES_STORAGE_KEY = "fcb-sidebar-sales-expanded";
-// Distributors (2026-10-22) — one page per distributor, in Main below Sales Dashboard.
-const DISTRIBUTORS_STORAGE_KEY = "fcb-sidebar-distributors-expanded";
+// Distributors (2026-10-22) — one page per distributor. Was in Main below Sales
+// Dashboard; since 2026-10-28 a sub-category inside Sales (its open/closed
+// state is the "distributors" key of the tree state, like UPC's).
 const CALENDARS_STORAGE_KEY = "fcb-sidebar-calendars-expanded";
 const ERNIE_STORAGE_KEY = "fcb-sidebar-ernie-expanded";
 
@@ -184,7 +185,7 @@ const ADMIN_STORAGE_KEY = "fcb-sidebar-admin-expanded";
 
 // ERNIE_LINKS — moved to lib/appPages.ts (2026-10-16) so Ernie reads the same page list.
 
-type TopLevelCategory = "ernie" | "finance" | "operations" | "sales" | "distributors" | "calendars" | "pos" | "admin";
+type TopLevelCategory = "ernie" | "finance" | "operations" | "sales" | "calendars" | "admin";
 
 // Which top-level category (if any) a given pathname belongs to — added
 // 2026-09-10, per Chad ("we built in that other categories would close if
@@ -201,18 +202,29 @@ type TopLevelCategory = "ernie" | "finance" | "operations" | "sales" | "distribu
 function topLevelCategoryForPath(pathname: string): TopLevelCategory | null {
   if (pathname.startsWith("/ernie")) return "ernie";
   if (FINANCE_LINKS.some((l) => l.href === pathname)) return "finance";
-  if (
-    OPERATIONS_LINKS.some((l) => l.href === pathname) ||
-    pathname.startsWith("/pos/labels") ||
-    pathname.startsWith("/upcs")
-  ) {
+  if (OPERATIONS_LINKS.some((l) => l.href === pathname) || pathname.startsWith("/pos/labels")) {
     return "operations";
   }
-  if (SALES_LINKS.some((l) => l.href === pathname)) return "sales";
-  if (pathname.startsWith("/distributors/")) return "distributors";
+  // Distributors, POS and UPC's live inside Sales since 2026-10-28 (per Chad).
+  if (
+    SALES_LINKS.some((l) => l.href === pathname) ||
+    pathname.startsWith("/distributors/") ||
+    POS_LINKS.some((l) => l.href === pathname) ||
+    pathname.startsWith("/upcs")
+  ) {
+    return "sales";
+  }
   if (CALENDARS_LINKS.some((l) => l.href === pathname)) return "calendars";
-  if (POS_LINKS.some((l) => l.href === pathname)) return "pos";
   if (ADMIN_LINKS.some((l) => l.href === pathname)) return "admin";
+  return null;
+}
+
+// Which Sales sub-category (Distributors / POS / UPC's) the current page sits
+// in, so it opens on its own when you land there (2026-10-28).
+function salesSubTreeForPath(pathname: string): "distributors" | "pos" | "upcs" | null {
+  if (pathname.startsWith("/distributors/")) return "distributors";
+  if (POS_LINKS.some((l) => l.href === pathname)) return "pos";
+  if (pathname.startsWith("/upcs")) return "upcs";
   return null;
 }
 
@@ -224,7 +236,8 @@ function topLevelCategoryForPath(pathname: string): TopLevelCategory | null {
 // Operations; POS started back out empty, on purpose, for Chad to add new
 // items to — Football POS (added same day) is its first one: a flat file
 // library of football-season POS art, no brand/size nesting like Labels.
-const POS_STORAGE_KEY = "fcb-sidebar-pos-expanded";
+// 2026-10-28, per Chad: POS is now a sub-category inside Sales (open/closed =
+// the "pos" key of the tree state), no longer its own top-level section.
 // POS_LINKS — moved to lib/appPages.ts (2026-10-16) so Ernie reads the same page list.
 
 // Labels > <brand> > <size> — a nested tree (unlike Operations/Sales' other
@@ -249,7 +262,7 @@ const POS_TREE_STORAGE_KEY = "fcb-sidebar-pos-tree-expanded";
 // into. Fixed 2026-09-05 per Chad, after brand-level expand state (which
 // used to get saved right alongside the top-level state) made "Labels"
 // look like it was opening everything at once.
-const PERSISTED_POS_TREE_KEYS = ["pos-labels", "upcs"];
+const PERSISTED_POS_TREE_KEYS = ["pos-labels", "upcs", "distributors", "pos"];
 
 // POS_LABEL_BRANDS — moved to lib/appPages.ts (2026-10-16) so Ernie reads the same page list.
 
@@ -308,13 +321,11 @@ export default function Sidebar({
   const [financeExpanded, setFinanceExpanded] = useState(true);
   const [operationsExpanded, setOperationsExpanded] = useState(true);
   const [salesExpanded, setSalesExpanded] = useState(true);
-  const [distributorsExpanded, setDistributorsExpanded] = useState(true);
   const [calendarsExpanded, setCalendarsExpanded] = useState(true);
-  const [posExpanded, setPosExpanded] = useState(true);
   const [adminExpanded, setAdminExpanded] = useState(true);
   const [posTreeExpanded, setPosTreeExpanded] = useState<
     Record<string, boolean>
-  >({ "pos-labels": true, upcs: true });
+  >({ "pos-labels": true, upcs: true, distributors: true, pos: true });
   const [seenNew, setSeenNew] = useState<Record<string, true>>({});
   // Which "New!" badges this signed-in person has already dismissed —
   // stored server-side (sidebar_new_seen table) rather than in this
@@ -351,17 +362,9 @@ export default function Sidebar({
     if (storedSales !== null) {
       setSalesExpanded(storedSales === "true");
     }
-    const storedDistributors = localStorage.getItem(DISTRIBUTORS_STORAGE_KEY);
-    if (storedDistributors !== null) {
-      setDistributorsExpanded(storedDistributors === "true");
-    }
     const storedCalendars = localStorage.getItem(CALENDARS_STORAGE_KEY);
     if (storedCalendars !== null) {
       setCalendarsExpanded(storedCalendars === "true");
-    }
-    const storedPos = localStorage.getItem(POS_STORAGE_KEY);
-    if (storedPos !== null) {
-      setPosExpanded(storedPos === "true");
     }
     const storedPosTree = localStorage.getItem(POS_TREE_STORAGE_KEY);
     if (storedPosTree) {
@@ -403,9 +406,7 @@ export default function Sidebar({
       { key: "finance", setExpanded: setFinanceExpanded, storageKey: FINANCE_STORAGE_KEY },
       { key: "operations", setExpanded: setOperationsExpanded, storageKey: OPERATIONS_STORAGE_KEY },
       { key: "sales", setExpanded: setSalesExpanded, storageKey: SALES_STORAGE_KEY },
-      { key: "distributors", setExpanded: setDistributorsExpanded, storageKey: DISTRIBUTORS_STORAGE_KEY },
       { key: "calendars", setExpanded: setCalendarsExpanded, storageKey: CALENDARS_STORAGE_KEY },
-      { key: "pos", setExpanded: setPosExpanded, storageKey: POS_STORAGE_KEY },
       { key: "admin", setExpanded: setAdminExpanded, storageKey: ADMIN_STORAGE_KEY },
     ];
     for (const section of sections) {
@@ -414,6 +415,10 @@ export default function Sidebar({
       section.setExpanded(shouldBeOpen);
       localStorage.setItem(section.storageKey, String(shouldBeOpen));
     }
+    // Landing on a Distributors / POS / UPC's page opens that sub-category too.
+    const sub = salesSubTreeForPath(pathname);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing sidebar expand state to the current route, not a UI-driven update
+    if (sub) setPosTreeExpanded((prev) => (prev[sub] ? prev : { ...prev, [sub]: true }));
   }, [pathname]);
 
   useEffect(() => {
@@ -570,17 +575,9 @@ export default function Sidebar({
       setSalesExpanded(false);
       localStorage.setItem(SALES_STORAGE_KEY, "false");
     }
-    if (except !== "distributors") {
-      setDistributorsExpanded(false);
-      localStorage.setItem(DISTRIBUTORS_STORAGE_KEY, "false");
-    }
     if (except !== "calendars") {
       setCalendarsExpanded(false);
       localStorage.setItem(CALENDARS_STORAGE_KEY, "false");
-    }
-    if (except !== "pos") {
-      setPosExpanded(false);
-      localStorage.setItem(POS_STORAGE_KEY, "false");
     }
   }
 
@@ -629,29 +626,11 @@ export default function Sidebar({
     });
   }
 
-  function toggleDistributors() {
-    setDistributorsExpanded((prev) => {
-      const next = !prev;
-      localStorage.setItem(DISTRIBUTORS_STORAGE_KEY, String(next));
-      if (next) closeOtherTopLevelSections("distributors");
-      return next;
-    });
-  }
-
   function toggleCalendars() {
     setCalendarsExpanded((prev) => {
       const next = !prev;
       localStorage.setItem(CALENDARS_STORAGE_KEY, String(next));
       if (next) closeOtherTopLevelSections("calendars");
-      return next;
-    });
-  }
-
-  function togglePos() {
-    setPosExpanded((prev) => {
-      const next = !prev;
-      localStorage.setItem(POS_STORAGE_KEY, String(next));
-      if (next) closeOtherTopLevelSections("pos");
       return next;
     });
   }
@@ -732,10 +711,8 @@ export default function Sidebar({
   const showUpcTree = can("upcs");
   const visibleCalendars = CALENDARS_LINKS.filter((link) => can(link.section));
   const visiblePos = POS_LINKS.filter((link) => can(link.section));
-  // POS has nothing under it yet (see POS_LINKS above) — show the empty
-  // section to admins so Chad has somewhere to add to, but don't show an
-  // empty, useless heading to a Basic user who has nothing granted in it.
-  const showPosSection = role === "admin" || visiblePos.length > 0;
+  // Sales holds its own links plus Distributors, POS and UPC's (2026-10-28).
+  const showSalesSection = visibleSales.length > 0 || visibleDistributors.length > 0 || visiblePos.length > 0 || showUpcTree;
   const showErnie = can(ERNIE_SECTION);
   const showTasks = can("tasks");
   const showAuditLog = can("audit_log");
@@ -765,18 +742,22 @@ export default function Sidebar({
   const operationsDescendantIds = [
     ...visibleOperations.map((link) => link.href),
     ...(showPosTree ? ["section:pos-labels", ...labelsDescendantIds()] : []),
+  ];
+  // Same for Sales — its links plus the Distributors / POS / UPC's sub-categories.
+  const salesDescendantIds = [
+    ...visibleSales.map((link) => link.href),
+    ...(visibleDistributors.length ? ["section:distributors", ...visibleDistributors.map((link) => link.href)] : []),
+    ...(visiblePos.length ? ["section:pos", ...visiblePos.map((link) => link.href)] : []),
     ...(showUpcTree ? ["section:upcs", UPC_BARCODES_NEW_ID, ...upcDescendantIds()] : []),
   ];
 
   const showMainGroup =
-    role === "admin" || showTasks || can("tanks") || can("brew_planner") || can("sales_dashboard") || visibleDistributors.length > 0;
+    role === "admin" || showTasks || can("tanks") || can("brew_planner") || can("sales_dashboard");
   const showDepartments =
     visibleFinance.length > 0 ||
     visibleOperations.length > 0 ||
     showPosTree ||
-    showUpcTree ||
-    visibleSales.length > 0 ||
-    showPosSection ||
+    showSalesSection ||
     visibleCalendars.length > 0;
 
   // Right side of a parent row: its New! tag (if any) + the open/closed arrow.
@@ -946,45 +927,6 @@ export default function Sidebar({
                     </Link>
                   )}
 
-                  {/* Distributors (2026-10-22, per Chad) — one page per
-                      distributor; each page is its own access checkbox, so a
-                      rep sees only theirs. In Main, below Brew Planner and above
-                      Tasks (moved from Departments 10/22, per Chad). */}
-                  {visibleDistributors.length > 0 && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          toggleDistributors();
-                          dismissNew("section:distributors");
-                        }}
-                        className={parentClass(distributorsExpanded)}
-                      >
-                        <IconTruck />
-                        Distributors
-                        {parentRight(
-                          sectionShowsNew("section:distributors", visibleDistributors.map((link) => link.href)),
-                          distributorsExpanded,
-                        )}
-                      </button>
-                      {distributorsExpanded && (
-                        <div className="fcb-nav-sub-group">
-                          {visibleDistributors.map((link) => (
-                            <Link
-                              key={link.href}
-                              href={link.href}
-                              className={linkClass(link.href)}
-                              onClick={() => dismissNew(link.href)}
-                            >
-                              {link.label}
-                              {showsNew(link.href) && <NewBadge />}
-                            </Link>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  )}
-
                   {/* Tasks (formerly "Projects") — the company-wide
                       action/directive tracker, gated by the "tasks" section. */}
                   {showTasks && (
@@ -1042,7 +984,7 @@ export default function Sidebar({
                     </>
                   )}
 
-                  {(visibleOperations.length > 0 || showPosTree || showUpcTree) && (
+                  {(visibleOperations.length > 0 || showPosTree) && (
                     <>
                       <button
                         type="button"
@@ -1095,8 +1037,126 @@ export default function Sidebar({
                             </div>
                           )}
 
+                          {opsAfterLabels.map((link) => (
+                            <Link
+                              key={link.href}
+                              href={link.href}
+                              className={linkClass(link.href)}
+                              onClick={() => dismissNew(link.href)}
+                            >
+                              {link.label}
+                              {showsNew(link.href) && <NewBadge />}
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {showSalesSection && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          toggleSales();
+                          dismissNew("section:sales");
+                        }}
+                        className={parentClass(salesExpanded)}
+                      >
+                        <IconCart />
+                        Sales
+                        {parentRight(sectionShowsNew("section:sales", salesDescendantIds), salesExpanded)}
+                      </button>
+                      {salesExpanded && (
+                        <div className="fcb-nav-sub-group">
+                          {visibleSales.map((link) => (
+                            <Link
+                              key={link.href}
+                              href={link.href}
+                              className={linkClass(link.href)}
+                              onClick={() => dismissNew(link.href)}
+                            >
+                              {link.label}
+                              {showsNew(link.href) && <NewBadge />}
+                            </Link>
+                          ))}
+
+                          {/* Distributors, POS and UPC's — sub-categories of Sales
+                              (2026-10-28, per Chad: "move distributors, into the
+                              sales section as a sub category … POS … UPC's").
+                              Same pages, addresses and access as before; each
+                              distributor page is still its own checkbox. */}
+                          {visibleDistributors.length > 0 && (
+                            <div className="flex flex-col">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  togglePosTree("distributors");
+                                  dismissNew("section:distributors");
+                                }}
+                                className="fcb-nav-sub is-parent"
+                              >
+                                Distributors
+                                {parentRight(
+                                  sectionShowsNew("section:distributors", visibleDistributors.map((link) => link.href)),
+                                  !!posTreeExpanded["distributors"],
+                                )}
+                              </button>
+                              {posTreeExpanded["distributors"] && (
+                                <div className="fcb-nav-sub-group">
+                                  {visibleDistributors.map((link) => (
+                                    <Link
+                                      key={link.href}
+                                      href={link.href}
+                                      className={linkClass(link.href)}
+                                      onClick={() => dismissNew(link.href)}
+                                    >
+                                      {link.label}
+                                      {showsNew(link.href) && <NewBadge />}
+                                    </Link>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {visiblePos.length > 0 && (
+                            <div className="flex flex-col">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  togglePosTree("pos");
+                                  dismissNew("section:pos");
+                                }}
+                                className="fcb-nav-sub is-parent"
+                              >
+                                POS
+                                {parentRight(
+                                  sectionShowsNew("section:pos", visiblePos.map((link) => link.href)),
+                                  !!posTreeExpanded["pos"],
+                                )}
+                              </button>
+                              {posTreeExpanded["pos"] && (
+                                <div className="fcb-nav-sub-group">
+                                  {visiblePos.map((link) => (
+                                    <Link
+                                      key={link.href}
+                                      href={link.href}
+                                      className={linkClass(link.href)}
+                                      onClick={() => dismissNew(link.href)}
+                                    >
+                                      {link.label}
+                                      {showsNew(link.href) && <NewBadge />}
+                                    </Link>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
                           {/* UPC's — brand -> size tree set up exactly like
-                              Labels (2026-09-05, per Chad). */}
+                              Labels (2026-09-05, per Chad). Moved from
+                              Operations into Sales 2026-10-28, per Chad. */}
                           {showUpcTree && (
                             <div className="flex flex-col">
                               <button
@@ -1118,86 +1178,6 @@ export default function Sidebar({
                             </div>
                           )}
 
-                          {opsAfterLabels.map((link) => (
-                            <Link
-                              key={link.href}
-                              href={link.href}
-                              className={linkClass(link.href)}
-                              onClick={() => dismissNew(link.href)}
-                            >
-                              {link.label}
-                              {showsNew(link.href) && <NewBadge />}
-                            </Link>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {visibleSales.length > 0 && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          toggleSales();
-                          dismissNew("section:sales");
-                        }}
-                        className={parentClass(salesExpanded)}
-                      >
-                        <IconCart />
-                        Sales
-                        {parentRight(sectionShowsNew("section:sales", visibleSales.map((link) => link.href)), salesExpanded)}
-                      </button>
-                      {salesExpanded && (
-                        <div className="fcb-nav-sub-group">
-                          {visibleSales.map((link) => (
-                            <Link
-                              key={link.href}
-                              href={link.href}
-                              className={linkClass(link.href)}
-                              onClick={() => dismissNew(link.href)}
-                            >
-                              {link.label}
-                              {showsNew(link.href) && <NewBadge />}
-                            </Link>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {/* POS — its own top-level section (restored 2026-09-05,
-                      per Chad), between Sales and Calendars. */}
-                  {showPosSection && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          togglePos();
-                          dismissNew("section:pos");
-                        }}
-                        className={parentClass(posExpanded)}
-                      >
-                        <IconCard />
-                        POS
-                        {parentRight(sectionShowsNew("section:pos", visiblePos.map((link) => link.href)), posExpanded)}
-                      </button>
-                      {posExpanded && (
-                        <div className="fcb-nav-sub-group">
-                          {visiblePos.map((link) => (
-                            <Link
-                              key={link.href}
-                              href={link.href}
-                              className={linkClass(link.href)}
-                              onClick={() => dismissNew(link.href)}
-                            >
-                              {link.label}
-                              {showsNew(link.href) && <NewBadge />}
-                            </Link>
-                          ))}
-                          {visiblePos.length === 0 && (
-                            <p className="px-[18px] py-1.5 text-xs leading-relaxed text-neutral-600">Nothing here yet.</p>
-                          )}
                         </div>
                       )}
                     </>
@@ -1380,24 +1360,6 @@ function IconCart() {
       <path d="M3 3h2l2.4 12.2a1 1 0 0 0 1 .8h9.2a1 1 0 0 0 1-.8L20 7H6" />
       <circle cx="9" cy="20" r="1.3" />
       <circle cx="17" cy="20" r="1.3" />
-    </NavIcon>
-  );
-}
-function IconCard() {
-  return (
-    <NavIcon>
-      <rect x="3" y="5" width="18" height="14" rx="3" />
-      <path d="M3 10h18M7 15h4" />
-    </NavIcon>
-  );
-}
-function IconTruck() {
-  return (
-    <NavIcon>
-      <path d="M3 6h11v10H3z" />
-      <path d="M14 10h4l3 3v3h-7" />
-      <circle cx="7" cy="17.5" r="1.7" />
-      <circle cx="17" cy="17.5" r="1.7" />
     </NavIcon>
   );
 }
