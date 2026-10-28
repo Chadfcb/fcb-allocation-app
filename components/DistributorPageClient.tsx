@@ -1306,7 +1306,7 @@ interface SearchRow {
   is_off: boolean;
 }
 
-function AccountPopup({ supabase, outletId, onClose }: { supabase: ReturnType<typeof createClient>; outletId: string; onClose: () => void }) {
+export function AccountPopup({ supabase, outletId, onClose }: { supabase: ReturnType<typeof createClient>; outletId: string; onClose: () => void }) {
   const [d, setD] = useState<AccountDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {

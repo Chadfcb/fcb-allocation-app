@@ -737,10 +737,21 @@ export default function SalesDashboardHome({
 
       {/* Needs attention + Win backs */}
       <div className="flex flex-wrap gap-4">
-        <section className={`${CARD} flex min-w-0 flex-[1_1_520px] flex-col gap-3`}>
+        {/* Orange title + border so it stands out from every other block
+            (2026-10-28, Chad: "it needs to show that its important"). */}
+        <section
+          className={`${CARD} flex min-w-0 flex-[1_1_520px] flex-col gap-3`}
+          style={{ borderColor: "rgba(249,115,22,0.6)", boxShadow: "0 0 28px rgba(249,115,22,0.12), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+        >
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-[15px] font-semibold text-neutral-100">Needs attention</h2>
+              <h2 className="flex items-center gap-2 text-[17px] font-bold text-[#fb923c]">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+                  <path d="M12 9v4M12 17h.01" />
+                </svg>
+                Needs attention
+              </h2>
               <p className={`text-[12.5px] ${MUTED}`}>Biggest first — hand these to the reps</p>
             </div>
             <ExportButton onClick={exportAttention} busy={busy === "att"} />

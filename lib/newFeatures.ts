@@ -32,6 +32,18 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    id: "feature:sales-dist-inventory",
+    page: "/sales-dashboard",
+    label: "Sales Dashboard: Distributor Inventory (quick link) — running low or out across every distributor, a card per distributor, click a product for its sales",
+    added: "2026-10-28",
+  },
+  {
+    id: "feature:sales-account-finder",
+    page: "/sales-dashboard",
+    label: "Sales Dashboard: Account Finder (quick link) — search every distributor's accounts, opens the account pop-up",
+    added: "2026-10-28",
+  },
+  {
     id: "feature:brew-planner-why",
     page: "/brew-planner",
     label: "Brew Planner: Why this recommendation — plain-English write-up per base beer (click a row) + one-line reason in the table",

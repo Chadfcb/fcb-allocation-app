@@ -13,5 +13,8 @@ export const dynamic = "force-dynamic";
 export default async function SalesDashboardPage() {
   const profile = await getProfile();
   if (!profile || !hasSection(profile.role, profile.sections, "sales_dashboard", profile.is_super_admin)) redirect("/");
-  return <SalesDashboardClient />;
+  // Quick links under the title (2026-10-28): UPC's and POS only show for
+  // people who can open those pages.
+  const can = (k: "upcs" | "football_pos") => hasSection(profile.role, profile.sections, k, profile.is_super_admin);
+  return <SalesDashboardClient canUpcs={can("upcs")} canPos={can("football_pos")} />;
 }

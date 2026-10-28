@@ -2,7 +2,9 @@
 
 // Sales Dashboard (Main → Sales Dashboard), added 2026-10-08, per Chad.
 // Opens on the dashboard home (added 2026-10-21, components/SalesDashboardHome.tsx):
-// the at-a-glance page. The four tools below sit in a Tools row at its bottom;
+// the at-a-glance page. Quick links sit under the title (2026-10-28:
+// Distributor Inventory, Chain Gap Report, UPC's, POS, Account Finder —
+// components/SalesQuickLinks.tsx); the other tools sit in a Tools row at its bottom;
 // opening one shows the tool tabs with Dashboard first. The home reloads on
 // its own when a LilyPad sync finishes (sales_data_meta in the live feed).
 // Tools:
@@ -27,6 +29,9 @@ import { createClient } from "@/lib/supabase/client";
 import SalesDashboardSetup from "@/components/SalesDashboardSetup";
 import SalesActionItems, { useActionItems, type ActionRow } from "@/components/SalesActionItems";
 import SalesDashboardHome from "@/components/SalesDashboardHome";
+import SalesQuickLinks from "@/components/SalesQuickLinks";
+import SalesDistInventory from "@/components/SalesDistInventory";
+import SalesAccountFinder from "@/components/SalesAccountFinder";
 import NewBadge from "@/components/NewBadge";
 import { useNewFeature } from "@/lib/newFeatures";
 import { isFormerDistributor } from "@/lib/salesAccounts";
@@ -236,12 +241,14 @@ function HowToRead({ view, chain, dist, asOf }: { view: "store" | "item"; chain:
   );
 }
 
-export default function SalesDashboardClient() {
+export default function SalesDashboardClient({ canUpcs = false, canPos = false }: { canUpcs?: boolean; canPos?: boolean }) {
   const supabase = useMemo(() => createClient(), []);
   const [ov, setOv] = useState<DashOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
-  const [tab, setTab] = useState<"home" | "actions" | "gap" | "setup" | "off">("home");
+  const [tab, setTab] = useState<"home" | "actions" | "gap" | "setup" | "off" | "inv">("home");
+  // Account Finder pop-up (quick links, 2026-10-28).
+  const [finder, setFinder] = useState(false);
   // Clicking a store on Action Items opens it in the Gap Report.
   const [jump, setJump] = useState<GapJump | null>(null);
   const actionsNew = useNewFeature("feature:sales-action-items");
@@ -290,9 +297,10 @@ export default function SalesDashboardClient() {
   const TABS = [
     ["home", "Dashboard"],
     ["actions", actions.rows ? `Action Items (${actions.rows.length})` : "Action Items"],
-    ["gap", "Gap Report"],
+    ["gap", "Chain Gap Report"],
     ["setup", "Chain setup"],
     ["off", "Turned off accounts"],
+    ["inv", "Distributor Inventory"],
   ] as const;
 
   return (
@@ -300,13 +308,30 @@ export default function SalesDashboardClient() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-neutral-100">Sales Dashboard</h1>
-          {tab !== "home" && (
+          {tab !== "home" && tab !== "inv" && (
             <p className="text-sm text-neutral-500">
               {ov?.as_of ? `Sales data as of ${fdate(ov.as_of)} · a store "carries" an item if it bought it in the last ${CARRIED_DAYS} days` : "Loading…"}
             </p>
           )}
         </div>
       </div>
+      {/* Quick links (2026-10-28, per Chad): the things the sales manager
+          looks for most, right under the title on every tab. */}
+      <SalesQuickLinks
+        tab={tab}
+        canUpcs={canUpcs}
+        canPos={canPos}
+        onInventory={() => {
+          setJump(null);
+          setTab("inv");
+        }}
+        onGap={() => {
+          setSetupStart("chains");
+          setJump(null);
+          setTab("gap");
+        }}
+        onFinder={() => setFinder(true)}
+      />
       {tab !== "home" && (
       <div className="flex gap-1 border-b border-neutral-800">
         {TABS.map(([k, label]) => (
@@ -362,7 +387,8 @@ export default function SalesDashboardClient() {
           {/* Tools row (the old tabs) */}
           <div className="flex flex-wrap items-center gap-2 border-t border-neutral-800 pt-4">
             <span className="mr-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Tools</span>
-            {TABS.filter(([k]) => k !== "home").map(([k, label]) => (
+            {/* Chain Gap Report and Distributor Inventory moved to the quick links at the top (2026-10-28). */}
+            {TABS.filter(([k]) => k !== "home" && k !== "gap" && k !== "inv").map(([k, label]) => (
               <button
                 key={k}
                 id={`dash-tool-${k}`}
@@ -411,6 +437,8 @@ export default function SalesDashboardClient() {
         <SalesDashboardSetup supabase={supabase} ov={ov} resolved={resolved} userId={userId} onChanged={loadOverview} startOn={setupStart} />
       )}
       {ov && tab === "off" && <TurnedOff supabase={supabase} userId={userId} version={version} onChanged={loadOverview} />}
+      {tab === "inv" && <SalesDistInventory supabase={supabase} />}
+      {finder && <SalesAccountFinder supabase={supabase} onClose={() => setFinder(false)} />}
     </div>
   );
 }
