@@ -6,8 +6,8 @@
 --     tracking spreadsheet ("Target Accounts" tab), matched to account ids.
 --  2. james_effectiveness() — everything the block needs in one call: James's
 --     check-ins, what those stores (and the targets) bought since May 2025,
---     the target list, and Markstein's monthly CE for James's stores vs every
---     other Markstein store (this year and last). The page does the week math.
+--     the target list, and lapsed Markstein buyers he hasn't visited (function
+--     updated by sql/james_effectiveness_v2.sql). The page does the math.
 
 create table if not exists public.markstein_target_accounts (
   id bigint generated always as identity primary key,
@@ -96,13 +96,15 @@ set search_path = ''
 as $$
 declare
   result json;
+  v_as_of date;
 begin
   if not public.sales_can_see(array['Markstein']) then
     raise exception 'You don''t have access to Markstein.';
   end if;
+  select max(as_of) into v_as_of from public.sales_data_meta;
 
   with ck as (
-    select k.outlet_id, k.checkin_date, k.activity, k.outcome, k.brands, a.name, a.city, a.premise
+    select k.outlet_id, k.checkin_date, k.activity, k.outcome, k.brands, k.notes, a.name, a.city, a.premise, a.ce_12mo
     from public.sales_account_checkins k
     join public.sales_accounts a on a.outlet_id = k.outlet_id
     where k.rep = 'James' and k.source like 'CMC: James%'
@@ -111,10 +113,9 @@ begin
     select outlet_id from ck
     union
     select outlet_id from public.markstein_target_accounts where outlet_id is not null
-  ),
-  worked as (select distinct outlet_id from ck)
+  )
   select json_build_object(
-    'as_of', (select max(as_of) from public.sales_data_meta),
+    'as_of', v_as_of,
     'checkins', (select coalesce(json_agg(c order by c.checkin_date), '[]'::json) from ck c),
     'sales', (select coalesce(json_agg(s), '[]'::json) from (
         select s.outlet_id, s.month, s.product, s.size, s.ce, s.first_buy_in_month, s.last_buy_date
@@ -123,13 +124,18 @@ begin
     'targets', (select coalesce(json_agg(t order by t.sort), '[]'::json) from (
         select t.name, t.tier, t.class_of_trade, t.outlet_id, t.why, t.sort
         from public.markstein_target_accounts t) t),
-    'compare', (select coalesce(json_agg(m order by m.month, m.worked), '[]'::json) from (
-        select s.month, (s.outlet_id in (select outlet_id from worked)) as worked,
-               round(sum(s.ce)::numeric, 2) as ce, count(distinct s.outlet_id) as accounts
-        from public.sales_account_sales s
-        join public.sales_accounts a on a.outlet_id = s.outlet_id
-        where a.distributor = 'Markstein' and s.month >= date '2025-01-01'
-        group by 1, 2) m)
+    -- Markstein accounts that bought in the last year but not in 90+ days and
+    -- that James has never visited (Direction for James: win back).
+    'lapsed', (select coalesce(json_agg(l), '[]'::json) from (
+        select a.outlet_id, a.name, a.city, a.premise, a.last_buy_date, a.ce_12mo
+        from public.sales_accounts a
+        where a.distributor = 'Markstein'
+          and a.last_buy_date > coalesce(v_as_of, current_date) - 365
+          and a.last_buy_date <= coalesce(v_as_of, current_date) - 90
+          and a.outlet_id not in (select outlet_id from ck)
+          and not exists (select 1 from public.sales_account_off o where o.outlet_id = a.outlet_id)
+        order by a.ce_12mo desc nulls last
+        limit 200) l)
   ) into result;
   return result;
 end;
@@ -138,4 +144,4 @@ $$;
 revoke all on function public.james_effectiveness() from public, anon;
 grant execute on function public.james_effectiveness() to authenticated;
 comment on function public.james_effectiveness() is
-  '[needs:dist_markstein] James Mendoza (CMC, Markstein''s field rep): his check-ins (visits, outcome, products committed/sampled), what those stores and his 52 target accounts bought since May 2025, and Markstein''s monthly CE for stores James visited vs every other Markstein store. Answers "is James moving beer", "did his commitments turn into sales", "which targets has he hit".';
+  '[needs:dist_markstein] James Mendoza (CMC, Markstein''s field rep): his check-ins (visits, outcome, notes, products committed/sampled), what those accounts and his 52 target accounts bought since May 2025, and Markstein accounts that stopped buying (last year, not in 90+ days) that he has never visited. Answers "is James moving beer", "did his commitments turn into sales", "which targets has he hit", "what should James work on next".';

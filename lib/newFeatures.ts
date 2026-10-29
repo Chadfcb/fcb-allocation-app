@@ -32,9 +32,15 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    id: "feature:james-direction",
+    page: "/distributors/markstein",
+    label: "Distributors → Markstein: Direction for James — chase commitments, get the reorder, targets, win back lapsed buyers, stop spending time here, what's working",
+    added: "2026-10-29",
+  },
+  {
     id: "feature:james-effectiveness",
     page: "/distributors/markstein",
-    label: "Distributors → Markstein: James Effectiveness block — James's (CMC) visits and commitments checked against actual sales, week by week, targets, vs other Markstein stores",
+    label: "Distributors → Markstein: Effectiveness block — one-line verdict, James's (CMC) visits and commitments checked against actual sales, week by week, targets, before & after his first visit",
     added: "2026-10-29",
   },
   {

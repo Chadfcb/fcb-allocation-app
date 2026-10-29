@@ -25,6 +25,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useNewFeature } from "@/lib/newFeatures";
 import NewBadge from "@/components/NewBadge";
 import JamesEffectiveness from "@/components/JamesEffectiveness";
+import JamesDirection from "@/components/JamesDirection";
 import { useActionItems, type ActionRow } from "@/components/SalesActionItems";
 import {
   CARD,
@@ -723,7 +724,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
               </div>
             </section>
 
-            {/* Markstein (2026-10-29, per Chad): James Effectiveness takes this spot
+            {/* Markstein (2026-10-29, per Chad): Effectiveness takes this spot
                 next to Today's priorities; the stock list moved to the "Markstein On
                 Hand Inventory" button up top (pop-up with Export). */}
             {dist === "Markstein" ? (
@@ -744,6 +745,10 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
               </section>
             )}
           </div>
+
+          {/* Direction for James (2026-10-29, per Chad): Markstein only, full width
+              under Today's priorities + Effectiveness. */}
+          {dist === "Markstein" && <JamesDirection version={version} onOpen={(id) => setOpenId(id)} />}
 
           {/* Account search (the shared date buttons that sat here moved into
               each block, 2026-10-22). */}

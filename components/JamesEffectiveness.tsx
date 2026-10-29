@@ -1,20 +1,21 @@
 "use client";
 
-// James Effectiveness — Distributors → Markstein, next to Today's priorities
-// (added 2026-10-29, per Chad: "its a very important block"). The measures
+// Effectiveness — Distributors → Markstein, next to Today's priorities
+// (added 2026-10-29, per Chad: "its a very important block"; renamed from
+// "James Effectiveness" the same day). One-line verdict on top, then the measures
 // Chad tracked on his spreadsheet's Leadsheet tab, checked against what the
 // stores actually bought (LilyPad / VIP sales) rather than what James (CMC)
 // reports. Math: lib/jamesEffectiveness.ts. Data: james_effectiveness()
 // (sql/james_effectiveness.sql). Plan: claude/james-effectiveness-plan.md.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
 import { useNewFeature } from "@/lib/newFeatures";
 import NewBadge from "@/components/NewBadge";
 import { CARD, MUTED, ExportButton, Pill, exportSheets, type Col } from "@/components/SalesDashboardHome";
-import { computeJe, type JeData, type WeekRow } from "@/lib/jamesEffectiveness";
+import { computeJe, verdictFor, type WeekRow } from "@/lib/jamesEffectiveness";
+import { useJamesData } from "@/components/useJamesData";
 
-type Tab = "summary" | "weeks" | "compare";
+type Tab = "summary" | "weeks" | "impact";
 
 const todayPacific = () => new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
 const fmtDate = (iso: string | null) => {
@@ -30,33 +31,21 @@ const cell = (row: WeekRow, v: number | null) => {
   return String(Math.round(v));
 };
 const change = (ty: number, ly: number) => (ly > 0 ? Math.round(((ty - ly) / ly) * 100) : null);
+const GRADE = {
+  Strong: { box: "border-[#6abc46]/50 bg-[#6abc46]/10", text: "text-[#6abc46]" },
+  Working: { box: "border-[#facc15]/40 bg-[#facc15]/5", text: "text-[#facc15]" },
+  "Needs work": { box: "border-[#fb923c]/50 bg-[#fb923c]/10", text: "text-[#fb923c]" },
+} as const;
 
 export default function JamesEffectiveness({ version }: { version: number }) {
-  const supabase = useMemo(() => createClient(), []);
   const isNew = useNewFeature("feature:james-effectiveness");
-  const [data, setData] = useState<JeData | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const { data, err } = useJamesData(version);
   const [tab, setTab] = useState<Tab>("summary");
   const [busy, setBusy] = useState(false);
   const weeksBox = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const { data: d, error } = await supabase.rpc("james_effectiveness");
-      if (cancelled) return;
-      if (error) setErr(error.message);
-      else {
-        setErr(null);
-        setData(d as JeData);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [supabase, version]);
-
   const res = useMemo(() => (data ? computeJe(data, todayPacific()) : null), [data]);
+  const verdict = useMemo(() => (res && data ? verdictFor(res, data) : null), [res, data]);
 
   // Week by week opens on the newest weeks (scrolled to the right).
   useEffect(() => {
@@ -84,8 +73,8 @@ export default function JamesEffectiveness({ version }: { version: number }) {
         return o;
       });
       const FILL: Record<string, string> = { all: "Got everything", some: "Got some", unlisted: "Bought (products not written down)", none: "Got none", pending: "Too soon to tell" };
-      await exportSheets(`James Effectiveness - ${data?.as_of ?? todayPacific()}.xlsx`, [
-        { name: "Week by week", title: "James Effectiveness — week by week (Sun–Sat)", cols: weekCols, rows: weekRows },
+      await exportSheets(`Effectiveness - James (Markstein) - ${data?.as_of ?? todayPacific()}.xlsx`, [
+        { name: "Week by week", title: "Effectiveness — James (CMC) at Markstein — week by week (Sun–Sat)", cols: weekCols, rows: weekRows },
         {
           name: "Commitments",
           title: "James's commitments vs what the store bought (30 days)",
@@ -109,22 +98,14 @@ export default function JamesEffectiveness({ version }: { version: number }) {
           })),
         },
         {
-          name: "vs other stores",
-          title: "Markstein CEs by month — stores James visited vs every other Markstein store, vs last year",
+          name: "Before & after James",
+          title: "FCB accounts James visited — CEs after his first visit vs the same days last year (each account from its own first visit)",
           cols: [
             { header: "Month", key: "month", width: 10 },
-            { header: "James's stores", key: "jt", width: 14 },
-            { header: "Same stores last year", key: "jl", width: 18 },
-            { header: "Other Markstein stores", key: "ot", width: 20 },
-            { header: "Other stores last year", key: "ol", width: 20 },
+            { header: "After first visit", key: "a", width: 16 },
+            { header: "Same days last year", key: "l", width: 18 },
           ],
-          rows: res.compare.map((m) => ({
-            month: m.month.slice(0, 7),
-            jt: Math.round(m.jamesTy * 10) / 10,
-            jl: Math.round(m.jamesLy * 10) / 10,
-            ot: Math.round(m.otherTy * 10) / 10,
-            ol: Math.round(m.otherLy * 10) / 10,
-          })),
+          rows: res.impact.months.map((m) => ({ month: m.month.slice(0, 7), a: Math.round(m.after * 10) / 10, l: Math.round(m.lastYear * 10) / 10 })),
         },
       ]);
     } finally {
@@ -152,11 +133,11 @@ export default function JamesEffectiveness({ version }: { version: number }) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="flex items-center gap-2 text-[17px] font-bold text-neutral-100">
-            James Effectiveness
+            Effectiveness
             {isNew.isNew && <NewBadge inline />}
           </h2>
           <p className={`text-[12.5px] ${MUTED}`}>
-            James Mendoza (CMC) since 5/31 · his visits checked against actual sales (LilyPad, through {fmtDate(data?.as_of ?? null)})
+            James Mendoza (CMC) since 5/31 · visits checked against actual sales (LilyPad, through {fmtDate(data?.as_of ?? null)})
           </p>
         </div>
         <ExportButton onClick={doExport} busy={busy} />
@@ -167,6 +148,22 @@ export default function JamesEffectiveness({ version }: { version: number }) {
 
       {res && (
         <>
+          {verdict && (
+            <div className={`rounded-lg border px-3 py-2.5 ${GRADE[verdict.grade].box}`}>
+              <div className={`text-[15px] font-bold ${GRADE[verdict.grade].text}`}>{verdict.grade}</div>
+              <ul className="mt-1 flex flex-col gap-1">
+                {verdict.checks.map((c) => (
+                  <li key={c.key} className="flex gap-2 text-[13px] leading-snug text-neutral-200">
+                    <span className={`shrink-0 font-bold ${c.good === true ? "text-[#6abc46]" : c.good === false ? "text-[#fb923c]" : "text-neutral-500"}`}>
+                      {c.good === true ? "✓" : c.good === false ? "✗" : "–"}
+                    </span>
+                    <span>{c.text}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {tiles.map(([label, value, sub]) => (
               <div key={label} className="rounded-lg border border-neutral-800 bg-neutral-900/60 px-3 py-2">
@@ -184,8 +181,8 @@ export default function JamesEffectiveness({ version }: { version: number }) {
             <Pill on={tab === "weeks"} onClick={() => setTab("weeks")}>
               Week by week
             </Pill>
-            <Pill on={tab === "compare"} onClick={() => setTab("compare")}>
-              vs other Markstein stores
+            <Pill on={tab === "impact"} onClick={() => setTab("impact")}>
+              Before &amp; after James
             </Pill>
           </div>
 
@@ -228,31 +225,56 @@ export default function JamesEffectiveness({ version }: { version: number }) {
             </div>
           )}
 
-          {tab === "compare" && (
+          {tab === "impact" && (
             <div className="flex flex-col gap-2">
-              <p className={`text-[12.5px] ${MUTED}`}>Markstein CEs by month: stores James has visited vs every other Markstein store, each against the same month last year.</p>
+              <p className={`text-[12.5px] ${MUTED}`}>
+                What FCB&apos;s accounts bought after James first visited them, counted from each account&apos;s own first-visit date.
+              </p>
+              <div className="flex flex-col text-[13px]">
+                {(
+                  [
+                    ["Accounts James visited", res.impact.accounts.toLocaleString(), null],
+                    ["CEs since his first visit", res.impact.after.toFixed(1), null],
+                    ["Same accounts, same days last year", res.impact.lastYear.toFixed(1), change(res.impact.after, res.impact.lastYear)],
+                    ["Same accounts, same number of days before his first visit", res.impact.before.toFixed(1), change(res.impact.after, res.impact.before)],
+                    ["New buyers (nothing in the 12 months before his visit)", `${res.impact.newBuyers} · ${res.impact.newBuyersCe.toFixed(1)} CE`, null],
+                  ] as [string, string, number | null][]
+                ).map(([label, value, ch]) => (
+                  <div key={label} className="flex justify-between gap-3 border-b border-neutral-900 py-1.5">
+                    <span className="text-neutral-300">{label}</span>
+                    <span className="whitespace-nowrap font-mono text-neutral-100">
+                      {value}
+                      {ch !== null && (
+                        <span className={`ml-2 ${ch >= 0 ? "text-[#6abc46]" : "text-[#ffab9c]"}`}>
+                          (now {ch > 0 ? "+" : ""}
+                          {ch}%)
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                ))}
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-[13px]">
                   <thead>
                     <tr className="text-[11.5px] text-neutral-400">
                       <th className="px-2 py-1 text-left font-semibold">Month</th>
-                      <th className="px-2 py-1 text-right font-semibold">James&apos;s stores</th>
-                      <th className="px-2 py-1 text-right font-semibold">vs last year</th>
-                      <th className="px-2 py-1 text-right font-semibold">Other stores</th>
-                      <th className="px-2 py-1 text-right font-semibold">vs last year</th>
+                      <th className="px-2 py-1 text-right font-semibold">After first visit</th>
+                      <th className="px-2 py-1 text-right font-semibold">Same days last year</th>
+                      <th className="px-2 py-1 text-right font-semibold">Change</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {res.compare.map((m) => {
-                      const a = change(m.jamesTy, m.jamesLy);
-                      const b = change(m.otherTy, m.otherLy);
+                    {res.impact.months.map((m) => {
+                      const c = change(m.after, m.lastYear);
                       return (
                         <tr key={m.month} className="border-t border-neutral-900">
                           <td className="px-2 py-1 text-neutral-300">{monthName(m.month)}</td>
-                          <td className="px-2 py-1 text-right font-mono text-neutral-100">{m.jamesTy.toFixed(1)}</td>
-                          <td className={`px-2 py-1 text-right font-mono ${a === null ? "text-neutral-500" : a >= 0 ? "text-[#6abc46]" : "text-[#ffab9c]"}`}>{a === null ? "—" : `${a > 0 ? "+" : ""}${a}%`}</td>
-                          <td className="px-2 py-1 text-right font-mono text-neutral-100">{m.otherTy.toFixed(1)}</td>
-                          <td className={`px-2 py-1 text-right font-mono ${b === null ? "text-neutral-500" : b >= 0 ? "text-[#6abc46]" : "text-[#ffab9c]"}`}>{b === null ? "—" : `${b > 0 ? "+" : ""}${b}%`}</td>
+                          <td className="px-2 py-1 text-right font-mono text-neutral-100">{m.after.toFixed(1)}</td>
+                          <td className="px-2 py-1 text-right font-mono text-neutral-300">{m.lastYear.toFixed(1)}</td>
+                          <td className={`px-2 py-1 text-right font-mono ${c === null ? "text-neutral-500" : c >= 0 ? "text-[#6abc46]" : "text-[#ffab9c]"}`}>
+                            {c === null ? "—" : `${c > 0 ? "+" : ""}${c}%`}
+                          </td>
                         </tr>
                       );
                     })}

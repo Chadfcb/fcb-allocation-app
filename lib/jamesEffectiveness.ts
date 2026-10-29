@@ -31,6 +31,8 @@ export interface JeCheckin {
   name: string;
   city: string | null;
   premise: string | null;
+  ce_12mo?: number | null;
+  notes?: string | null;
 }
 export interface JeSale {
   outlet_id: string;
@@ -48,18 +50,22 @@ export interface JeTarget {
   outlet_id: string | null;
   why: string | null;
 }
-export interface JeCompare {
-  month: string;
-  worked: boolean;
-  ce: number;
-  accounts: number;
+// Markstein accounts that bought in the last year but not in 90+ days and
+// that James has never visited (Direction: win back lapsed buyers).
+export interface JeLapsed {
+  outlet_id: string;
+  name: string;
+  city: string | null;
+  premise: string | null;
+  last_buy_date: string | null;
+  ce_12mo: number | null;
 }
 export interface JeData {
   as_of: string | null;
   checkins: JeCheckin[];
   sales: JeSale[];
   targets: JeTarget[];
-  compare: JeCompare[];
+  lapsed?: JeLapsed[];
 }
 
 export const JE_START = "2026-05-31";
@@ -143,8 +149,35 @@ export interface JeResult {
     targets: number;
     targetsHit: number;
   };
-  compare: { month: string; jamesTy: number; jamesLy: number; otherTy: number; otherLy: number }[];
-  commitments: { outlet_id: string; name: string; city: string | null; date: string; items: string[]; delivered: boolean; ce: number; fill: string }[];
+  impact: Impact;
+  commitments: Commitment[];
+}
+
+export interface Commitment {
+  outlet_id: string;
+  name: string;
+  city: string | null;
+  premise: "On" | "Off" | null;
+  date: string;
+  items: string[];
+  delivered: boolean;
+  ce: number;
+  fill: string; // all | some | unlisted | none | pending
+  ce12: number;
+}
+
+// What FCB's accounts bought after James's first visit, compared with the
+// same days last year and with the same number of days just before his first
+// visit. Every account counts from its own first-visit date.
+export interface Impact {
+  accounts: number; // accounts James visited
+  after: number; // CE from first visit through the sales date
+  lastYear: number; // same accounts, same days a year earlier
+  before: number; // same accounts, same number of days before the first visit
+  newBuyers: number; // bought after his visit, nothing in the 12 months before
+  newBuyersCe: number;
+  months: { month: string; after: number; lastYear: number }[];
+  recent: { after: number; lastYear: number; from: string; to: string }; // last 90 days
 }
 
 const isCommit = (o: string | null) => o === "Committed" || o === "Delivered";
@@ -265,7 +298,7 @@ export function computeJe(data: JeData, today: string): JeResult {
       fill = "pending";
       pending[w]++;
     } else fillNone[w]++;
-    commitOut.push({ outlet_id: cm.c.outlet_id, name: cm.c.name, city: cm.c.city, date: cm.date, items, delivered, ce, fill });
+    commitOut.push({ outlet_id: cm.c.outlet_id, name: cm.c.name, city: cm.c.city, premise: premOf(cm.c), date: cm.date, items, delivered, ce, fill, ce12: Number(cm.c.ce_12mo) || 0 });
   }
 
   // Rebuys
@@ -360,30 +393,60 @@ export function computeJe(data: JeData, today: string): JeResult {
     r("tn", "Target Accounts", "Targets not yet hit", notHit, notHit[nWeeks - 1] ?? universe),
   ];
 
-  // James's stores vs every other Markstein store, by month since June, vs last year.
-  const cmp = new Map<string, { jamesTy: number; jamesLy: number; otherTy: number; otherLy: number }>();
-  const startMonth = "2026-06-01";
-  for (const m of data.compare) {
-    const mo = m.month.slice(0, 10);
-    const y = Number(mo.slice(0, 4));
-    const isTy = mo >= startMonth;
-    const isLy = !isTy && y === 2025 && mo >= "2025-06-01";
-    if (!isTy && !isLy) continue;
-    const key = isTy ? mo : `2026${mo.slice(4)}`;
-    const cur = cmp.get(key) ?? { jamesTy: 0, jamesLy: 0, otherTy: 0, otherLy: 0 };
-    const v = Number(m.ce) || 0;
-    if (isTy) {
-      if (m.worked) cur.jamesTy += v;
-      else cur.otherTy += v;
-    } else if (m.worked) cur.jamesLy += v;
-    else cur.otherLy += v;
-    cmp.set(key, cur);
-  }
-  const lastMonth = `${end.slice(0, 7)}-01`;
-  const compare = Array.from(cmp.entries())
-    .filter(([k]) => k <= lastMonth)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([month, v]) => ({ month, ...v }));
+  // Before / after James's first visit, account by account.
+  const salesThrough2 = data.as_of ?? today;
+  const yearAgo = (d: string) => addDays(d, -365);
+  let after = 0, lastYear = 0, before = 0, newBuyers = 0, newBuyersCe = 0;
+  let rAfter = 0, rLy = 0;
+  const rFrom = addDays(salesThrough2, -89);
+  const monthsMap = new Map<string, { after: number; lastYear: number }>();
+  firstVisit.forEach((v0, outlet) => {
+    if (v0 > salesThrough2) return;
+    const span = Math.round((t(salesThrough2) - t(v0)) / DAY);
+    const bStart = addDays(v0, -span - 1);
+    let accAfter = 0, accPrior12 = 0;
+    for (const s of salesBy.get(outlet) ?? []) {
+      const d = s.last_buy_date;
+      if (!d) continue;
+      const ce = Number(s.ce) || 0;
+      if (d >= v0 && d <= salesThrough2) {
+        after += ce;
+        accAfter += ce;
+        const m = `${d.slice(0, 7)}-01`;
+        const cur = monthsMap.get(m) ?? { after: 0, lastYear: 0 };
+        cur.after += ce;
+        monthsMap.set(m, cur);
+        if (d >= rFrom) rAfter += ce;
+      }
+      if (d >= yearAgo(v0) && d <= yearAgo(salesThrough2)) {
+        lastYear += ce;
+        const m = `${addDays(d, 365).slice(0, 7)}-01`;
+        const cur = monthsMap.get(m) ?? { after: 0, lastYear: 0 };
+        cur.lastYear += ce;
+        monthsMap.set(m, cur);
+        if (d >= yearAgo(rFrom > v0 ? rFrom : v0)) rLy += ce;
+      }
+      if (d >= bStart && d < v0) before += ce;
+      if (d >= yearAgo(v0) && d < v0) accPrior12 += ce;
+    }
+    if (accAfter > 0 && accPrior12 === 0) {
+      newBuyers++;
+      newBuyersCe += accAfter;
+    }
+  });
+  const impact: Impact = {
+    accounts: firstVisit.size,
+    after,
+    lastYear,
+    before,
+    newBuyers,
+    newBuyersCe,
+    months: Array.from(monthsMap.entries())
+      .filter(([m]) => m >= "2026-05-01")
+      .sort(([x], [y]) => x.localeCompare(y))
+      .map(([month, v]) => ({ month, ...v })),
+    recent: { after: rAfter, lastYear: rLy, from: rFrom, to: salesThrough2 },
+  };
 
   return {
     weeks,
@@ -398,7 +461,255 @@ export function computeJe(data: JeData, today: string): JeResult {
       targets: universe,
       targetsHit: sum(hit),
     },
-    compare,
+    impact,
     commitments: commitOut,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Verdict — the one-line "how is James doing" (2026-10-29, per Chad: "its
+// still not telling me in a nut shell how well James is doing"). Three
+// checks; all good = Strong, two = Working, one or none = Needs work.
+//   Sales:        accounts James visited, last 90 days (after his first
+//                 visit) vs the same days last year — good when up.
+//   Follow-through: commitments that turned into an order — good at 60%+.
+//   Repeat:       accounts that bought after his visit and bought again —
+//                 good at 40%+.
+export const VERDICT_GOOD = { followThrough: 0.6, repeat: 0.4 };
+
+export interface Verdict {
+  grade: "Strong" | "Working" | "Needs work";
+  checks: { key: string; good: boolean | null; text: string }[];
+}
+
+const pct = (x: number) => `${Math.round(x * 100)}%`;
+const ce1 = (x: number) => (Math.round(x * 10) / 10).toLocaleString();
+
+export function verdictFor(res: JeResult, data: JeData): Verdict {
+  const { impact } = res;
+  const checks: Verdict["checks"] = [];
+
+  const ly = impact.recent.lastYear;
+  const now = impact.recent.after;
+  if (ly > 0) {
+    const ch = (now - ly) / ly;
+    checks.push({
+      key: "sales",
+      good: ch > 0,
+      text: `Accounts James visited bought ${ce1(now)} CEs in the last 90 days, ${ch >= 0 ? "up" : "down"} ${pct(Math.abs(ch))} from ${ce1(ly)} the same days last year.`,
+    });
+  } else {
+    checks.push({ key: "sales", good: now > 0 ? true : null, text: `Accounts James visited bought ${ce1(now)} CEs in the last 90 days (nothing the same days last year).` });
+  }
+
+  const decided = res.commitments.filter((c) => c.fill !== "pending");
+  const bought = decided.filter((c) => c.delivered).length;
+  if (decided.length) {
+    const r = bought / decided.length;
+    checks.push({
+      key: "follow",
+      good: r >= VERDICT_GOOD.followThrough,
+      text: `${pct(r)} of his commitments turned into an order (${bought} of ${decided.length}); ${decided.length - bought} never did.`,
+    });
+  }
+
+  // Repeat: accounts with a buy after the first visit, and how many bought again.
+  const buyers = new Map<string, Set<string>>();
+  const first = new Map<string, string>();
+  for (const c of data.checkins) {
+    const f = first.get(c.outlet_id);
+    if (!f || c.checkin_date < f) first.set(c.outlet_id, c.checkin_date);
+  }
+  for (const s of data.sales) {
+    const v0 = first.get(s.outlet_id);
+    if (!v0) continue;
+    for (const d of [s.first_buy_in_month, s.last_buy_date]) {
+      if (!d || d < v0) continue;
+      const set = buyers.get(s.outlet_id) ?? new Set<string>();
+      set.add(d);
+      buyers.set(s.outlet_id, set);
+    }
+  }
+  const nBuyers = buyers.size;
+  const nRepeat = Array.from(buyers.values()).filter((x) => x.size >= 2).length;
+  if (nBuyers) {
+    const r = nRepeat / nBuyers;
+    checks.push({
+      key: "repeat",
+      good: r >= VERDICT_GOOD.repeat,
+      text: `${pct(r)} of accounts that bought after his visit have ordered again (${nRepeat} of ${nBuyers}).`,
+    });
+  }
+
+  const goods = checks.filter((c) => c.good === true).length;
+  const grade: Verdict["grade"] = goods >= 3 ? "Strong" : goods === 2 ? "Working" : "Needs work";
+  return { grade, checks };
+}
+
+// ---------------------------------------------------------------------------
+// Direction for James (2026-10-29, per Chad: "actionable items, direction if
+// you will, for james"). Each list is ranked by what's most worth his time.
+export interface DirRow {
+  outlet_id: string | null;
+  name: string;
+  city: string | null;
+  detail: string;
+  sub: string;
+  value: string;
+}
+export interface DirList {
+  key: string;
+  title: string;
+  why: string;
+  rows: DirRow[];
+}
+export interface WorkingRow {
+  label: string;
+  committed: number;
+  bought: number;
+}
+
+export function directionFor(res: JeResult, data: JeData): { lists: DirList[]; working: { packages: WorkingRow[]; premise: WorkingRow[] } } {
+  const through = data.as_of ?? new Date().toISOString().slice(0, 10);
+  const daysSince = (d: string) => Math.round((t(through) - t(d)) / DAY);
+  const ck = data.checkins;
+  const byOutlet = new Map<string, JeCheckin[]>();
+  for (const c of ck) {
+    const l = byOutlet.get(c.outlet_id);
+    if (l) l.push(c);
+    else byOutlet.set(c.outlet_id, [c]);
+  }
+  const salesBy = new Map<string, JeSale[]>();
+  for (const s of data.sales) {
+    const l = salesBy.get(s.outlet_id);
+    if (l) l.push(s);
+    else salesBy.set(s.outlet_id, [s]);
+  }
+  const firstVisit = (o: string) => (byOutlet.get(o) ?? []).reduce((m, c) => (!m || c.checkin_date < m ? c.checkin_date : m), "");
+  const buyDaysAfter = (o: string, from: string) =>
+    Array.from(new Set((salesBy.get(o) ?? []).flatMap((s) => [s.first_buy_in_month, s.last_buy_date]).filter((d): d is string => !!d && d >= from))).sort();
+  const lastCk = (o: string) => (byOutlet.get(o) ?? []).reduce<JeCheckin | null>((m, c) => (!m || c.checkin_date > m.checkin_date ? c : m), null);
+
+  // 1. Chase these commitments: said yes 30+ days ago, nothing ordered since.
+  const chase: DirRow[] = [];
+  const seen1 = new Set<string>();
+  for (const c of [...res.commitments].sort((a, b) => b.ce12 - a.ce12 || b.date.localeCompare(a.date))) {
+    if (c.fill !== "none" || seen1.has(c.outlet_id)) continue;
+    if (buyDaysAfter(c.outlet_id, c.date).length) continue; // bought later after all
+    seen1.add(c.outlet_id);
+    chase.push({
+      outlet_id: c.outlet_id,
+      name: c.name,
+      city: c.city,
+      detail: c.items.length ? c.items.join("; ") : "Products not written down",
+      sub: `Committed ${fmtShort(c.date)} · ${daysSince(c.date)} days, no order`,
+      value: c.ce12 ? `${ce1(c.ce12)} CE/yr` : "",
+    });
+  }
+
+  // 2. Get the reorder: one buy after his visit, 30+ days ago.
+  const reorder: DirRow[] = [];
+  byOutlet.forEach((list, o) => {
+    const days = buyDaysAfter(o, firstVisit(o));
+    if (days.length !== 1 || daysSince(days[0]) < 30) return;
+    const rows = (salesBy.get(o) ?? []).filter((s) => s.last_buy_date === days[0] || s.first_buy_in_month === days[0]);
+    const ce = rows.reduce((x, s) => x + (Number(s.ce) || 0), 0);
+    const what = Array.from(new Set(rows.map((s) => `${s.product}${s.size ? ` (${s.size})` : ""}`))).join("; ");
+    reorder.push({ outlet_id: o, name: list[0].name, city: list[0].city, detail: what || "—", sub: `Bought ${fmtShort(days[0])} · ${daysSince(days[0])} days, no reorder`, value: `${ce1(ce)} CE` });
+  });
+  reorder.sort((a, b) => parseFloat(b.value) - parseFloat(a.value));
+
+  // 3 + 4. Targets.
+  const notVisited: DirRow[] = [];
+  const notBuying: DirRow[] = [];
+  for (const tg of data.targets) {
+    const visits = tg.outlet_id ? byOutlet.get(tg.outlet_id) ?? [] : [];
+    if (!visits.length) {
+      notVisited.push({ outlet_id: tg.outlet_id, name: tg.name, city: null, detail: tg.why ?? "", sub: `${tg.tier ?? ""} · ${tg.class_of_trade === "On" ? "On premise" : "Off premise"}`, value: tg.tier ?? "" });
+      continue;
+    }
+    const v0 = firstVisit(tg.outlet_id!);
+    if (buyDaysAfter(tg.outlet_id!, v0).length) continue;
+    const last = lastCk(tg.outlet_id!);
+    notBuying.push({
+      outlet_id: tg.outlet_id,
+      name: tg.name,
+      city: visits[0].city,
+      detail: lastNote(last) || tg.why || "",
+      sub: `${visits.length} visit${visits.length === 1 ? "" : "s"} · last ${fmtShort(last!.checkin_date)} · no order since`,
+      value: tg.tier ?? "",
+    });
+  }
+
+  // 5. Win back lapsed buyers James hasn't visited.
+  const lapsed: DirRow[] = (data.lapsed ?? [])
+    .filter((a) => !byOutlet.has(a.outlet_id))
+    .sort((a, b) => (Number(b.ce_12mo) || 0) - (Number(a.ce_12mo) || 0))
+    .map((a) => ({
+      outlet_id: a.outlet_id,
+      name: a.name,
+      city: a.city,
+      detail: a.premise ? `${a.premise} premise` : "",
+      sub: `Last order ${a.last_buy_date ? fmtShort(a.last_buy_date) : "—"} · ${a.last_buy_date ? daysSince(a.last_buy_date) : "?"} days ago · never visited by James`,
+      value: `${ce1(Number(a.ce_12mo) || 0)} CE/yr`,
+    }));
+
+  // 6. Stop spending time here: 3+ visits, nothing bought since the first.
+  const stop: DirRow[] = [];
+  byOutlet.forEach((list, o) => {
+    if (list.length < 3) return;
+    if (buyDaysAfter(o, firstVisit(o)).length) return;
+    const last = lastCk(o)!;
+    stop.push({ outlet_id: o, name: list[0].name, city: list[0].city, detail: lastNote(last), sub: `${list.length} visits · last ${fmtShort(last.checkin_date)} · nothing ordered`, value: `${list.length} visits` });
+  });
+  stop.sort((a, b) => parseInt(b.value) - parseInt(a.value));
+
+  // 7. What's working: commitments that turned into orders, by package and premise.
+  const pk = new Map<string, WorkingRow>();
+  const pr = new Map<string, WorkingRow>();
+  const PK: Record<string, string> = { "12oz": "12 oz cans", "16oz": "16 oz 4-packs", "19.2oz": "19.2 oz singles", "1/6 bbl": "1/6 bbl kegs", "1/2 bbl": "1/2 bbl kegs" };
+  for (const c of res.commitments) {
+    if (c.fill === "pending") continue;
+    const p = c.premise === "On" ? "On premise" : c.premise === "Off" ? "Off premise" : "Premise not known";
+    const r = pr.get(p) ?? { label: p, committed: 0, bought: 0 };
+    r.committed++;
+    if (c.delivered) r.bought++;
+    pr.set(p, r);
+    const boughtSizes = new Set(
+      (salesBy.get(c.outlet_id) ?? []).filter((s) => [s.first_buy_in_month, s.last_buy_date].some((d) => d && d >= c.date && d <= addDays(c.date, 30))).map((s) => s.size ?? ""),
+    );
+    for (const it of c.items) {
+      const sz = sizeKey(it);
+      if (!sz) continue;
+      const w = pk.get(sz) ?? { label: PK[sz] ?? sz, committed: 0, bought: 0 };
+      w.committed++;
+      if (boughtSizes.has(sz)) w.bought++;
+      pk.set(sz, w);
+    }
+  }
+  const byRate = (a: WorkingRow, b: WorkingRow) => b.bought / (b.committed || 1) - a.bought / (a.committed || 1);
+
+  return {
+    lists: [
+      { key: "chase", title: "Chase these commitments", why: "Said yes 30+ days ago, nothing ordered since", rows: chase },
+      { key: "reorder", title: "Get the reorder", why: "Bought once after his visit, no reorder in 30+ days", rows: reorder },
+      { key: "tnv", title: "Targets not visited yet", why: "On the target list, no check-in yet", rows: notVisited },
+      { key: "tnb", title: "Targets visited, not buying", why: "Visited, no order since his first visit", rows: notBuying },
+      { key: "lapsed", title: "Win back lapsed buyers", why: "Bought in the last year, nothing in 90+ days, never visited by James", rows: lapsed },
+      { key: "stop", title: "Stop spending time here", why: "3+ visits, nothing ordered since the first", rows: stop },
+    ],
+    working: { packages: Array.from(pk.values()).sort(byRate), premise: Array.from(pr.values()).sort(byRate) },
+  };
+}
+
+// James's last note at an account, shortened.
+function lastNote(c: JeCheckin | null): string {
+  const n = (c?.notes ?? "").trim();
+  if (!n) return c?.outcome ? `Last outcome: ${c.outcome}` : "";
+  return `Last visit: ${n.length > 160 ? `${n.slice(0, 157)}…` : n}`;
+}
+
+function fmtShort(d: string) {
+  const [, m, dd] = d.split("-").map(Number);
+  return `${m}/${dd}`;
 }
