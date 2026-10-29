@@ -28,6 +28,7 @@
 
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -135,6 +136,18 @@ export default function BuildOrdersPage() {
   const [totalBblsColWidth, setTotalBblsColWidth] = useState(0);
   const totalBblsNew = useNewFeature("feature:build-orders-total-bbls");
   const beerTotalNew = useNewFeature("feature:build-orders-beer-total");
+
+  // Horizontal scroll bar at the TOP of the Recommended Order grid (Chad,
+  // 2026-10-29) — same pattern as Inventory & Allocation: browsers only draw
+  // a horizontal scrollbar at the bottom of a scroll container, so a thin
+  // synced strip sits above the table and the table's own bar is hidden.
+  // `tableScrollWidth` is the table's full width so the strip scrolls exactly
+  // as far as the table.
+  const tableRef = useRef<HTMLTableElement | null>(null);
+  const tableScrollRef = useRef<HTMLDivElement | null>(null);
+  const topScrollRef = useRef<HTMLDivElement | null>(null);
+  const [tableScrollWidth, setTableScrollWidth] = useState(0);
+  const isSyncingTableScroll = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -273,6 +286,32 @@ export default function BuildOrdersPage() {
     observer.observe(totalEl);
     return () => observer.disconnect();
   }, [loading, week, distributors.length]);
+
+  useLayoutEffect(() => {
+    const el = tableRef.current;
+    if (!el) return;
+    const measure = () => setTableScrollWidth(el.scrollWidth);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+    // Re-attach once the table actually mounts (it isn't there while
+    // loading, or before a week exists).
+  }, [loading, week, distributors.length]);
+
+  function handleTopScroll(e: React.UIEvent<HTMLDivElement>) {
+    if (isSyncingTableScroll.current) return;
+    isSyncingTableScroll.current = true;
+    if (tableScrollRef.current) tableScrollRef.current.scrollLeft = e.currentTarget.scrollLeft;
+    isSyncingTableScroll.current = false;
+  }
+
+  function handleTableScroll(e: React.UIEvent<HTMLDivElement>) {
+    if (isSyncingTableScroll.current) return;
+    isSyncingTableScroll.current = true;
+    if (topScrollRef.current) topScrollRef.current.scrollLeft = e.currentTarget.scrollLeft;
+    isSyncingTableScroll.current = false;
+  }
 
   function effectiveRecommended(productId: string, distributorId: string) {
     const key = `${productId}:${distributorId}`;
@@ -607,8 +646,24 @@ export default function BuildOrdersPage() {
         </p>
       ) : (
         <>
-          <div className="overflow-x-auto rounded-lg border border-neutral-800 bg-neutral-950">
-            <table className="w-full border-collapse text-sm">
+          <div className="rounded-lg border border-neutral-800 bg-neutral-950">
+            <div
+              ref={topScrollRef}
+              onScroll={handleTopScroll}
+              // `scroll` (not `auto`) so the track always renders, even before
+              // the width is first measured; 16px gives the bar room to draw.
+              className="overflow-x-scroll overflow-y-hidden"
+              style={{ height: 16 }}
+            >
+              <div style={{ width: tableScrollWidth, height: 1 }} />
+            </div>
+            <div
+              ref={tableScrollRef}
+              onScroll={handleTableScroll}
+              // Same scroll as the strip above; its own bottom bar is hidden.
+              className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            >
+            <table ref={tableRef} className="w-full border-collapse text-sm">
               <thead>
                 <tr className="text-xs uppercase tracking-wide text-neutral-500">
                   <th
@@ -805,6 +860,7 @@ export default function BuildOrdersPage() {
                 )}
               </tbody>
             </table>
+            </div>
           </div>
 
           <p className="text-xs text-neutral-500">
