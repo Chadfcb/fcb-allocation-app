@@ -1463,7 +1463,7 @@ function AccountPanel({
         </dl>
 
         <section className="flex flex-col gap-2">
-          <h3 className="text-xs font-semibold uppercase tracking-widest text-neutral-400">Cases bought by month</h3>
+          <h3 className="text-xs font-semibold uppercase tracking-widest text-neutral-400">CEs bought by month</h3>
           {sales === null ? (
             <p className="text-sm text-neutral-500">Loading…</p>
           ) : sales.length === 0 ? (
@@ -1664,7 +1664,7 @@ function MonthlyChart({ sales, asOf }: { sales: SalesAccountSaleRow[]; asOf: str
   const years = Math.ceil(N / 12);
   return (
     <div className="relative">
-      <svg viewBox={`0 0 ${W} ${H}`} className="block h-auto w-full" role="img" aria-label="Cases bought by month" onMouseLeave={() => setHover(null)}>
+      <svg viewBox={`0 0 ${W} ${H}`} className="block h-auto w-full" role="img" aria-label="CEs bought by month" onMouseLeave={() => setHover(null)}>
         {[0, 0.5, 1].map((t) => (
           <g key={t}>
             <line x1={L} x2={W - R} y1={y(nice * t)} y2={y(nice * t)} stroke="#262626" />

@@ -1160,7 +1160,7 @@ function LineTable({ title, lines, kind, chain, dist }: { title: string; lines: 
               <th className="py-1 font-medium">Label</th>
               {kind === "carried" ? (
                 <th className="py-1 text-right font-medium" title="Case equivalents this store bought in the last 90 days">
-                  Cases bought ({CARRIED_DAYS} days)
+                  CEs bought ({CARRIED_DAYS} days)
                 </th>
               ) : (
                 <th className="py-1 text-right font-medium" title={`How many other ${chain} stores${dist ? ` (${dist})` : ""} bought this item in the last ${CARRIED_DAYS} days`}>

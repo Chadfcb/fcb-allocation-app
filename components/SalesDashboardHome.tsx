@@ -240,7 +240,7 @@ export const COLS_GAPS: Col[] = [
   { header: "Rep", key: "rep", width: 10 },
   { header: "Phone", key: "phone" },
   { header: "Missing must-carry items", key: "items", width: 50 },
-  { header: "Cases a year at stake", key: "impact" },
+  { header: "CEs a year at stake", key: "impact" },
   { header: "Last check-in", key: "checkin" },
 ];
 export const gapRows = (rows: ActionRow[]) =>
@@ -263,7 +263,7 @@ export const COLS_ACCOUNTS: Col[] = [
   { header: "Phone", key: "phone" },
   { header: "Last order", key: "lb" },
   { header: "Days since", key: "dark", width: 10 },
-  { header: "Cases last 12 months", key: "ce12" },
+  { header: "CEs last 12 months", key: "ce12" },
   { header: "Last check-in", key: "checkin" },
 ];
 export const accountRows = (rows: HomeAttention[]) =>
@@ -288,7 +288,7 @@ export const COLS_WB: Col[] = [
   { header: "Days gone", key: "gap", width: 10 },
   { header: "Won back from", key: "from" },
   { header: "Came back buying", key: "items", width: 44 },
-  { header: "Cases since", key: "ce" },
+  { header: "CEs since", key: "ce" },
   { header: "Check-in before they came back", key: "checkin", width: 24 },
 ];
 export const wbRows = (rows: HomeWinback[]) =>
@@ -506,18 +506,18 @@ export default function SalesDashboardHome({
       await exportSheets(`${d} - action list - ${home.as_of}.xlsx`, [
         {
           name: "Biggest impacts",
-          title: `${d} (rep ${repName(d)}) — biggest immediate impacts, ranked by cases a year at stake · data as of ${fmtDay(home.as_of)}`,
+          title: `${d} (rep ${repName(d)}) — biggest immediate impacts, ranked by CEs a year at stake · data as of ${fmtDay(home.as_of)}`,
           cols: [
             { header: "Type", key: "label" },
             { header: "Account / chain", key: "title", width: 44 },
             { header: "Detail", key: "sub", width: 60 },
-            { header: "Cases a year at stake", key: "ce" },
+            { header: "CEs a year at stake", key: "ce" },
           ],
           rows: imp.map((i) => ({ label: i.label, title: i.title, sub: i.sub, ce: Math.round(i.ce) })),
         },
         { name: "Must-carry gaps", title: `${d} — stores missing must-carry items`, cols: COLS_GAPS, rows: gapRows((actions.rows ?? []).filter((r) => r.store.distributor === d)) },
         { name: "Slipping", title: `${d} — 61–90 days since the last order`, cols: COLS_ACCOUNTS, rows: accountRows(home.attention.filter((a) => a.dist === d && a.stage === "plost")) },
-        { name: "Big losses", title: `${d} — lost in the last year, ${BIG_LOST_CE}+ cases all time`, cols: COLS_ACCOUNTS, rows: accountRows(home.attention.filter((a) => a.dist === d && a.stage === "lost")) },
+        { name: "Big losses", title: `${d} — lost in the last year, ${BIG_LOST_CE}+ CEs all time`, cols: COLS_ACCOUNTS, rows: accountRows(home.attention.filter((a) => a.dist === d && a.stage === "lost")) },
       ]);
     } finally {
       setBusy(null);
@@ -527,7 +527,7 @@ export default function SalesDashboardHome({
   const ATT = {
     gaps: { label: "Must-carry gaps", count: actions.rows ? actionRows.length : null, rule: "Stores not buying an item their chain says they must carry (Sales → Chain Mandates). Biggest first." },
     slip: { label: "Slipping now", count: v.slip.length, rule: "61–90 days since their last order — still saveable. Biggest 12-month buyers first." },
-    lost: { label: "Big losses", count: v.lost.length, rule: `Lost in the last year (90+ days quiet) and bought ${BIG_LOST_CE}+ cases all time. Biggest 12-month buyers first.` },
+    lost: { label: "Big losses", count: v.lost.length, rule: `Lost in the last year (90+ days quiet) and bought ${BIG_LOST_CE}+ CEs all time. Biggest 12-month buyers first.` },
   } as const;
 
   const exportAttention = async () => {
@@ -565,11 +565,11 @@ export default function SalesDashboardHome({
   const distParam = dist ? { dist } : ({} as Record<string, string>);
 
   const kpiCards = [
-    { label: "Cases sold", value: fmtN(k.cases), chg: casesChg, sub: "vs same days last year", spark: t.ty, color: "#6abc46", href: accountsLink({ ...distParam, sort: "ce_12mo" }) },
+    { label: "CEs sold", value: fmtN(k.cases), chg: casesChg, sub: "vs same days last year", spark: t.ty, color: "#6abc46", href: accountsLink({ ...distParam, sort: "ce_12mo" }) },
     { label: "Buying accounts", value: fmtN(k.buying), chg: pctChange(k.buying, k.buyingLy), sub: "ordered in the last 60 days", color: "#6abc46", href: accountsLink({ ...distParam, sort: "last_buy_date" }) },
     { label: "New accounts", value: fmtN(k.newA), chg: pctChange(k.newA, k.newLy), sub: "first order ever", color: "#5aa9f0", href: accountsLink({ ...distParam, stage: "new" }) },
     { label: "Won back", value: fmtN(k.won), chg: pctChange(k.won, k.wonLy), sub: "ordered again after 61+ days", color: "#3fc9b0", onClick: () => setAllWb(true) },
-    { label: "At risk", value: fmtN(k.atRisk), chg: undefined, sub: `${fmtN(k.atRiskCe)} cases a year · 61–90 days quiet`, color: "#f0a63c", href: accountsLink({ ...distParam, stage: "plost" }) },
+    { label: "At risk", value: fmtN(k.atRisk), chg: undefined, sub: `${fmtN(k.atRiskCe)} CEs a year · 61–90 days quiet`, color: "#f0a63c", href: accountsLink({ ...distParam, stage: "plost" }) },
     { label: "Went lost", value: fmtN(k.wentLost), chg: pctChange(k.wentLost, k.wentLostLy), goodWhenDown: true, sub: "hit 90+ days (fewer is better)", color: "#ef6a55", href: accountsLink({ ...distParam, stage: "lost", sort: "last_buy_date" }) },
   ];
 
@@ -597,7 +597,7 @@ export default function SalesDashboardHome({
             title={`${r.store.name}${r.store.city ? ` · ${r.store.city}` : ""}`}
             sub={`${r.missing.map((m) => `${m.product} ${m.size}`).join(", ")} · ${r.store.distributor}${r.rep ? ` · rep ${r.rep}` : ""}`}
             value={fmtN(r.impact)}
-            valueLabel="cases / yr at stake"
+            valueLabel="CEs / yr at stake"
             onClick={() => onOpenStore(r)}
           />
         ))
@@ -608,7 +608,7 @@ export default function SalesDashboardHome({
             title={`${a.name}${a.city ? ` · ${a.city}` : ""}`}
             sub={`${a.dist} · rep ${repName(a.dist)} · ${a.dark} days quiet`}
             value={fmtN(a.ce12)}
-            valueLabel="cases last 12 mo"
+            valueLabel="CEs last 12 mo"
             href={accountsLink({ open: a.outlet_id })}
           />
         ));
@@ -792,7 +792,7 @@ export default function SalesDashboardHome({
             <Stat value={fmtN(k.won)} label="Won back" />
             <Stat value={fmtN(k.wonFromLost)} label="From Lost (90+ days)" color="#7fe0cd" />
             <Stat value={fmtN(k.won - k.wonFromLost)} label="From Potential lost (61–90)" color="#9edc7f" />
-            <Stat value={fmtN(v.wins.reduce((tt, w) => tt + (Number(w.ce_since) || 0), 0))} label="Cases since they came back" />
+            <Stat value={fmtN(v.wins.reduce((tt, w) => tt + (Number(w.ce_since) || 0), 0))} label="CEs since they came back" />
           </div>
           <div className="flex flex-col">
             {v.wins.length ? (
@@ -842,7 +842,7 @@ export default function SalesDashboardHome({
               </span>
               <span className="flex items-baseline gap-2">
                 <span className="font-mono text-2xl font-light text-neutral-50">{fmtN(tl.kd.cases)}</span>
-                <span className={`text-xs ${MUTED}`}>cases</span>
+                <span className={`text-xs ${MUTED}`}>CEs</span>
                 <Change value={pctChange(tl.kd.cases, tl.kd.casesLy)} title="vs the same days last year" />
               </span>
               <span className="text-[12.5px] text-neutral-300">
@@ -923,7 +923,7 @@ export default function SalesDashboardHome({
         <section className={`${CARD} flex min-w-0 flex-[1_1_380px] flex-col gap-3.5`}>
           <div>
             <h2 className="text-[15px] font-semibold text-neutral-100">What&apos;s selling</h2>
-            <p className={`text-[12.5px] ${MUTED}`}>Cases by brand · {pLabel} · vs same days last year</p>
+            <p className={`text-[12.5px] ${MUTED}`}>CEs by brand · {pLabel} · vs same days last year</p>
           </div>
           <div className="flex flex-col gap-3">
             {v.brands.map((b) => (
@@ -1049,7 +1049,7 @@ export default function SalesDashboardHome({
       {openDist && (
         <Modal
           title={`${openDist} — biggest immediate impacts`}
-          sub={`Ranked by cases a year at stake · rep ${repName(openDist)}`}
+          sub={`Ranked by CEs a year at stake · rep ${repName(openDist)}`}
           onClose={() => setOpenDist(null)}
           actions={
             <>
@@ -1073,7 +1073,7 @@ export default function SalesDashboardHome({
                 title={it.title}
                 sub={it.sub}
                 value={fmtN(it.ce)}
-                valueLabel="cases / yr"
+                valueLabel="CEs / yr"
                 href={it.href}
                 onClick={
                   it.row
@@ -1171,8 +1171,8 @@ export function CasesByMonth({ home, dist, scope }: { home: HomeData; dist: stri
   <section className={`${CARD} flex min-w-0 flex-[999_1_620px] flex-col gap-3.5`}>
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div>
-        <h2 className="text-[15px] font-semibold text-neutral-100">Cases sold by month</h2>
-        <p className={`text-[12.5px] ${MUTED}`}>{scope} · last 12 months · case equivalents</p>
+        <h2 className="text-[15px] font-semibold text-neutral-100">CEs sold by month</h2>
+        <p className={`text-[12.5px] ${MUTED}`}>{scope} · last 12 months · case equivalents (cans + kegs)</p>
       </div>
       <div className="flex items-center gap-4 text-[12.5px]">
         <span className="flex items-center gap-1.5 text-neutral-200">
@@ -1186,7 +1186,7 @@ export function CasesByMonth({ home, dist, scope }: { home: HomeData; dist: stri
       </div>
     </div>
     <div className="relative h-[230px]" onMouseLeave={() => setHoverMonth(null)}>
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="absolute inset-0 block h-[230px] w-full" role="img" aria-label={`Cases sold by month, this year versus last year, ${scope}`}>
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="absolute inset-0 block h-[230px] w-full" role="img" aria-label={`CEs sold by month, this year versus last year, ${scope}`}>
         <defs>
           <linearGradient id="home-tyfill" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0" stopColor="#6abc46" stopOpacity="0.28" />
@@ -1247,7 +1247,7 @@ export function CasesByMonth({ home, dist, scope }: { home: HomeData; dist: stri
                   <div className="flex items-center justify-between gap-4">
                     <span className="flex items-center gap-1.5 text-neutral-300">
                       <span className="inline-block h-[3px] w-3 rounded bg-[#6abc46]" />
-                      Cases sold
+                      CEs sold
                     </span>
                     <span className="font-mono text-neutral-50">{fmtN(tyV)}</span>
                   </div>
@@ -1280,7 +1280,7 @@ export function CasesByMonth({ home, dist, scope }: { home: HomeData; dist: stri
       ))}
     </div>
     <div className="flex flex-wrap gap-7 border-t border-neutral-800/70 pt-3.5">
-      <Stat value={fmtN(kpis(home, "ytd", dist).cases)} label="Cases year to date" />
+      <Stat value={fmtN(kpis(home, "ytd", dist).cases)} label="CEs year to date" />
       <Stat value={fmtN(kpis(home, "ytd", dist).casesLy)} label="Same days last year" />
       <div className="flex flex-col gap-0.5">
         <span className="text-xl">

@@ -198,6 +198,9 @@ function ProductSalesPopup({ supabase, pick, onClose, onOpenAccount }: { supabas
   const { dist, item } = pick;
   const lily = useMemo(() => lilyProductsOf(item.product), [item.product]);
   const size = useMemo(() => sizeOfProduct(item.product), [item.product]);
+  // Real counts of this one product: kegs for keg sizes, cases for cans (Chad 10/29: never call kegs "cases").
+  const unit = size ? (/bbl/.test(size) ? "kegs" : "cases") : "cases / kegs";
+  const Unit = unit.charAt(0).toUpperCase() + unit.slice(1);
   const [data, setData] = useState<ProductSales | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [list, setList] = useState<"buying" | "stopped">("buying");
@@ -257,8 +260,8 @@ function ProductSalesPopup({ supabase, pick, onClose, onOpenAccount }: { supabas
         { header: "City", key: "city", width: 16 },
         { header: "Premise", key: "premise", width: 10 },
         { header: "Last order", key: "last_buy", width: 12 },
-        { header: "Cases last 3 months", key: "cases_90" },
-        { header: "Cases last 12 months", key: "cases_12" },
+        { header: `${Unit} last 3 months`, key: "cases_90" },
+        { header: `${Unit} last 12 months`, key: "cases_12" },
       ];
       const r = (xs: ProductSales["accounts"]) => xs.map((a) => ({ ...a, last_buy: fmtDay(a.last_buy), cases_90: a.cases_90 ?? 0, cases_12: a.cases_12 ?? 0 }));
       await exportSheets(`${dist} - ${item.product} - accounts.xlsx`, [
@@ -292,9 +295,9 @@ function ProductSalesPopup({ supabase, pick, onClose, onOpenAccount }: { supabas
               const ly = period(p, "ly");
               return (
                 <div key={p} className="flex flex-col gap-1">
-                  <Stat value={fmt1(ty)} label={`Cases · ${label}`} />
+                  <Stat value={fmt1(ty)} label={`${Unit} · ${label}`} />
                   <span className="flex items-center gap-1.5 text-[11px] text-neutral-500">
-                    <Change value={pctChange(ty, ly)} title={`Same days last year: ${fmt1(ly)} cases`} /> vs {fmt1(ly)} last year
+                    <Change value={pctChange(ty, ly)} title={`Same days last year: ${fmt1(ly)} ${unit}`} /> vs {fmt1(ly)} last year
                   </span>
                 </div>
               );
@@ -303,13 +306,13 @@ function ProductSalesPopup({ supabase, pick, onClose, onOpenAccount }: { supabas
 
           {/* Cases by month */}
           <div className="flex flex-col gap-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Cases by month</h3>
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">{Unit} by month</h3>
             <div className="flex h-32 items-end gap-1.5">
               {months.map((m) => (
                 <div
                   key={m.ym}
                   className="flex h-full min-w-0 flex-1 flex-col justify-end"
-                  title={`${MONTH_NAMES[+m.ym.slice(5) - 1]} ${m.ym.slice(0, 4)}${m.partial ? " (so far)" : ""}: ${fmt1(m.ty)} cases · same month last year: ${fmt1(m.ly)}`}
+                  title={`${MONTH_NAMES[+m.ym.slice(5) - 1]} ${m.ym.slice(0, 4)}${m.partial ? " (so far)" : ""}: ${fmt1(m.ty)} ${unit} · same month last year: ${fmt1(m.ly)}`}
                 >
                   <div className="flex h-full items-end gap-[2px]">
                     <div className="flex-1 rounded-t-sm bg-neutral-700/70" style={{ height: `${(m.ly / maxM) * 100}%` }} />
@@ -347,7 +350,7 @@ function ProductSalesPopup({ supabase, pick, onClose, onOpenAccount }: { supabas
               </Pill>
             </div>
             <p className="text-xs text-neutral-500">
-              {list === "buying" ? "Ordered it in the last 90 days · most cases first" : "Ordered it in the last 12 months, but not in the last 90 days · most recent first"} · click an account for its details
+              {list === "buying" ? `Ordered it in the last 90 days · most ${unit} first` : "Ordered it in the last 12 months, but not in the last 90 days · most recent first"} · click an account for its details
             </p>
             <div className="flex max-h-[340px] flex-col overflow-y-auto pr-1">
               {rows.length === 0 ? (
@@ -359,7 +362,7 @@ function ProductSalesPopup({ supabase, pick, onClose, onOpenAccount }: { supabas
                     title={a.name}
                     sub={[a.city, a.premise === "On" ? "On-premise" : a.premise === "Off" ? "Off-premise" : null, `last order ${fmtDay(a.last_buy)}`].filter(Boolean).join(" · ")}
                     value={fmt1(Number(a.cases_12) || 0)}
-                    valueLabel="cases · 12 mo"
+                    valueLabel={`${unit} · 12 mo`}
                     onClick={() => onOpenAccount(a.outlet_id)}
                   />
                 ))

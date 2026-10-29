@@ -459,7 +459,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
               { header: "City", key: "city" },
               { header: "First order", key: "fb" },
               { header: "Last order", key: "lb" },
-              { header: "Cases last 12 months", key: "ce12" },
+              { header: "CEs last 12 months", key: "ce12" },
             ],
             rows: newAccts.map((a) => ({ name: a.name, city: a.city ?? "", fb: fmtDay(a.fb), lb: fmtDay(a.lb), ce12: Math.round(Number(a.ce12) || 0) })),
           },
@@ -565,7 +565,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
       title={`${r.store.name}${r.store.city ? ` · ${r.store.city}` : ""}`}
       sub={`${prem(r.store.outlet_id)}Not buying ${r.missing.map((m) => `${m.product} ${m.size}`).join(", ")} (${r.chain} must-carry)`}
       value={fmtN(r.impact)}
-      valueLabel="cases / yr at stake"
+      valueLabel="CEs / yr at stake"
       onClick={() => setOpenId(r.store.outlet_id)}
     />
   ));
@@ -576,7 +576,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
       title={`${a.name}${a.city ? ` · ${a.city}` : ""}`}
       sub={`${prem(a.outlet_id)}${a.dark} days since the last order (${fmtDay(a.lb)})${a.checkin ? ` · last check-in ${fmtDay(a.checkin.date)}` : " · no check-in on record"}`}
       value={fmtN(a.ce12)}
-      valueLabel="cases last 12 mo"
+      valueLabel="CEs last 12 mo"
       onClick={() => setOpenId(a.outlet_id)}
     />
   ));
@@ -922,7 +922,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
                         title={`${a.name}${a.city ? ` · ${a.city}` : ""}`}
                         sub={`First order ${fmtDay(a.fb)} · last order ${fmtDay(a.lb)}`}
                         value={fmtN(Number(a.ce12) || 0)}
-                        valueLabel="cases so far"
+                        valueLabel="CEs so far"
                         onClick={() => setOpenId(a.outlet_id)}
                       />
                     ))}
@@ -950,7 +950,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
                   <div className="flex flex-col gap-1">
                     <span className="font-mono text-[28px] font-light leading-tight text-neutral-50">{fmtN(k.cases)}</span>
                     <span className="flex items-center gap-2 text-xs text-neutral-500">
-                      Cases sold <Change value={pctChange(k.cases, k.casesLy)} />
+                      CEs sold <Change value={pctChange(k.cases, k.casesLy)} />
                     </span>
                   </div>
                   <div className="flex flex-col gap-1">
@@ -961,7 +961,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
                   </div>
                   <Stat value={fmtN(k.newA)} label="New accounts" color="#5aa9f0" />
                   <Stat value={fmtN(k.won)} label="Won back" color="#7fe0cd" />
-                  <Stat value={fmtN(k.atRisk)} label={`At risk · ${fmtN(k.atRiskCe)} cases a year`} color="#f7c27a" />
+                  <Stat value={fmtN(k.atRisk)} label={`At risk · ${fmtN(k.atRiskCe)} CEs a year`} color="#f7c27a" />
                   <Stat value={fmtN(k.wentLost)} label="Went lost" color="#ff9a8a" />
                 </div>
                 {rep && (
@@ -980,7 +980,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
             <section className={`${CARD} flex min-w-0 flex-[1_1_360px] flex-col gap-3`}>
               <div>
                 <h2 className="text-[15px] font-semibold text-neutral-100">What&apos;s selling</h2>
-                <p className={`text-[12.5px] ${MUTED}`}>Cases by brand · {wsLabel} · vs same days last year</p>
+                <p className={`text-[12.5px] ${MUTED}`}>CEs by brand · {wsLabel} · vs same days last year</p>
               </div>
               <PeriodPicker value={wsP} onChange={setWsP} asOf={home.as_of ?? null} salesNote />
               <div className="flex max-h-[380px] flex-col gap-3 overflow-y-auto pr-1">
@@ -1150,8 +1150,8 @@ function ChainListPopup({
             { header: "Item", key: "item", width: 34 },
             { header: "Status", key: "status", width: 10 },
             { header: "Last buy", key: "last_buy", width: 12 },
-            { header: "Cases last 90 days", key: "ce90" },
-            { header: "Cases last 12 months", key: "ce12" },
+            { header: "CEs last 90 days", key: "ce90" },
+            { header: "CEs last 12 months", key: "ce12" },
           ],
           rows: rows.flatMap((r) =>
             r.lines.map((l) => ({
@@ -1404,8 +1404,8 @@ export function AccountPopup({ supabase, outletId, onClose }: { supabase: Return
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap gap-6">
             <Stat value={fmtDay(a.last_buy)} label="Last order" />
-            <Stat value={fmtN(Number(a.ce_12mo) || 0)} label="Cases last 12 months" />
-            <Stat value={fmtN(Number(a.lifetime_ce) || 0)} label="Cases all time" />
+            <Stat value={fmtN(Number(a.ce_12mo) || 0)} label="CEs last 12 months" />
+            <Stat value={fmtN(Number(a.lifetime_ce) || 0)} label="CEs all time" />
             {a.phone && (
               <div className="flex flex-col gap-0.5">
                 <a href={`tel:${a.phone}`} className="font-mono text-2xl font-light text-[#9edc7f]">
@@ -1452,7 +1452,7 @@ export function AccountPopup({ supabase, outletId, onClose }: { supabase: Return
             )}
           </div>
           <div>
-            <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">What they buy · last 13 months</h3>
+            <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">What they buy · last 13 months · CEs</h3>
             {items.length ? (
               <div className="grid max-h-[260px] grid-cols-[minmax(0,1fr)_auto_auto] gap-x-4 gap-y-1 overflow-y-auto pr-1 text-[13px]">
                 {items.map((i) => (
