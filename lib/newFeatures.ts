@@ -32,6 +32,18 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    id: "feature:james-effectiveness",
+    page: "/distributors/markstein",
+    label: "Distributors → Markstein: James Effectiveness block — James's (CMC) visits and commitments checked against actual sales, week by week, targets, vs other Markstein stores",
+    added: "2026-10-29",
+  },
+  {
+    id: "feature:markstein-on-hand-inventory",
+    page: "/distributors/markstein",
+    label: "Distributors → Markstein: Markstein On Hand Inventory button (the stock list moved into a pop-up with Export)",
+    added: "2026-10-29",
+  },
+  {
     id: "feature:sales-dist-inventory",
     page: "/sales-dashboard",
     label: "Sales Dashboard: Distributor Inventory (quick link) — running low or out across every distributor, a card per distributor, click a product for its sales",

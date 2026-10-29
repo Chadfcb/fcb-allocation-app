@@ -24,6 +24,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useNewFeature } from "@/lib/newFeatures";
 import NewBadge from "@/components/NewBadge";
+import JamesEffectiveness from "@/components/JamesEffectiveness";
 import { useActionItems, type ActionRow } from "@/components/SalesActionItems";
 import {
   CARD,
@@ -319,6 +320,9 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
   // Chain list pop-ups (2026-10-22, per Chad): All Chain Mandates / Chain Authorizations.
   const [chainList, setChainList] = useState<"mandate" | "flex" | null>(null);
   const chainListsNew = useNewFeature(`feature:dist-chain-lists-${dist.toLowerCase().trim().replace(/\s+/g, "-")}`);
+  // Markstein On Hand Inventory pop-up (2026-10-29).
+  const [stockOpen, setStockOpen] = useState(false);
+  const stockBtnNew = useNewFeature("feature:markstein-on-hand-inventory");
   const [busy, setBusy] = useState<string | null>(null);
 
   const [checkins, setCheckins] = useState<CheckinData | null>(null);
@@ -576,6 +580,41 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
     />
   ));
 
+  // Stock list (low/out box + full inventory) — shown in the Stock block, or in
+  // the Markstein On Hand Inventory pop-up on Markstein (2026-10-29).
+  const stockContent = (
+    <>
+      {low.length > 0 && (
+        <div className="flex flex-col gap-1.5 rounded-xl border border-red-500/30 bg-red-500/5 p-3">
+          <span className="text-xs font-semibold text-[#ffab9c]">Running low or out ({low.length})</span>
+          {low.map((i) => (
+            <span key={i.product} className="flex justify-between gap-3 text-[13px]">
+              <span className="min-w-0 truncate text-neutral-200">{i.product}</span>
+              <span className="whitespace-nowrap font-mono text-neutral-300">{i.on_hand <= 0 ? "Out" : `${i.weeks_left} wks`}</span>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="max-h-64 overflow-y-auto">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-4 gap-y-1.5 text-[13px]">
+          <span className="text-[11px] text-neutral-500">Product</span>
+          <span className="text-right text-[11px] text-neutral-500">On hand</span>
+          <span className="text-right text-[11px] text-neutral-500">Per week</span>
+          <span className="text-right text-[11px] text-neutral-500">Weeks on hand</span>
+          {(stock?.inventory ?? []).map((i) => (
+            <span key={i.product} className="contents">
+              <span className="min-w-0 truncate text-neutral-200">{i.product}</span>
+              <span className="text-right font-mono">{fmtN(i.on_hand)}</span>
+              <span className="text-right font-mono text-neutral-400">{fmtN(i.per_week)}</span>
+              <span className={`text-right font-mono ${i.weeks_left !== null && i.weeks_left < 2 ? "text-[#ffab9c]" : "text-neutral-300"}`}>{i.weeks_left ?? "—"}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+      {!(stock?.inventory ?? []).length && <p className={`text-[13px] ${MUTED}`}>Nothing to show yet.</p>}
+    </>
+  );
+
   return (
     <div className="flex flex-col gap-5 p-6">
       <div className="flex flex-wrap items-end gap-x-12 gap-y-3">
@@ -612,6 +651,19 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
               {k === "mandate" && chainListsNew.isNew && <NewBadge inline />}
             </button>
           ))}
+          {dist === "Markstein" && (
+            <button
+              type="button"
+              onClick={() => {
+                setStockOpen(true);
+                stockBtnNew.dismiss();
+              }}
+              className="flex items-center gap-1.5 rounded-lg border border-[#6abc46]/40 bg-[#6abc46]/10 px-3.5 py-2 text-sm font-semibold text-neutral-100 hover:bg-[#6abc46]/20"
+            >
+              Markstein On Hand Inventory
+              {stockBtnNew.isNew && <NewBadge inline />}
+            </button>
+          )}
         </div>
       </div>
 
@@ -671,46 +723,26 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
               </div>
             </section>
 
-            <section className={`${CARD} flex min-w-0 flex-[1_1_420px] flex-col gap-3`}>
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-[15px] font-semibold text-neutral-100">Stock at {dist}</h2>
-                  <p className={`text-[12.5px] ${MUTED}`}>Their inventory · {stockLine}</p>
+            {/* Markstein (2026-10-29, per Chad): James Effectiveness takes this spot
+                next to Today's priorities; the stock list moved to the "Markstein On
+                Hand Inventory" button up top (pop-up with Export). */}
+            {dist === "Markstein" ? (
+              <JamesEffectiveness version={version} />
+            ) : (
+              <section className={`${CARD} flex min-w-0 flex-[1_1_420px] flex-col gap-3`}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-[15px] font-semibold text-neutral-100">Stock at {dist}</h2>
+                    <p className={`text-[12.5px] ${MUTED}`}>Their inventory · {stockLine}</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {FILE_INVENTORY_DISTRIBUTORS.includes(dist) && <UploadInventory dist={dist} onDone={load} />}
+                    <ExportButton onClick={exportStock} busy={busy === "stock"} />
+                  </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  {FILE_INVENTORY_DISTRIBUTORS.includes(dist) && <UploadInventory dist={dist} onDone={load} />}
-                  <ExportButton onClick={exportStock} busy={busy === "stock"} />
-                </div>
-              </div>
-              {low.length > 0 && (
-                <div className="flex flex-col gap-1.5 rounded-xl border border-red-500/30 bg-red-500/5 p-3">
-                  <span className="text-xs font-semibold text-[#ffab9c]">Running low or out ({low.length})</span>
-                  {low.map((i) => (
-                    <span key={i.product} className="flex justify-between gap-3 text-[13px]">
-                      <span className="min-w-0 truncate text-neutral-200">{i.product}</span>
-                      <span className="whitespace-nowrap font-mono text-neutral-300">{i.on_hand <= 0 ? "Out" : `${i.weeks_left} wks`}</span>
-                    </span>
-                  ))}
-                </div>
-              )}
-              <div className="max-h-64 overflow-y-auto">
-                <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] gap-x-4 gap-y-1.5 text-[13px]">
-                  <span className="text-[11px] text-neutral-500">Product</span>
-                  <span className="text-right text-[11px] text-neutral-500">On hand</span>
-                  <span className="text-right text-[11px] text-neutral-500">Per week</span>
-                  <span className="text-right text-[11px] text-neutral-500">Weeks on hand</span>
-                  {(stock?.inventory ?? []).map((i) => (
-                    <span key={i.product} className="contents">
-                      <span className="min-w-0 truncate text-neutral-200">{i.product}</span>
-                      <span className="text-right font-mono">{fmtN(i.on_hand)}</span>
-                      <span className="text-right font-mono text-neutral-400">{fmtN(i.per_week)}</span>
-                      <span className={`text-right font-mono ${i.weeks_left !== null && i.weeks_left < 2 ? "text-[#ffab9c]" : "text-neutral-300"}`}>{i.weeks_left ?? "—"}</span>
-                    </span>
-                  ))}
-                </div>
-              </div>
-              {!(stock?.inventory ?? []).length && <p className={`text-[13px] ${MUTED}`}>Nothing to show yet.</p>}
-            </section>
+                {stockContent}
+              </section>
+            )}
           </div>
 
           {/* Account search (the shared date buttons that sat here moved into
@@ -983,6 +1015,16 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
           onOpen={(id) => setOpenId(id)}
           onClose={() => setChainList(null)}
         />
+      )}
+      {stockOpen && (
+        <Modal
+          title={`${dist} On Hand Inventory`}
+          sub={`Their inventory · ${stockLine}`}
+          onClose={() => setStockOpen(false)}
+          actions={<ExportButton onClick={exportStock} busy={busy === "stock"} />}
+        >
+          <div className="flex flex-col gap-3">{stockContent}</div>
+        </Modal>
       )}
       {openId && <AccountPopup supabase={supabase} outletId={openId} onClose={() => setOpenId(null)} />}
     </div>
