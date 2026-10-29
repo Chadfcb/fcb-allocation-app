@@ -37,11 +37,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { logChange } from "@/lib/audit";
 import { derivePackaging } from "@/lib/packaging";
-import {
-  TANK_PACKAGE_ROWS,
-  tankBblsRemaining,
-  type TankQtyField,
-} from "@/lib/tankAllocations";
+import { BASES } from "@/lib/brewPlanner";
 import type {
   Week,
   Product,
@@ -51,15 +47,13 @@ import type {
   BuildOrderRecommendation,
   Allocation,
   SectionDivider,
-  PricingBrand,
-  TankAllocation,
 } from "@/lib/types/db";
 import { chipText } from "@/lib/appearance";
 import { useNewFeature } from "@/lib/newFeatures";
 import NewBadge from "@/components/NewBadge";
 
-// Total BBLs column — barrels per case/keg, same volumetric math as Tank
-// Allocations (lib/tankAllocations.ts): 1 bbl = 31 gal = 3,968 fl oz.
+// Total BBLs column — barrels per case/keg (standard volumetric math):
+// 1 bbl = 31 gal = 3,968 fl oz.
 const BBL_PER_UNIT: Record<string, number> = {
   "19_2oz": 230.4 / 3968, // 12 x 19.2oz
   "16oz": 384 / 3968, // 24 x 16oz
@@ -78,7 +72,20 @@ function bblPerUnit(productName: string): number | null {
   return null;
 }
 
-type TankNumericField = "bbls_available" | TankQtyField;
+// Beer Total column — which beer a product is, so every package of it
+// (cans and kegs) adds up together. Uses the Brew Planner's product-name
+// tests (lib/brewPlanner.ts BASES) so "Capt. WC" and "Capt. WC IPA", or
+// "Mystic Haze" and "Mystic Haze IPA", land on the same beer; anything not
+// listed there falls back to the name before the "(" (e.g. "Spartan").
+function beerName(productName: string): string {
+  for (const base of BASES) {
+    for (const brand of base.brands) {
+      if (brand.app.test(productName)) return brand.name;
+    }
+  }
+  const cut = productName.indexOf("(");
+  return (cut > 0 ? productName.slice(0, cut) : productName).trim();
+}
 
 type CombinedRow =
   | { kind: "product"; item: Product }
@@ -110,10 +117,6 @@ export default function BuildOrdersPage() {
   const [recommended, setRecommended] = useState<
     Record<string, BuildOrderRecommendation>
   >({});
-  const [brands, setBrands] = useState<PricingBrand[]>([]);
-  const [tankAllocations, setTankAllocations] = useState<
-    Record<string, TankAllocation>
-  >({}); // key: brandId
   const [userId, setUserId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -127,7 +130,11 @@ export default function BuildOrdersPage() {
   // know how wide the Product column is (product names vary in length).
   const productThRef = useRef<HTMLTableCellElement>(null);
   const [productColWidth, setProductColWidth] = useState(0);
+  // Beer Total is pinned right after Total BBLs, so it needs that width too.
+  const totalBblsThRef = useRef<HTMLTableCellElement>(null);
+  const [totalBblsColWidth, setTotalBblsColWidth] = useState(0);
   const totalBblsNew = useNewFeature("feature:build-orders-total-bbls");
+  const beerTotalNew = useNewFeature("feature:build-orders-beer-total");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -150,8 +157,6 @@ export default function BuildOrdersPage() {
       dividerResult,
       distributorResult,
       parResult,
-      brandResult,
-      tankResult,
     ] = await Promise.all([
       user
         ? supabase.from("profiles").select("role").eq("id", user.id).maybeSingle()
@@ -178,15 +183,6 @@ export default function BuildOrdersPage() {
         .order("inventory_sort_order", { ascending: true, nullsFirst: false })
         .order("name"),
       supabase.from("distributor_par_levels").select("*"),
-      // Tank Allocations — standing, same brand list as Sales > Price List,
-      // independent of the current week.
-      supabase
-        .from("pricing_brands")
-        .select("*")
-        .eq("active", true)
-        .order("sort_order", { ascending: true, nullsFirst: false })
-        .order("name"),
-      supabase.from("tank_allocations").select("*"),
     ]);
 
     const profile = profileResult.data;
@@ -222,13 +218,6 @@ export default function BuildOrdersPage() {
     });
     setParLevels(parMap);
 
-    setBrands((brandResult.data as PricingBrand[]) ?? []);
-
-    const tankMap: Record<string, TankAllocation> = {};
-    (tankResult.data as TankAllocation[] | null)?.forEach((row) => {
-      tankMap[row.brand_id] = row;
-    });
-    setTankAllocations(tankMap);
 
     if (weekData) {
       const week_ = weekData as Week;
@@ -273,12 +262,15 @@ export default function BuildOrdersPage() {
   }, [load]);
 
   useEffect(() => {
-    const el = productThRef.current;
-    if (!el) return;
+    const productEl = productThRef.current;
+    const totalEl = totalBblsThRef.current;
+    if (!productEl || !totalEl) return;
     const observer = new ResizeObserver(() => {
-      setProductColWidth(el.getBoundingClientRect().width);
+      setProductColWidth(productEl.getBoundingClientRect().width);
+      setTotalBblsColWidth(totalEl.getBoundingClientRect().width);
     });
-    observer.observe(el);
+    observer.observe(productEl);
+    observer.observe(totalEl);
     return () => observer.disconnect();
   }, [loading, week, distributors.length]);
 
@@ -377,160 +369,6 @@ export default function BuildOrdersPage() {
         newValue: value,
         changedBy: userId,
       });
-    }
-
-    setSavingKey(null);
-  }
-
-  async function handleTankNumericChange(
-    brandId: string,
-    field: TankNumericField,
-    value: number,
-  ) {
-    if (!userId) return;
-    const key = `tank:${brandId}:${field}`;
-    setSavingKey(key);
-
-    const existing = tankAllocations[brandId];
-    const oldValue = existing ? existing[field] : 0;
-
-    const { data: updated, error } = await supabase
-      .from("tank_allocations")
-      .upsert(
-        {
-          brand_id: brandId,
-          [field]: value,
-          updated_by: userId,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "brand_id" },
-      )
-      .select()
-      .single();
-
-    if (!error && updated) {
-      setTankAllocations((prev) => ({
-        ...prev,
-        [brandId]: updated as TankAllocation,
-      }));
-      await logChange(supabase, {
-        weekId: null,
-        tableName: "tank_allocations",
-        recordId: updated.id,
-        fieldName: field,
-        oldValue,
-        newValue: value,
-        changedBy: userId,
-      });
-    }
-
-    setSavingKey(null);
-  }
-
-  async function handleTankFvChange(brandId: string, value: string) {
-    if (!userId) return;
-    const key = `tank:${brandId}:fv_number`;
-    setSavingKey(key);
-
-    const existing = tankAllocations[brandId];
-    const oldValue = existing?.fv_number ?? null;
-    const newValue = value.trim() === "" ? null : value;
-
-    const { data: updated, error } = await supabase
-      .from("tank_allocations")
-      .upsert(
-        {
-          brand_id: brandId,
-          fv_number: newValue,
-          updated_by: userId,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "brand_id" },
-      )
-      .select()
-      .single();
-
-    if (!error && updated) {
-      setTankAllocations((prev) => ({
-        ...prev,
-        [brandId]: updated as TankAllocation,
-      }));
-      await logChange(supabase, {
-        weekId: null,
-        tableName: "tank_allocations",
-        recordId: updated.id,
-        fieldName: "fv_number",
-        oldValue,
-        newValue,
-        changedBy: userId,
-      });
-    }
-
-    setSavingKey(null);
-  }
-
-  async function handleAddTankBrand(brandId: string) {
-    if (!userId || !brandId) return;
-    setSavingKey(`tank:${brandId}:add`);
-
-    const { data: created, error } = await supabase
-      .from("tank_allocations")
-      .upsert(
-        {
-          brand_id: brandId,
-          updated_by: userId,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "brand_id" },
-      )
-      .select()
-      .single();
-
-    if (!error && created) {
-      setTankAllocations((prev) => ({
-        ...prev,
-        [brandId]: created as TankAllocation,
-      }));
-    }
-
-    setSavingKey(null);
-  }
-
-  async function handleRemoveTankBrand(brand: PricingBrand) {
-    const row = tankAllocations[brand.id];
-    if (!row) return;
-    if (
-      !window.confirm(
-        `Remove ${brand.name} from Tank Allocations? This clears its FV #, BBLs Available, and quantities.`,
-      )
-    ) {
-      return;
-    }
-
-    setSavingKey(`tank:${brand.id}:remove`);
-
-    const { error } = await supabase
-      .from("tank_allocations")
-      .delete()
-      .eq("id", row.id);
-
-    if (!error) {
-      setTankAllocations((prev) => {
-        const next = { ...prev };
-        delete next[brand.id];
-        return next;
-      });
-      if (userId) {
-        await logChange(supabase, {
-          weekId: null,
-          tableName: "tank_allocations",
-          recordId: row.id,
-          fieldName: "brand_id",
-          oldValue: brand.name,
-          newValue: null,
-          changedBy: userId,
-        });
-      }
     }
 
     setSavingKey(null);
@@ -699,18 +537,33 @@ export default function BuildOrdersPage() {
   ].sort((a, b) => rowSortOrder(a) - rowSortOrder(b));
 
   // Total BBLs: per product, every distributor's Rec. Order added up and
-  // converted to barrels. Each divider row gets the subtotal of the products
-  // under it (down to the next divider), and the header gets the grand total.
+  // converted to barrels; the header gets the grand total.
+  // Beer Total: every package of the same beer added up (beerName). Rows of
+  // the same beer that sit together share one merged cell (beerSpan = how
+  // many rows the cell covers on the first row, 0 on the rows it covers).
   const productBbls: Record<string, number | null> = {};
-  const dividerBbls: Record<string, number> = {};
+  const beerBbls: Record<string, number | null> = {};
+  const beerSpan: Record<string, number> = {};
   let grandTotalBbls = 0;
-  let currentDividerId: string | null = null;
+  let runStartId: string | null = null;
+  let runBeer: string | null = null;
   for (const row of combined) {
     if (row.kind === "divider") {
-      currentDividerId = row.item.id;
-      dividerBbls[currentDividerId] = 0;
+      runStartId = null;
+      runBeer = null;
       continue;
     }
+    const beer = beerName(row.item.name);
+    if (runStartId && runBeer === beer) {
+      beerSpan[runStartId] += 1;
+      beerSpan[row.item.id] = 0;
+    } else {
+      runStartId = row.item.id;
+      runBeer = beer;
+      beerSpan[row.item.id] = 1;
+    }
+    if (!(beer in beerBbls)) beerBbls[beer] = null;
+
     const per = bblPerUnit(row.item.name);
     if (per === null) {
       productBbls[row.item.id] = null;
@@ -722,14 +575,9 @@ export default function BuildOrdersPage() {
     );
     const bbls = units * per;
     productBbls[row.item.id] = bbls;
+    beerBbls[beer] = (beerBbls[beer] ?? 0) + bbls;
     grandTotalBbls += bbls;
-    if (currentDividerId) dividerBbls[currentDividerId] += bbls;
   }
-
-  // Tank Allocations only shows brands that have been explicitly added
-  // (i.e. have a tank_allocations row) — not every Price List brand.
-  const tankBrands = brands.filter((b) => tankAllocations[b.id]);
-  const addableBrands = brands.filter((b) => !tankAllocations[b.id]);
 
   if (loading) return <p className="text-sm text-neutral-400">Loading…</p>;
 
@@ -753,169 +601,6 @@ export default function BuildOrdersPage() {
         </p>
       </div>
 
-      <div>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-base font-semibold text-neutral-100">
-            Tank Allocations
-          </h2>
-          {addableBrands.length > 0 && (
-            <select
-              className="rounded border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-300"
-              value=""
-              onChange={(e) => {
-                if (e.target.value) handleAddTankBrand(e.target.value);
-              }}
-            >
-              <option value="">+ Add brand…</option>
-              {addableBrands.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
-        <p className="text-sm text-neutral-400">
-          Standing, per brand — carries forward week to week until you change
-          it. BBLs Remaining is BBLs Available minus each package quantity
-          converted to BBLs (1 bbl = 31 gal). Only brands added here appear
-          below.
-        </p>
-      </div>
-
-      <div className="overflow-x-auto rounded-lg border border-neutral-800 bg-neutral-950">
-        <table className="w-full border-collapse text-sm">
-          <thead>
-            <tr className="text-xs uppercase tracking-wide text-neutral-500">
-              <th className="sticky left-0 z-10 whitespace-nowrap bg-neutral-900 px-3 py-2 text-left">
-                Brand
-              </th>
-              {tankBrands.map((b) => (
-                <th
-                  key={b.id}
-                  className="whitespace-nowrap border-l border-neutral-800 bg-neutral-900 px-3 py-2 text-center"
-                >
-                  <div className="flex items-center justify-center gap-1.5">
-                    <span>{b.name}</span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveTankBrand(b)}
-                      title={`Remove ${b.name} from Tank Allocations`}
-                      className="rounded border border-neutral-700 px-1 text-[10px] font-normal normal-case text-neutral-500 hover:border-red-800 hover:text-red-400"
-                    >
-                      ✕
-                    </button>
-                  </div>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-neutral-900">
-            {tankBrands.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={1}
-                  className="px-3 py-6 text-center text-neutral-500"
-                >
-                  No brands added yet — use “+ Add brand” above.
-                </td>
-              </tr>
-            ) : (
-              <>
-                <tr>
-                  <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 font-medium text-neutral-300">
-                    FV #
-                  </td>
-                  {tankBrands.map((b) => (
-                    <td
-                      key={b.id}
-                      className="border-l border-neutral-900 px-2 py-1.5 text-center"
-                    >
-                      <input
-                        type="text"
-                        className="w-20 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-center text-neutral-100"
-                        value={tankAllocations[b.id]?.fv_number ?? ""}
-                        onChange={(e) =>
-                          handleTankFvChange(b.id, e.target.value)
-                        }
-                      />
-                    </td>
-                  ))}
-                </tr>
-                <tr>
-                  <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 font-medium text-neutral-300">
-                    BBLs Available
-                  </td>
-                  {tankBrands.map((b) => (
-                    <td
-                      key={b.id}
-                      className="border-l border-neutral-900 px-2 py-1.5 text-center"
-                    >
-                      <input
-                        type="number"
-                        className="w-20 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-center text-neutral-100"
-                        value={tankAllocations[b.id]?.bbls_available ?? 0}
-                        onChange={(e) =>
-                          handleTankNumericChange(
-                            b.id,
-                            "bbls_available",
-                            Number(e.target.value) || 0,
-                          )
-                        }
-                      />
-                    </td>
-                  ))}
-                </tr>
-                {TANK_PACKAGE_ROWS.map(({ field, label }) => (
-                  <tr key={field}>
-                    <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 font-medium text-neutral-300">
-                      {label}
-                    </td>
-                    {tankBrands.map((b) => (
-                      <td
-                        key={b.id}
-                        className="border-l border-neutral-900 px-2 py-1.5 text-center"
-                      >
-                        <input
-                          type="number"
-                          className="w-20 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-center text-neutral-100"
-                          value={tankAllocations[b.id]?.[field] ?? 0}
-                          onChange={(e) =>
-                            handleTankNumericChange(
-                              b.id,
-                              field,
-                              Number(e.target.value) || 0,
-                            )
-                          }
-                        />
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-                <tr className="bg-neutral-900/50">
-                  <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-900/50 px-3 py-1.5 font-semibold text-neutral-200">
-                    BBLs Remaining
-                  </td>
-                  {tankBrands.map((b) => {
-                    const remaining = tankBblsRemaining(tankAllocations[b.id]);
-                    return (
-                      <td
-                        key={b.id}
-                        className={`border-l border-neutral-900 px-2 py-1.5 text-center font-semibold ${
-                          remaining < 0 ? "text-red-400" : "text-emerald-400"
-                        }`}
-                      >
-                        {remaining.toFixed(2)}
-                      </td>
-                    );
-                  })}
-                </tr>
-              </>
-            )}
-          </tbody>
-        </table>
-      </div>
-
       {!week ? (
         <p className="text-sm text-neutral-400">
           Start a week to see and push Recommended Orders per distributor.
@@ -934,6 +619,7 @@ export default function BuildOrdersPage() {
                     Product
                   </th>
                   <th
+                    ref={totalBblsThRef}
                     rowSpan={2}
                     onClick={() => totalBblsNew.dismiss()}
                     style={{ left: productColWidth }}
@@ -946,6 +632,18 @@ export default function BuildOrdersPage() {
                     </div>
                     <div className="text-sm font-semibold normal-case tracking-normal text-amber-400">
                       {grandTotalBbls.toFixed(2)}
+                    </div>
+                  </th>
+                  <th
+                    rowSpan={2}
+                    onClick={() => beerTotalNew.dismiss()}
+                    style={{ left: productColWidth + totalBblsColWidth }}
+                    title="Every package of the same beer (cans and kegs) added up, in barrels"
+                    className="sticky top-0 z-20 whitespace-nowrap border-r border-neutral-800 bg-neutral-900 px-3 pb-1 text-right align-bottom"
+                  >
+                    <div className="flex items-center justify-end">
+                      Beer Total
+                      {beerTotalNew.isNew && <NewBadge inline />}
                     </div>
                   </th>
                   {distributors.map((d) => (
@@ -1004,7 +702,7 @@ export default function BuildOrdersPage() {
                 {distributors.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={2}
+                      colSpan={3}
                       className="px-3 py-6 text-center text-neutral-500"
                     >
                       No active distributors.
@@ -1022,11 +720,10 @@ export default function BuildOrdersPage() {
                             {row.item.label}
                           </td>
                           <td
+                            colSpan={2}
                             style={{ left: productColWidth }}
-                            className="sticky z-10 whitespace-nowrap border-l border-r border-neutral-800 bg-neutral-900 px-3 py-1.5 text-right text-xs font-semibold text-neutral-200"
-                          >
-                            {(dividerBbls[row.item.id] ?? 0).toFixed(2)}
-                          </td>
+                            className="sticky z-10 border-l border-r border-neutral-800 bg-neutral-900"
+                          />
                           {distributors.length > 0 && (
                             <td colSpan={distributors.length * 3} />
                           )}
@@ -1035,6 +732,9 @@ export default function BuildOrdersPage() {
                     }
 
                     const p = row.item;
+                    const beer = beerName(p.name);
+                    const span = beerSpan[p.id] ?? 1;
+                    const beerTotal = beerBbls[beer];
                     return (
                       <tr key={p.id} className="group hover:bg-neutral-900/60">
                         <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 font-medium text-neutral-200 group-hover:bg-neutral-900">
@@ -1048,6 +748,16 @@ export default function BuildOrdersPage() {
                             ? "—"
                             : (productBbls[p.id] as number).toFixed(2)}
                         </td>
+                        {span > 0 && (
+                          <td
+                            rowSpan={span}
+                            style={{ left: productColWidth + totalBblsColWidth }}
+                            title={beer}
+                            className="sticky z-10 whitespace-nowrap border-r border-b border-neutral-800 bg-neutral-950 px-3 py-1.5 text-right align-middle font-semibold text-amber-400"
+                          >
+                            {beerTotal == null ? "—" : beerTotal.toFixed(2)}
+                          </td>
+                        )}
                         {distributors.map((d) => {
                           const key = `${p.id}:${d.id}`;
                           const oh = onHand[key] ?? 0;
@@ -1103,9 +813,9 @@ export default function BuildOrdersPage() {
             applies to every future week until changed. Recommended Order
             recalculates automatically until you edit a cell by hand; after that
             it stays put. Total BBLs is every distributor&apos;s Rec. Order for
-            that product added up and converted to barrels (1 bbl = 31 gal);
-            each brand row shows its subtotal and the column header the total
-            for everything.
+            that product added up and converted to barrels (1 bbl = 31 gal), with
+            the total for everything in its header. Beer Total adds up every
+            package of the same beer (cans and kegs).
           </p>
         </>
       )}

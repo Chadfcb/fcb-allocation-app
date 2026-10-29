@@ -32,9 +32,15 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    id: "feature:build-orders-beer-total",
+    page: "/build-orders",
+    label: "Build Orders: Beer Total column — every package of the same beer (cans and kegs) added up in barrels",
+    added: "2026-10-29",
+  },
+  {
     id: "feature:build-orders-total-bbls",
     page: "/build-orders",
-    label: "Build Orders: Total BBLs column — every distributor's Rec. Order per product added up in barrels, with brand subtotals and a grand total",
+    label: "Build Orders: Total BBLs column — every distributor's Rec. Order per product added up in barrels, with a grand total",
     added: "2026-10-29",
   },
   {

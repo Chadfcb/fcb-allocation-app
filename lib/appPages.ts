@@ -48,7 +48,7 @@ export const OPERATIONS_LINKS: AppLink[] = [
   { href: "/purchase-orders", label: "Purchase Orders", section: "purchase_orders", about: "Supplier purchase orders synced from Ekos: items, costs, delivery dates, paid / unpaid." },
   { href: "/inventory", label: "Inventory & Allocation", section: "inventory_allocation", about: "This week's brewery inventory and what's allocated to each distributor (with PO numbers, status flags and order value), plus the Packaging Inventory and Label Inventory panels with Consumed / Remaining (negative = short). Pick another week in the dropdown." },
   { href: "/distributor-inventory", label: "Distributor Inventory", section: "distributor_inventory", about: "What each distributor reports on hand in their warehouse, daily rate of sale and projected days on hand, per product." },
-  { href: "/build-orders", label: "Build Orders", section: "build_orders", about: "Recommended order per distributor from par level vs. their on hand, plus Tank Allocations (BBLs per fermenter by package)." },
+  { href: "/build-orders", label: "Build Orders", section: "build_orders", about: "Recommended order per distributor from par level vs. their on hand, with the total barrels needed per product and per beer (cans and kegs combined)." },
   { href: "/pricing", label: "Distributor Pricing", section: "distributor_pricing", about: "Price FCB charges each distributor for each product." },
   { href: "/admin/weeks", label: "Weeks", section: "weeks", about: "List of delivery weeks; open a week to see its history." },
   { href: "/batch-ingredients", label: "Batch Ingredients", section: "batch_ingredients", about: "Each brand's batch recipe (ingredients per BBL) and ingredient costs." },
