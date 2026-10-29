@@ -685,7 +685,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
                 needs attention block as well"). */}
             <section
               className={`${CARD} flex min-w-0 flex-[1_1_560px] flex-col gap-3`}
-              style={{ borderColor: "rgba(249,115,22,0.6)", boxShadow: "0 0 28px rgba(249,115,22,0.12), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+              style={{ borderColor: "rgba(249,115,22,0.6)", boxShadow: "0 0 28px rgba(249,115,22,0.14), inset 0 1px 0 rgba(255,255,255,0.16), inset 0 -4px 0 rgba(0,0,0,0.5), 0 4px 0 rgba(0,0,0,0.75), 0 8px 0 -2px rgba(0,0,0,0.5), 0 28px 52px -8px rgba(0,0,0,0.9), 0 10px 20px rgba(0,0,0,0.5)" }}
             >
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>

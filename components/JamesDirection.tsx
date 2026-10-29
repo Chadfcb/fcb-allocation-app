@@ -64,7 +64,7 @@ export default function JamesDirection({ version, onOpen }: { version: number; o
             Direction for James
             {isNew.isNew && <NewBadge inline />}
           </h2>
-          <p className={`text-[12.5px] ${MUTED}`}>From the sales data, biggest opportunity first · click an account for its details</p>
+          <p className="text-[13.5px] text-neutral-200">From the sales data, biggest opportunity first · click an account for its details</p>
         </div>
         <ExportButton onClick={doExport} busy={busy} />
       </div>
@@ -82,7 +82,7 @@ export default function JamesDirection({ version, onOpen }: { version: number; o
                 </Pill>
               ))}
             </div>
-            {list && <p className={`text-[12.5px] ${MUTED}`}>{list.why}</p>}
+            {list && <InfoStrip>{list.why}</InfoStrip>}
             <div className="flex max-h-[420px] flex-col overflow-y-auto rounded-lg border border-neutral-800">
               {list && list.rows.length === 0 && <p className={`p-3 text-sm ${MUTED}`}>Nothing here right now.</p>}
               {list?.rows.map((r, i) => (
@@ -109,7 +109,7 @@ export default function JamesDirection({ version, onOpen }: { version: number; o
 
           <div className="flex min-w-0 flex-[1_1_280px] flex-col gap-3">
             <h3 className="text-[14px] font-semibold text-neutral-100">What&apos;s working</h3>
-            <p className={`text-[12.5px] ${MUTED}`}>Commitments that turned into an order within 30 days</p>
+            <p className="text-[13.5px] text-neutral-200">Commitments that turned into an order within 30 days</p>
             {(
               [
                 ["By package", dir.working.packages],
@@ -134,5 +134,19 @@ export default function JamesDirection({ version, onOpen }: { version: number; o
         </div>
       )}
     </section>
+  );
+}
+
+// The line that explains the list you're looking at (2026-10-29, per Chad:
+// descriptions were "almost hidden"): soft green strip with an "i".
+function InfoStrip({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-2 rounded-lg border-l-[3px] border-[#6abc46] bg-[#6abc46]/10 px-3 py-2 text-[13.5px] leading-snug text-neutral-100">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6abc46" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="mt-px shrink-0">
+        <circle cx="12" cy="12" r="10" />
+        <path d="M12 16v-4M12 8h.01" />
+      </svg>
+      <span>{children}</span>
+    </div>
   );
 }

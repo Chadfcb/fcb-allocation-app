@@ -107,6 +107,58 @@ body {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
+/* 3b. Card depth (2026-10-29, per Chad: "what about the cards/blocks, can we
+   add some depth to them as well"). Top-level cards sit raised off the page:
+   light top edge, dark bottom edge, soft shadow underneath. Panels INSIDE a
+   card (tiles, list boxes) are set slightly into the card instead, so the
+   layers read clearly. */
+.site-theme main :is(.rounded-lg, .rounded-xl).border-neutral-800:not(input, select, textarea, button, a) {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 1px 0 0 rgba(255, 255, 255, 0.04),
+    inset 0 -4px 0 rgba(0, 0, 0, 0.5),
+    0 4px 0 rgba(0, 0, 0, 0.75),
+    0 8px 0 -2px rgba(0, 0, 0, 0.5),
+    0 28px 52px -8px rgba(0, 0, 0, 0.9),
+    0 10px 20px rgba(0, 0, 0, 0.5);
+}
+.site-theme main :is(.rounded-lg, .rounded-xl).border-neutral-800 :is(.rounded-lg, .rounded-xl).border-neutral-800:not(input, select, textarea, button, a) {
+  /* Panels inside a card are set into the card (Chad liked this, 2026-10-29).
+     Typing boxes are set in too, but as a much darker well with a crisp edge
+     and a green ring while typing — so the two never look the same. */
+  box-shadow:
+    inset 0 4px 12px rgba(0, 0, 0, 0.7),
+    inset 0 2px 3px rgba(0, 0, 0, 0.6),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.08),
+    0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+/* Typing boxes (inputs, dropdowns, text areas) — set down into the card: a
+   darker well with a deep inner shadow and a light lip along the bottom edge,
+   and a green ring while you type (2026-10-29, per Chad: "the boxes we type
+   into are lowered into the card instead of raised like a button"). Written
+   with :where() so it carries almost no weight: the status dropdowns (section
+   6) and anything else styled more specifically keep their own look. */
+.site-theme :where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]), select, textarea):where(:not(:disabled)) {
+  /* --well-bg / --well-edge are set lighter for light Customize themes
+     (lib/appearance.ts) so typing boxes don't turn black on a pale page. */
+  background-color: var(--well-bg, rgba(0, 0, 0, 0.72));
+  border-color: var(--well-edge, rgba(255, 255, 255, 0.14));
+  box-shadow:
+    inset 0 3px 6px rgba(0, 0, 0, 0.9),
+    inset 0 1px 1px rgba(0, 0, 0, 0.9),
+    0 1px 0 rgba(255, 255, 255, 0.12);
+}
+.site-theme :where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]), select, textarea):where(:not(:disabled)):focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--fcb-accent) 60%, transparent);
+  box-shadow:
+    inset 0 4px 10px rgba(0, 0, 0, 0.8),
+    inset 0 2px 2px rgba(0, 0, 0, 0.7),
+    0 1px 0 rgba(255, 255, 255, 0.12),
+    0 0 0 3px color-mix(in srgb, var(--fcb-accent) 18%, transparent);
+}
+
 /* 4. Buttons and inputs — pill shaped, like the reference's top bar. */
 .site-theme :is(button, a).rounded-md.border,
 .site-theme :is(input, select).rounded-md,
@@ -128,6 +180,77 @@ body {
 }
 .site-theme main :is(a, button).bg-white:hover {
   background-image: linear-gradient(90deg, color-mix(in srgb, var(--fcb-accent) 28%, transparent), var(--hl-soft));
+}
+
+/* 5b. Raised buttons (2026-10-29, per Chad: "make all buttons in the app a
+   bit more 3d" → "they need to appear slightly raised off the card/block they
+   are in, to identify them as a button"). Every bordered button/link-button
+   (pills, Export, page buttons) gets a slightly lighter, top-lit face, a light
+   top edge, a dark bottom lip and a shadow underneath, so it sits above the
+   card. It lifts on hover and presses down on click. List rows (border-b
+   only) and disabled buttons stay flat. Buttons with their own gradient
+   (selected pills, green call-to-action) keep it and get the edges + shadow. */
+.site-theme :is(button, a)[class~="border"]:is(.rounded-full, .rounded-lg, .rounded-md, .rounded-xl):not(:disabled) {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -3px 0 rgba(0, 0, 0, 0.4),
+    0 4px 0 -1px rgba(0, 0, 0, 0.9),
+    0 8px 18px rgba(0, 0, 0, 0.6);
+  transition: transform 0.08s ease, box-shadow 0.08s ease, background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+.site-theme :is(button, a)[class~="border"]:is(.rounded-full, .rounded-lg, .rounded-md, .rounded-xl):not(:disabled):not(.bg-gradient-to-r):not(.bg-white) {
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.05) 50%, rgba(255, 255, 255, 0.02) 100%);
+}
+.site-theme :is(button, a)[class~="border"]:is(.rounded-full, .rounded-lg, .rounded-md, .rounded-xl):not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.26),
+    inset 0 -3px 0 rgba(0, 0, 0, 0.4),
+    0 5px 0 -1px rgba(0, 0, 0, 0.9),
+    0 12px 22px rgba(0, 0, 0, 0.65);
+}
+.site-theme :is(button, a)[class~="border"]:is(.rounded-full, .rounded-lg, .rounded-md, .rounded-xl):not(:disabled):active {
+  transform: translateY(3px);
+  box-shadow:
+    inset 0 3px 6px rgba(0, 0, 0, 0.55),
+    0 1px 0 rgba(0, 0, 0, 0.6);
+}
+/* Green call-to-action buttons ("Go to Inventory & Allocation" style, section
+   5) — same raised look, keeping their green fill, outline and glow. */
+.site-theme main :is(a, button).bg-white:not(:disabled) {
+  box-shadow:
+    inset 0 0 0 1px var(--hl-line),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    inset 0 -3px 0 rgba(0, 0, 0, 0.4),
+    0 4px 0 -1px rgba(0, 0, 0, 0.9),
+    0 8px 18px rgba(0, 0, 0, 0.6),
+    0 0 24px var(--hl-glow);
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+.site-theme main :is(a, button).bg-white:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 0 0 1px var(--hl-line),
+    inset 0 1px 0 rgba(255, 255, 255, 0.26),
+    inset 0 -3px 0 rgba(0, 0, 0, 0.4),
+    0 5px 0 -1px rgba(0, 0, 0, 0.9),
+    0 12px 22px rgba(0, 0, 0, 0.65),
+    0 0 28px var(--hl-glow);
+}
+.site-theme main :is(a, button).bg-white:not(:disabled):active {
+  transform: translateY(3px);
+  box-shadow:
+    inset 0 0 0 1px var(--hl-line),
+    inset 0 3px 6px rgba(0, 0, 0, 0.55),
+    0 1px 0 rgba(0, 0, 0, 0.6);
+}
+/* Selected pills keep their green glow on top of the raised look. */
+.site-theme button[class~="border"].bg-gradient-to-r:not(:disabled) {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    inset 0 -3px 0 rgba(0, 0, 0, 0.35),
+    0 4px 0 -1px rgba(0, 0, 0, 0.9),
+    0 0 26px rgba(106, 188, 70, 0.22);
 }
 
 /* 6. Status tags and status dropdowns (Paid / Pending / Ordered / Not

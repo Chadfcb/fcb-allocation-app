@@ -260,6 +260,10 @@ export function siteColorVars(a: ErnieAppearance): Record<string, string> {
     vars["--st-orange"] = "#9a5a00";
     vars["--st-blue"] = "#1f5fae";
     vars["--st-gray"] = mix(bg, fg, 0.65);
+    // Typing boxes (app/globals.css, 2026-10-29): a slightly darker well than
+    // the page with a visible edge, instead of the near-black dark-theme well.
+    vars["--well-bg"] = mix(bg, fg, 0.06);
+    vars["--well-edge"] = mix(bg, fg, 0.3);
   }
   return vars;
 }

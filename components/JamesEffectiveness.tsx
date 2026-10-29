@@ -136,7 +136,7 @@ export default function JamesEffectiveness({ version }: { version: number }) {
             Effectiveness
             {isNew.isNew && <NewBadge inline />}
           </h2>
-          <p className={`text-[12.5px] ${MUTED}`}>
+          <p className="text-[13.5px] text-neutral-200">
             James Mendoza (CMC) since 5/31 · visits checked against actual sales (LilyPad, through {fmtDate(data?.as_of ?? null)})
           </p>
         </div>
@@ -227,7 +227,7 @@ export default function JamesEffectiveness({ version }: { version: number }) {
 
           {tab === "impact" && (
             <div className="flex flex-col gap-2">
-              <p className={`text-[12.5px] ${MUTED}`}>
+              <p className="flex items-start gap-2 rounded-lg border-l-[3px] border-[#6abc46] bg-[#6abc46]/10 px-3 py-2 text-[13.5px] leading-snug text-neutral-100">
                 What FCB&apos;s accounts bought after James first visited them, counted from each account&apos;s own first-visit date.
               </p>
               <div className="flex flex-col text-[13px]">
