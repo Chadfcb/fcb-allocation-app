@@ -41,6 +41,8 @@ export type SectionKey =
   | "tanks"
   | "brew_planner"
   | "sales_dashboard"
+  // Twilio (2026-10-29) — texting accounts: setup/compliance + text sign-ups.
+  | "twilio"
   // Distributors (2026-10-22) — one key per distributor page, from
   // lib/distributorPages.ts (dist_matagrano, dist_guardian, …).
   | DistributorSectionKey;
@@ -93,6 +95,7 @@ export type GroupKey =
   | "sales_dashboard"
   | "distributors"
   | "tasks"
+  | "twilio"
   | "audit_log";
 
 export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[] }[] = [
@@ -230,6 +233,15 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
     key: "tasks",
     label: "Tasks",
     items: [{ key: "tasks", label: "Tasks" }],
+  },
+  {
+    // Twilio — its own top-level sidebar category, added 2026-10-29 per Chad
+    // ("we will need a new category in the left panel, Called Twilio").
+    // Setup & Compliance + Text Sign-ups (texting accounts about new items).
+    // RLS: has_section(auth.uid(), 'twilio') in sql/twilio_sms.sql.
+    key: "twilio",
+    label: "Twilio",
+    items: [{ key: "twilio", label: "Twilio" }],
   },
   {
     key: "audit_log",

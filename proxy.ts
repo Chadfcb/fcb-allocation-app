@@ -29,11 +29,17 @@ export async function proxy(request: NextRequest) {
 // calls have no login session either. Both routes check a shared secret
 // themselves (google_calendar_sync.secret) before doing anything.
 //
+// Same for Twilio texting (added 2026-10-29): /api/twilio/* (Twilio's own
+// servers deliver incoming texts — the route checks Twilio's signature
+// itself) and the PUBLIC pages carriers and buyers must open without an app
+// login: /privacy, /terms, /sms-signup and the form's /api/sms-signup. These
+// pages show nothing from the app's data.
+//
 // Any other route under /api/cron/* or /api/slack/* added later gets the
 // same exemption; every other route (pages and the rest of /api/*) is
 // untouched and still requires a real login exactly as before.
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/cron|api/slack|api/google-calendar/hook|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/cron|api/slack|api/google-calendar/hook|api/twilio|api/sms-signup|privacy$|privacy/|terms$|terms/|sms-signup$|sms-signup/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

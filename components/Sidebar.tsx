@@ -58,6 +58,7 @@ import {
   ADMIN_LINKS,
   ERNIE_LINKS,
   POS_LINKS,
+  TWILIO_LINKS,
   POS_LABEL_BRANDS,
   UPC_BRANDS,
 } from "@/lib/appPages";
@@ -79,6 +80,9 @@ const NEW_SIDEBAR_IDS: string[] = [
   // anywhere in the tree, not just Operations.
   "/chain-calendar",
   "/social-media-calendar",
+  // Twilio (2026-10-29) — new top-level category.
+  "/twilio/setup",
+  "/twilio/sign-ups",
   // Oobli and Ugly Fresca — new brands added under Labels (2026-09-05),
   // per Chad: "remember, these will be new to everyone."
   "section:pos-labels-oobli",
@@ -165,6 +169,9 @@ const SALES_STORAGE_KEY = "fcb-sidebar-sales-expanded";
 // state is the "distributors" key of the tree state, like UPC's).
 const CALENDARS_STORAGE_KEY = "fcb-sidebar-calendars-expanded";
 const ERNIE_STORAGE_KEY = "fcb-sidebar-ernie-expanded";
+// Twilio (2026-10-29, per Chad) — texting accounts: Setup & Compliance and
+// Text Sign-ups. Own top-level category, below Calendars.
+const TWILIO_STORAGE_KEY = "fcb-sidebar-twilio-expanded";
 
 // Ernie AI — split into two sub-links, added 2026-09-10 per Chad ("we need
 // to separate them, instead of having them together, its too convoluted the
@@ -185,7 +192,7 @@ const ADMIN_STORAGE_KEY = "fcb-sidebar-admin-expanded";
 
 // ERNIE_LINKS — moved to lib/appPages.ts (2026-10-16) so Ernie reads the same page list.
 
-type TopLevelCategory = "ernie" | "finance" | "operations" | "sales" | "calendars" | "admin";
+type TopLevelCategory = "ernie" | "finance" | "operations" | "sales" | "calendars" | "twilio" | "admin";
 
 // Which top-level category (if any) a given pathname belongs to — added
 // 2026-09-10, per Chad ("we built in that other categories would close if
@@ -215,6 +222,7 @@ function topLevelCategoryForPath(pathname: string): TopLevelCategory | null {
     return "sales";
   }
   if (CALENDARS_LINKS.some((l) => l.href === pathname)) return "calendars";
+  if (pathname.startsWith("/twilio")) return "twilio";
   if (ADMIN_LINKS.some((l) => l.href === pathname)) return "admin";
   return null;
 }
@@ -322,6 +330,7 @@ export default function Sidebar({
   const [operationsExpanded, setOperationsExpanded] = useState(true);
   const [salesExpanded, setSalesExpanded] = useState(true);
   const [calendarsExpanded, setCalendarsExpanded] = useState(true);
+  const [twilioExpanded, setTwilioExpanded] = useState(true);
   const [adminExpanded, setAdminExpanded] = useState(true);
   const [posTreeExpanded, setPosTreeExpanded] = useState<
     Record<string, boolean>
@@ -366,6 +375,10 @@ export default function Sidebar({
     if (storedCalendars !== null) {
       setCalendarsExpanded(storedCalendars === "true");
     }
+    const storedTwilio = localStorage.getItem(TWILIO_STORAGE_KEY);
+    if (storedTwilio !== null) {
+      setTwilioExpanded(storedTwilio === "true");
+    }
     const storedPosTree = localStorage.getItem(POS_TREE_STORAGE_KEY);
     if (storedPosTree) {
       try {
@@ -407,6 +420,7 @@ export default function Sidebar({
       { key: "operations", setExpanded: setOperationsExpanded, storageKey: OPERATIONS_STORAGE_KEY },
       { key: "sales", setExpanded: setSalesExpanded, storageKey: SALES_STORAGE_KEY },
       { key: "calendars", setExpanded: setCalendarsExpanded, storageKey: CALENDARS_STORAGE_KEY },
+      { key: "twilio", setExpanded: setTwilioExpanded, storageKey: TWILIO_STORAGE_KEY },
       { key: "admin", setExpanded: setAdminExpanded, storageKey: ADMIN_STORAGE_KEY },
     ];
     for (const section of sections) {
@@ -579,6 +593,10 @@ export default function Sidebar({
       setCalendarsExpanded(false);
       localStorage.setItem(CALENDARS_STORAGE_KEY, "false");
     }
+    if (except !== "twilio") {
+      setTwilioExpanded(false);
+      localStorage.setItem(TWILIO_STORAGE_KEY, "false");
+    }
   }
 
   function toggleAdmin() {
@@ -631,6 +649,15 @@ export default function Sidebar({
       const next = !prev;
       localStorage.setItem(CALENDARS_STORAGE_KEY, String(next));
       if (next) closeOtherTopLevelSections("calendars");
+      return next;
+    });
+  }
+
+  function toggleTwilio() {
+    setTwilioExpanded((prev) => {
+      const next = !prev;
+      localStorage.setItem(TWILIO_STORAGE_KEY, String(next));
+      if (next) closeOtherTopLevelSections("twilio");
       return next;
     });
   }
@@ -711,6 +738,7 @@ export default function Sidebar({
   const showUpcTree = can("upcs");
   const visibleCalendars = CALENDARS_LINKS.filter((link) => can(link.section));
   const visiblePos = POS_LINKS.filter((link) => can(link.section));
+  const visibleTwilio = TWILIO_LINKS.filter((link) => can(link.section));
   // Sales holds its own links plus Distributors, POS and UPC's (2026-10-28).
   const showSalesSection = visibleSales.length > 0 || visibleDistributors.length > 0 || visiblePos.length > 0 || showUpcTree;
   const showErnie = can(ERNIE_SECTION);
@@ -735,6 +763,7 @@ export default function Sidebar({
     !showPosTree &&
     !showUpcTree &&
     visibleCalendars.length === 0 &&
+    visibleTwilio.length === 0 &&
     visiblePos.length === 0;
 
   // Every id nested under Operations — everything sectionShowsNew() checks
@@ -758,7 +787,8 @@ export default function Sidebar({
     visibleOperations.length > 0 ||
     showPosTree ||
     showSalesSection ||
-    visibleCalendars.length > 0;
+    visibleCalendars.length > 0 ||
+    visibleTwilio.length > 0;
 
   // Right side of a parent row: its New! tag (if any) + the open/closed arrow.
   const parentRight = (isNew: boolean, open: boolean) => (
@@ -1217,6 +1247,42 @@ export default function Sidebar({
                       )}
                     </>
                   )}
+
+                  {/* Twilio (2026-10-29, per Chad) — texting accounts. */}
+                  {visibleTwilio.length > 0 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          toggleTwilio();
+                          dismissNew("section:twilio");
+                        }}
+                        className={parentClass(twilioExpanded)}
+                      >
+                        <IconMessage />
+                        Twilio
+                        {parentRight(
+                          sectionShowsNew("section:twilio", visibleTwilio.map((link) => link.href)),
+                          twilioExpanded,
+                        )}
+                      </button>
+                      {twilioExpanded && (
+                        <div className="fcb-nav-sub-group">
+                          {visibleTwilio.map((link) => (
+                            <Link
+                              key={link.href}
+                              href={link.href}
+                              className={linkClass(link.href)}
+                              onClick={() => dismissNew(link.href)}
+                            >
+                              {link.label}
+                              {showsNew(link.href) && <NewBadge />}
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
                 </>
               )}
             </div>
@@ -1369,6 +1435,14 @@ function IconCalendar() {
     <NavIcon>
       <rect x="3" y="5" width="18" height="16" rx="3" />
       <path d="M3 10h18M8 3v4M16 3v4" />
+    </NavIcon>
+  );
+}
+function IconMessage() {
+  return (
+    <NavIcon>
+      <path d="M4 5h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H9l-4 3.5V17H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" />
+      <path d="M8 10h8M8 13h5" />
     </NavIcon>
   );
 }
