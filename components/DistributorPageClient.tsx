@@ -141,7 +141,7 @@ const daysBetween = (a: string, b: string) => Math.round((Date.parse(`${b}T12:00
 // Per-block date buttons (2026-10-22, per Chad: "move the date selector into
 // each block, and have each block change with those buttons, instead of one
 // button for all" — "30 60 90 year to date custom"). Each block (Check-ins,
-// Follow up, At a glance, What's selling) has its own choice, remembered per
+// Win backs & new accounts (was "Follow up"), At a glance, What's selling) has its own choice, remembered per
 // browser per page per block. 30 / 60 / 90 / YTD come with the page's main
 // sales load; a custom range in a sales block loads its own numbers.
 // ---------------------------------------------------------------------------
@@ -627,10 +627,22 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
         <>
           {/* Today's priorities + stock */}
           <div className="flex flex-wrap gap-4">
-            <section className={`${CARD} flex min-w-0 flex-[1_1_560px] flex-col gap-3`}>
+            {/* Orange title + border, same as the Sales Dashboard's Needs attention
+                (2026-10-29, Chad: "it needs to be like that for every distributors
+                needs attention block as well"). */}
+            <section
+              className={`${CARD} flex min-w-0 flex-[1_1_560px] flex-col gap-3`}
+              style={{ borderColor: "rgba(249,115,22,0.6)", boxShadow: "0 0 28px rgba(249,115,22,0.12), inset 0 1px 0 rgba(255,255,255,0.04)" }}
+            >
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-[15px] font-semibold text-neutral-100">Today&apos;s priorities</h2>
+                  <h2 className="flex items-center gap-2 text-[17px] font-bold text-[#fb923c]">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+                      <path d="M12 9v4M12 17h.01" />
+                    </svg>
+                    Today&apos;s priorities
+                  </h2>
                   <p className={`text-[12.5px] ${MUTED}`}>Biggest first — click an account for its details</p>
                 </div>
                 <ExportButton onClick={exportAtt} busy={busy === "att"} />
@@ -838,8 +850,9 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
             <section className={`${CARD} flex min-w-0 flex-[1_1_560px] flex-col gap-3`}>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-[15px] font-semibold text-neutral-100">Follow up</h2>
-                  <p className={`text-[12.5px] ${MUTED}`}>{fuLabel} · accounts that came back or just started — keep them buying</p>
+                  {/* Renamed from "Follow up" (2026-10-29, Chad: "its very confusing"). */}
+                  <h2 className="text-[15px] font-semibold text-neutral-100">Win backs &amp; new accounts</h2>
+                  <p className={`text-[12.5px] ${MUTED}`}>{fuLabel} · stores that started buying again or ordered for the first time</p>
                 </div>
                 <ExportButton onClick={exportFollow} busy={busy === "follow"} />
               </div>
