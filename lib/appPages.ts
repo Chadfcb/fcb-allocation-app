@@ -96,6 +96,7 @@ export const TWILIO_LINKS: AppLink[] = [
 export const ADMIN_LINKS: AppLink<SectionKey | undefined>[] = [
   { href: "/admin/users", label: "Users", section: undefined, about: "App users and what each can access." },
   { href: "/admin/audit", label: "Audit Log", section: "audit_log", about: "Every change made in the app: who, when, old and new value." },
+  { href: "/admin/email", label: "Email Studio", section: "email_studio", about: "Email Studio: FCB's drag-and-drop email designer (saved email designs with subject, preview, send a test) and the Creative Library of images, GIFs, PSDs and other files used in emails." },
   { href: "/admin/ekos-sync", label: "Ekos Sync", section: undefined, about: "Automatic Ekos sync: sources, last runs, errors." },
 ];
 

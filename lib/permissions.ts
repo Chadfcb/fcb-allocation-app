@@ -43,6 +43,8 @@ export type SectionKey =
   | "sales_dashboard"
   // Twilio (2026-10-29) — texting accounts: setup/compliance + text sign-ups.
   | "twilio"
+  // Email Studio (2026-10-29) — Eddie's email designer + Creative Library.
+  | "email_studio"
   // Distributors (2026-10-22) — one key per distributor page, from
   // lib/distributorPages.ts (dist_matagrano, dist_guardian, …).
   | DistributorSectionKey;
@@ -96,6 +98,7 @@ export type GroupKey =
   | "distributors"
   | "tasks"
   | "twilio"
+  | "email_studio"
   | "audit_log";
 
 export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[] }[] = [
@@ -242,6 +245,15 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
     key: "twilio",
     label: "Twilio",
     items: [{ key: "twilio", label: "Twilio" }],
+  },
+  {
+    // Email Studio — added 2026-10-29 per Chad: "We just need an area where
+    // Eddie can design the emails we want to send out." Under Admin in the
+    // sidebar. Eddie gets only this. RLS: has_section(auth.uid(),
+    // 'email_studio') in sql/email_studio.sql.
+    key: "email_studio",
+    label: "Email Studio",
+    items: [{ key: "email_studio", label: "Email Studio" }],
   },
   {
     key: "audit_log",

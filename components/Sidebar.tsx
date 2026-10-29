@@ -84,6 +84,8 @@ const NEW_SIDEBAR_IDS: string[] = [
   "/twilio/setup",
   "/twilio/sign-ups",
   "/twilio/how-it-works",
+  // Email Studio (2026-10-29) — Eddie's email designer, under Admin.
+  "/admin/email",
   // Oobli and Ugly Fresca — new brands added under Labels (2026-09-05),
   // per Chad: "remember, these will be new to everyone."
   "section:pos-labels-oobli",
@@ -227,7 +229,7 @@ function topLevelCategoryForPath(pathname: string): TopLevelCategory | null {
   }
   if (CALENDARS_LINKS.some((l) => l.href === pathname)) return "calendars";
   if (pathname.startsWith("/twilio")) return "admin"; // Twilio lives inside Admin
-  if (ADMIN_LINKS.some((l) => l.href === pathname)) return "admin";
+  if (ADMIN_LINKS.some((l) => l.href === pathname) || pathname.startsWith("/admin/email")) return "admin";
   return null;
 }
 
@@ -750,12 +752,15 @@ export default function Sidebar({
   // Users and Ekos Sync are admins-only (same rule Users always had); Audit
   // Log follows its own "audit_log" section grant.
   const visibleAdmin = ADMIN_LINKS.filter((link) => (link.section ? can(link.section) : role === "admin"));
-  // Admin's rows in order, with the Twilio sub-category slotted in just
-  // before Ekos Sync (i.e. right under Audit Log), or at the end if this
-  // person can't see Ekos Sync.
-  const ekosIndex = visibleAdmin.findIndex((link) => link.href === "/admin/ekos-sync");
+  // Admin's rows in order, with the Twilio sub-category slotted in right
+  // under Audit Log (then Email Studio, then Ekos Sync); if this person
+  // can't see Audit Log, before Email Studio / Ekos Sync, else at the end.
   const adminRows: Array<(typeof visibleAdmin)[number] | "twilio"> = [...visibleAdmin];
-  if (visibleTwilio.length > 0) adminRows.splice(ekosIndex === -1 ? adminRows.length : ekosIndex, 0, "twilio");
+  if (visibleTwilio.length > 0) {
+    const auditIndex = visibleAdmin.findIndex((link) => link.href === "/admin/audit");
+    const nextIndex = visibleAdmin.findIndex((link) => link.href === "/admin/email" || link.href === "/admin/ekos-sync");
+    adminRows.splice(auditIndex !== -1 ? auditIndex + 1 : nextIndex !== -1 ? nextIndex : adminRows.length, 0, "twilio");
+  }
 
   const nothingVisible =
     role !== "admin" &&
@@ -773,6 +778,7 @@ export default function Sidebar({
     !showUpcTree &&
     visibleCalendars.length === 0 &&
     visibleTwilio.length === 0 &&
+    visibleAdmin.length === 0 &&
     visiblePos.length === 0;
 
   // Every id nested under Operations — everything sectionShowsNew() checks
@@ -1464,6 +1470,14 @@ function AdminIcon({ href }: { href: string }) {
       <NavIcon>
         <circle cx="9" cy="8" r="3.5" />
         <path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-4-6" />
+      </NavIcon>
+    );
+  }
+  if (href.startsWith("/admin/email")) {
+    return (
+      <NavIcon>
+        <rect x="3" y="5" width="18" height="14" rx="2.5" />
+        <path d="M3.5 7l8.5 6 8.5-6" />
       </NavIcon>
     );
   }

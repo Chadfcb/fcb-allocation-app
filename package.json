@@ -15,6 +15,8 @@
     "@types/nodemailer": "^8.0.1",
     "date-fns": "^4.4.0",
     "exceljs": "^4.4.0",
+    "grapesjs": "^0.23.8",
+    "grapesjs-preset-newsletter": "^1.0.2",
     "mammoth": "^1.12.2",
     "next": "16.3.0",
     "nodemailer": "^10.0.0",
