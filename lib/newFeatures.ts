@@ -32,6 +32,14 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    // Administrators only, so no sidebar trail (page matches no link) — reps
+    // who open Markstein would otherwise see a New! they can't clear.
+    id: "feature:markstein-james-import",
+    page: "admin-only",
+    label: "Distributors → Markstein: James's weekly recaps box — Import James's history (review list, then saves his visits as check-ins)",
+    added: "2026-10-29",
+  },
+  {
     id: "feature:sales-dist-inventory",
     page: "/sales-dashboard",
     label: "Sales Dashboard: Distributor Inventory (quick link) — running low or out across every distributor, a card per distributor, click a product for its sales",
