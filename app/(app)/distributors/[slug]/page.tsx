@@ -18,8 +18,5 @@ export default async function DistributorPage({ params }: { params: Promise<{ sl
   const profile = await getProfile();
   if (!profile || !hasSection(profile.role, profile.sections, page.section, profile.is_super_admin)) redirect("/");
   const name = profile.full_name?.trim() || null;
-  // isAdmin (2026-10-29): Administrators see the "James's weekly recaps" box
-  // on Markstein (components/MarksteinJamesBox.tsx).
-  const isAdmin = profile.role === "admin" && !!profile.is_super_admin;
-  return <DistributorPageClient dist={page.name} viewerName={name} isAdmin={isAdmin} />;
+  return <DistributorPageClient dist={page.name} viewerName={name} />;
 }

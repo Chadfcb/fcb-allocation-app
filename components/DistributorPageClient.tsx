@@ -24,7 +24,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useNewFeature } from "@/lib/newFeatures";
 import NewBadge from "@/components/NewBadge";
-import MarksteinJamesBox from "@/components/MarksteinJamesBox";
 import { useActionItems, type ActionRow } from "@/components/SalesActionItems";
 import {
   CARD,
@@ -299,7 +298,7 @@ function PeriodPicker({ value, onChange, asOf, salesNote }: { value: BlockPeriod
   );
 }
 
-export default function DistributorPageClient({ dist, viewerName, isAdmin = false }: { dist: string; viewerName: string | null; isAdmin?: boolean }) {
+export default function DistributorPageClient({ dist, viewerName }: { dist: string; viewerName: string | null }) {
   const supabase = useMemo(() => createClient(), []);
   // Each block's own date buttons (2026-10-22).
   const [ckP, setCkP] = useBlockPeriod(dist, "ck");
@@ -707,10 +706,6 @@ export default function DistributorPageClient({ dist, viewerName, isAdmin = fals
           <div className="w-full">
             <AccountSearch supabase={supabase} dist={dist} onPick={(id) => setOpenId(id)} />
           </div>
-
-          {/* James's weekly recaps (2026-10-29, per Chad): Markstein only,
-              Administrators only — import James's (CMC) visits as check-ins. */}
-          {isAdmin && dist === "Markstein" && <MarksteinJamesBox onImported={() => setVersion((v) => v + 1)} />}
 
           {/* Check-ins (2026-10-22): overall + maintenance route */}
           <section className={`${CARD} flex min-w-0 flex-col gap-4`}>
