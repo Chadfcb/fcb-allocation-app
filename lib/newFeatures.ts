@@ -118,7 +118,9 @@ export const NEW_FEATURES: NewFeature[] = [
     label: `${d.name} page: All Chain Mandates / Chain Authorizations buttons (stores, buying vs missing, export)`,
     added: "2026-10-22",
   })),
-  ...DISTRIBUTOR_PAGES.map((d) => ({
+  // Not on Coast or Superior (Chad, 2026-10-29): they have no accounts, so
+  // there's nothing to pick in the search box and the badge could never clear.
+  ...DISTRIBUTOR_PAGES.filter((d) => d.slug !== "coast" && d.slug !== "superior").map((d) => ({
     id: `feature:dist-account-search-${d.slug}`,
     page: distributorHref(d.slug),
     label: `${d.name} page: Search accounts box above the stock block (opens the account pop-up)`,
