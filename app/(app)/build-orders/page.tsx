@@ -26,7 +26,14 @@
 // the existing "Matagrano 2") and push into that instead, leaving the
 // original order untouched.
 
-import { useEffect, useMemo, useState, useCallback, Fragment } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useCallback,
+  Fragment,
+} from "react";
 import { createClient } from "@/lib/supabase/client";
 import { logChange } from "@/lib/audit";
 import { derivePackaging } from "@/lib/packaging";
@@ -48,6 +55,28 @@ import type {
   TankAllocation,
 } from "@/lib/types/db";
 import { chipText } from "@/lib/appearance";
+import { useNewFeature } from "@/lib/newFeatures";
+import NewBadge from "@/components/NewBadge";
+
+// Total BBLs column — barrels per case/keg, same volumetric math as Tank
+// Allocations (lib/tankAllocations.ts): 1 bbl = 31 gal = 3,968 fl oz.
+const BBL_PER_UNIT: Record<string, number> = {
+  "19_2oz": 230.4 / 3968, // 12 x 19.2oz
+  "16oz": 384 / 3968, // 24 x 16oz
+  "12oz": 288 / 3968, // 24 x 12oz
+  "1_2bbl": 0.5,
+  "1_6bbl": 1 / 6,
+};
+
+// Barrels in one unit (case or keg) of a product, from its name. null when
+// the size can't be read from the name.
+function bblPerUnit(productName: string): number | null {
+  const info = derivePackaging(productName);
+  if (info.kind === "can" || info.kind === "keg") {
+    return BBL_PER_UNIT[info.size] ?? null;
+  }
+  return null;
+}
 
 type TankNumericField = "bbls_available" | TankQtyField;
 
@@ -93,6 +122,12 @@ export default function BuildOrdersPage() {
   const [pushingId, setPushingId] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<ConfirmState | null>(null);
   const [pushResult, setPushResult] = useState<PushResult | null>(null);
+
+  // Total BBLs sits pinned right next to the Product column, so it needs to
+  // know how wide the Product column is (product names vary in length).
+  const productThRef = useRef<HTMLTableCellElement>(null);
+  const [productColWidth, setProductColWidth] = useState(0);
+  const totalBblsNew = useNewFeature("feature:build-orders-total-bbls");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -236,6 +271,16 @@ export default function BuildOrdersPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional fetch-on-mount
     load();
   }, [load]);
+
+  useEffect(() => {
+    const el = productThRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => {
+      setProductColWidth(el.getBoundingClientRect().width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [loading, week, distributors.length]);
 
   function effectiveRecommended(productId: string, distributorId: string) {
     const key = `${productId}:${distributorId}`;
@@ -653,6 +698,34 @@ export default function BuildOrdersPage() {
     ...dividers.map((d): CombinedRow => ({ kind: "divider", item: d })),
   ].sort((a, b) => rowSortOrder(a) - rowSortOrder(b));
 
+  // Total BBLs: per product, every distributor's Rec. Order added up and
+  // converted to barrels. Each divider row gets the subtotal of the products
+  // under it (down to the next divider), and the header gets the grand total.
+  const productBbls: Record<string, number | null> = {};
+  const dividerBbls: Record<string, number> = {};
+  let grandTotalBbls = 0;
+  let currentDividerId: string | null = null;
+  for (const row of combined) {
+    if (row.kind === "divider") {
+      currentDividerId = row.item.id;
+      dividerBbls[currentDividerId] = 0;
+      continue;
+    }
+    const per = bblPerUnit(row.item.name);
+    if (per === null) {
+      productBbls[row.item.id] = null;
+      continue;
+    }
+    const units = distributors.reduce(
+      (sum, d) => sum + effectiveRecommended(row.item.id, d.id),
+      0,
+    );
+    const bbls = units * per;
+    productBbls[row.item.id] = bbls;
+    grandTotalBbls += bbls;
+    if (currentDividerId) dividerBbls[currentDividerId] += bbls;
+  }
+
   // Tank Allocations only shows brands that have been explicitly added
   // (i.e. have a tank_allocations row) — not every Price List brand.
   const tankBrands = brands.filter((b) => tankAllocations[b.id]);
@@ -854,10 +927,26 @@ export default function BuildOrdersPage() {
               <thead>
                 <tr className="text-xs uppercase tracking-wide text-neutral-500">
                   <th
+                    ref={productThRef}
                     rowSpan={2}
                     className="sticky top-0 left-0 z-20 whitespace-nowrap bg-neutral-900 px-3 text-left align-bottom"
                   >
                     Product
+                  </th>
+                  <th
+                    rowSpan={2}
+                    onClick={() => totalBblsNew.dismiss()}
+                    style={{ left: productColWidth }}
+                    title="Every distributor's Rec. Order for the product, added up and converted to barrels (1 bbl = 31 gal)"
+                    className="sticky top-0 z-20 whitespace-nowrap border-l border-r border-neutral-800 bg-neutral-900 px-3 pb-1 text-right align-bottom"
+                  >
+                    <div className="flex items-center justify-end">
+                      Total BBLs
+                      {totalBblsNew.isNew && <NewBadge inline />}
+                    </div>
+                    <div className="text-sm font-semibold normal-case tracking-normal text-amber-400">
+                      {grandTotalBbls.toFixed(2)}
+                    </div>
                   </th>
                   {distributors.map((d) => (
                     <th
@@ -915,7 +1004,7 @@ export default function BuildOrdersPage() {
                 {distributors.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={1}
+                      colSpan={2}
                       className="px-3 py-6 text-center text-neutral-500"
                     >
                       No active distributors.
@@ -929,12 +1018,18 @@ export default function BuildOrdersPage() {
                           key={`divider:${row.item.id}`}
                           className="bg-neutral-900/70"
                         >
-                          <td
-                            colSpan={1 + distributors.length * 3}
-                            className="px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-300"
-                          >
+                          <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-900 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-300">
                             {row.item.label}
                           </td>
+                          <td
+                            style={{ left: productColWidth }}
+                            className="sticky z-10 whitespace-nowrap border-l border-r border-neutral-800 bg-neutral-900 px-3 py-1.5 text-right text-xs font-semibold text-neutral-200"
+                          >
+                            {(dividerBbls[row.item.id] ?? 0).toFixed(2)}
+                          </td>
+                          {distributors.length > 0 && (
+                            <td colSpan={distributors.length * 3} />
+                          )}
                         </tr>
                       );
                     }
@@ -944,6 +1039,14 @@ export default function BuildOrdersPage() {
                       <tr key={p.id} className="group hover:bg-neutral-900/60">
                         <td className="sticky left-0 z-10 whitespace-nowrap bg-neutral-950 px-3 py-1.5 font-medium text-neutral-200 group-hover:bg-neutral-900">
                           {p.name}
+                        </td>
+                        <td
+                          style={{ left: productColWidth }}
+                          className="sticky z-10 whitespace-nowrap border-l border-r border-neutral-800 bg-neutral-950 px-3 py-1.5 text-right font-medium text-neutral-200 group-hover:bg-neutral-900"
+                        >
+                          {productBbls[p.id] == null
+                            ? "—"
+                            : (productBbls[p.id] as number).toFixed(2)}
                         </td>
                         {distributors.map((d) => {
                           const key = `${p.id}:${d.id}`;
@@ -999,7 +1102,10 @@ export default function BuildOrdersPage() {
             (edit it there). Par Level is a standing target — set it once, it
             applies to every future week until changed. Recommended Order
             recalculates automatically until you edit a cell by hand; after that
-            it stays put.
+            it stays put. Total BBLs is every distributor&apos;s Rec. Order for
+            that product added up and converted to barrels (1 bbl = 31 gal);
+            each brand row shows its subtotal and the column header the total
+            for everything.
           </p>
         </>
       )}
