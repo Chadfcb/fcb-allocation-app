@@ -98,12 +98,12 @@ export default function JamesEffectiveness({ version }: { version: number }) {
           })),
         },
         {
-          name: "Before & after James",
-          title: "FCB accounts James visited — CEs after his first visit vs the same days last year (each account from its own first visit)",
+          name: "vs last year",
+          title: "Accounts James visited — CEs bought since he started visiting them vs the same time last year",
           cols: [
             { header: "Month", key: "month", width: 10 },
-            { header: "After first visit", key: "a", width: 16 },
-            { header: "Same days last year", key: "l", width: 18 },
+            { header: "This year", key: "a", width: 12 },
+            { header: "Same time last year", key: "l", width: 20 },
           ],
           rows: res.impact.months.map((m) => ({ month: m.month.slice(0, 7), a: Math.round(m.after * 10) / 10, l: Math.round(m.lastYear * 10) / 10 })),
         },
@@ -182,7 +182,7 @@ export default function JamesEffectiveness({ version }: { version: number }) {
               Week by week
             </Pill>
             <Pill on={tab === "impact"} onClick={() => setTab("impact")}>
-              Before &amp; after James
+              vs last year
             </Pill>
           </div>
 
@@ -226,41 +226,42 @@ export default function JamesEffectiveness({ version }: { version: number }) {
           )}
 
           {tab === "impact" && (
-            <div className="flex flex-col gap-2">
-              <p className="flex items-start gap-2 rounded-lg border-l-[3px] border-[#6abc46] bg-[#6abc46]/10 px-3 py-2 text-[13.5px] leading-snug text-neutral-100">
-                What FCB&apos;s accounts bought after James first visited them, counted from each account&apos;s own first-visit date.
-              </p>
-              <div className="flex flex-col text-[13px]">
-                {(
-                  [
-                    ["Accounts James visited", res.impact.accounts.toLocaleString(), null],
-                    ["CEs since his first visit", res.impact.after.toFixed(1), null],
-                    ["Same accounts, same days last year", res.impact.lastYear.toFixed(1), change(res.impact.after, res.impact.lastYear)],
-                    ["Same accounts, same number of days before his first visit", res.impact.before.toFixed(1), change(res.impact.after, res.impact.before)],
-                    ["New buyers (nothing in the 12 months before his visit)", `${res.impact.newBuyers} · ${res.impact.newBuyersCe.toFixed(1)} CE`, null],
-                  ] as [string, string, number | null][]
-                ).map(([label, value, ch]) => (
-                  <div key={label} className="flex justify-between gap-3 border-b border-neutral-900 py-1.5">
-                    <span className="text-neutral-300">{label}</span>
-                    <span className="whitespace-nowrap font-mono text-neutral-100">
-                      {value}
-                      {ch !== null && (
-                        <span className={`ml-2 ${ch >= 0 ? "text-[#6abc46]" : "text-[#ffab9c]"}`}>
-                          (now {ch > 0 ? "+" : ""}
-                          {ch}%)
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                ))}
+            <div className="flex flex-col gap-3">
+              {/* Plain-English version (2026-10-29, Chad: "this is incredibly
+                  confusing to me and mark our sales manager … fix it so it
+                  makes sense"). Each account counts from the day James first
+                  visited it, against the same days a year earlier. */}
+              <div className="flex flex-col gap-2 rounded-lg border-l-[3px] border-[#6abc46] bg-[#6abc46]/10 px-3 py-2.5 text-[14px] leading-snug text-neutral-100">
+                <p>
+                  Since James started visiting them, these <b>{res.impact.accounts.toLocaleString()} accounts</b> have bought <b>{res.impact.after.toFixed(0)} CEs</b>.
+                  During the same weeks last year, they bought <b>{res.impact.lastYear.toFixed(0)}</b>.
+                  {res.impact.lastYear > 0 && (
+                    <>
+                      {" "}
+                      That&apos;s{" "}
+                      <b className={res.impact.after >= res.impact.lastYear ? "text-[#9edc7f]" : "text-[#ffab9c]"}>
+                        {res.impact.after >= res.impact.lastYear
+                          ? `${(res.impact.after / res.impact.lastYear).toFixed(1)} times as much (+${change(res.impact.after, res.impact.lastYear)}%)`
+                          : `${change(res.impact.after, res.impact.lastYear)}% less`}
+                      </b>
+                      .
+                    </>
+                  )}
+                </p>
+                {res.impact.newBuyers > 0 && (
+                  <p>
+                    <b>{res.impact.newBuyers} of them are new buyers</b>: they bought nothing in the year before James visited, and they&apos;ve bought{" "}
+                    <b>{res.impact.newBuyersCe.toFixed(0)} CEs</b> since.
+                  </p>
+                )}
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse text-[13px]">
                   <thead>
                     <tr className="text-[11.5px] text-neutral-400">
                       <th className="px-2 py-1 text-left font-semibold">Month</th>
-                      <th className="px-2 py-1 text-right font-semibold">After first visit</th>
-                      <th className="px-2 py-1 text-right font-semibold">Same days last year</th>
+                      <th className="px-2 py-1 text-right font-semibold">This year</th>
+                      <th className="px-2 py-1 text-right font-semibold">Same time last year</th>
                       <th className="px-2 py-1 text-right font-semibold">Change</th>
                     </tr>
                   </thead>
