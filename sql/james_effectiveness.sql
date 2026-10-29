@@ -135,7 +135,38 @@ begin
           and a.outlet_id not in (select outlet_id from ck)
           and not exists (select 1 from public.sales_account_off o where o.outlet_id = a.outlet_id)
         order by a.ce_12mo desc nulls last
-        limit 200) l)
+        limit 200) l),
+    -- Markstein accounts buying now (ordered in the last 90 days) that James
+    -- has never visited, with what they bought in the last 12 months
+    -- (Direction for James: buying accounts he hasn't visited, 2026-10-29).
+    'unvisited_buyers', (select coalesce(json_agg(u), '[]'::json) from (
+        select a.outlet_id, a.name, a.city, a.premise, a.last_buy_date, a.ce_12mo,
+               (select coalesce(json_agg(distinct s.product || ' (' || s.size || ')'), '[]'::json)
+                  from public.sales_account_sales s
+                  where s.outlet_id = a.outlet_id and s.size is not null
+                    and s.month >= date_trunc('month', coalesce(v_as_of, current_date) - 365)::date) as items
+        from public.sales_accounts a
+        where a.distributor = 'Markstein'
+          and a.last_buy_date > coalesce(v_as_of, current_date) - 90
+          and a.outlet_id not in (select outlet_id from ck)
+          and not exists (select 1 from public.sales_account_off o where o.outlet_id = a.outlet_id)
+        order by a.ce_12mo desc nulls last
+        limit 300) u),
+    -- What Markstein accounts buy most (last 12 months), on and off premise —
+    -- used to show each unvisited buyer what it doesn't carry yet.
+    'popular', (select coalesce(json_agg(p order by p.premise, p.accounts desc), '[]'::json) from (
+        select x.premise, x.item, x.accounts from (
+          select case when a.premise ilike 'on%' then 'On' else 'Off' end as premise,
+                 s.product || ' (' || s.size || ')' as item,
+                 count(distinct s.outlet_id) as accounts,
+                 row_number() over (partition by case when a.premise ilike 'on%' then 'On' else 'Off' end
+                                    order by count(distinct s.outlet_id) desc) as rn
+          from public.sales_account_sales s
+          join public.sales_accounts a on a.outlet_id = s.outlet_id
+          where a.distributor = 'Markstein' and s.size is not null
+            and s.month >= date_trunc('month', coalesce(v_as_of, current_date) - 365)::date
+          group by 1, 2) x
+        where x.rn <= 6) p)
   ) into result;
   return result;
 end;
@@ -144,4 +175,4 @@ $$;
 revoke all on function public.james_effectiveness() from public, anon;
 grant execute on function public.james_effectiveness() to authenticated;
 comment on function public.james_effectiveness() is
-  '[needs:dist_markstein] James Mendoza (CMC, Markstein''s field rep): his check-ins (visits, outcome, notes, products committed/sampled), what those accounts and his 52 target accounts bought since May 2025, and Markstein accounts that stopped buying (last year, not in 90+ days) that he has never visited. Answers "is James moving beer", "did his commitments turn into sales", "which targets has he hit", "what should James work on next".';
+  '[needs:dist_markstein] James Mendoza (CMC, Markstein''s field rep): his check-ins (visits, outcome, notes, products committed/sampled), what those accounts and his 52 target accounts bought since May 2025, Markstein accounts that stopped buying (last year, not in 90+ days) that he has never visited, Markstein accounts buying now that he has never visited (with what they buy), and the most-bought Markstein items on and off premise. Answers "is James moving beer", "did his commitments turn into sales", "which targets has he hit", "what should James work on next".';

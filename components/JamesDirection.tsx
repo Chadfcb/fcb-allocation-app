@@ -1,6 +1,7 @@
 "use client";
 
 // Direction for James — Distributors → Markstein, full width under the top row
+// (7th list "Buying accounts he hasn't visited" added 2026-10-29)
 // (added 2026-10-29, per Chad: "a section or block that recommends what james
 // should/could be doing to improve sales … actionable items, direction"). Six
 // action lists built from the sales data plus "What's working". Each list is
@@ -19,6 +20,7 @@ const rate = (b: number, c: number) => (c ? `${Math.round((b / c) * 100)}%` : "�
 
 export default function JamesDirection({ version, onOpen }: { version: number; onOpen: (outletId: string) => void }) {
   const isNew = useNewFeature("feature:james-direction");
+  const unvisitedNew = useNewFeature("feature:james-unvisited-buyers");
   const { data, err } = useJamesData(version);
   const dir = useMemo(() => (data ? directionFor(computeJe(data, todayPacific()), data) : null), [data]);
   const [tab, setTab] = useState<string>("chase");
@@ -77,8 +79,16 @@ export default function JamesDirection({ version, onOpen }: { version: number; o
           <div className="flex min-w-0 flex-[2_1_520px] flex-col gap-3">
             <div className="flex flex-wrap gap-2">
               {dir.lists.map((l) => (
-                <Pill key={l.key} on={tab === l.key} onClick={() => setTab(l.key)}>
+                <Pill
+                  key={l.key}
+                  on={tab === l.key}
+                  onClick={() => {
+                    setTab(l.key);
+                    if (l.key === "unvisited") unvisitedNew.dismiss();
+                  }}
+                >
                   {l.title} <span className="font-mono opacity-80">{l.rows.length}</span>
+                  {l.key === "unvisited" && unvisitedNew.isNew && <NewBadge inline />}
                 </Pill>
               ))}
             </div>

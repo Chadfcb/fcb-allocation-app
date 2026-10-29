@@ -32,6 +32,12 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    id: "feature:james-unvisited-buyers",
+    page: "/distributors/markstein",
+    label: "Direction for James: Buying accounts he hasn't visited — ordered in the last 90 days, never visited, with what they buy and don't carry yet",
+    added: "2026-10-29",
+  },
+  {
     id: "feature:james-direction",
     page: "/distributors/markstein",
     label: "Distributors → Markstein: Direction for James — chase commitments, get the reorder, targets, win back lapsed buyers, stop spending time here, what's working",

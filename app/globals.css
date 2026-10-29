@@ -253,6 +253,24 @@ body {
     0 0 26px rgba(106, 188, 70, 0.22);
 }
 
+/* 5c. Clickable rows (2026-10-29, per Chad: hovering an account row "should
+   clearly indicate im hovering on it and its clickable, right now there is a
+   very small and faint color change"). Full-width list rows that open
+   something (account lists, search results) get a clear green tint, a green
+   bar down the left edge and the hand cursor while the mouse is on them.
+   Bordered buttons keep their raised look (5b) and brighten a little. */
+.site-theme :is(button, a):is(.w-full, [class~="border-b"], [class~="border-t"]):not([class~="border"]):not(:disabled) {
+  transition: background-color 0.12s ease, box-shadow 0.12s ease;
+}
+.site-theme :is(button, a):is(.w-full, [class~="border-b"], [class~="border-t"]):not([class~="border"]):not(:disabled):hover {
+  cursor: pointer;
+  background-color: color-mix(in srgb, var(--fcb-accent) 16%, transparent);
+  box-shadow: inset 3px 0 0 var(--fcb-accent);
+}
+.site-theme :is(button, a)[class~="border"]:is(.rounded-full, .rounded-lg, .rounded-md, .rounded-xl):not(:disabled):hover {
+  filter: brightness(1.18);
+}
+
 /* 6. Status tags and status dropdowns (Paid / Pending / Ordered / Not
    Ordered / Approved / Delivered) — soft tinted pills in the SAME colors
    instead of bright solid blocks. Pages color these inline with the status

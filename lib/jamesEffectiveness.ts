@@ -60,12 +60,19 @@ export interface JeLapsed {
   last_buy_date: string | null;
   ce_12mo: number | null;
 }
+// Markstein accounts buying now (last 90 days) that James has never visited,
+// with what they bought in the last 12 months (2026-10-29).
+export interface JeUnvisited extends JeLapsed {
+  items: string[] | null; // "Big Daddy IPA (12oz)" …
+}
 export interface JeData {
   as_of: string | null;
   checkins: JeCheckin[];
   sales: JeSale[];
   targets: JeTarget[];
   lapsed?: JeLapsed[];
+  unvisited_buyers?: JeUnvisited[];
+  popular?: { premise: "On" | "Off"; item: string; accounts: number }[];
 }
 
 export const JE_START = "2026-05-31";
@@ -654,6 +661,26 @@ export function directionFor(res: JeResult, data: JeData): { lists: DirList[]; w
       value: `${ce1(Number(a.ce_12mo) || 0)} CE/yr`,
     }));
 
+  // 5b. Buying accounts James hasn't visited (Chad, 2026-10-29): what they buy,
+  // and the most-bought Markstein items (same premise) they don't carry yet.
+  const popular = { On: [] as string[], Off: [] as string[] };
+  for (const p of data.popular ?? []) (p.premise === "On" ? popular.On : popular.Off).push(p.item);
+  const unvisited: DirRow[] = (data.unvisited_buyers ?? [])
+    .filter((a) => !byOutlet.has(a.outlet_id))
+    .sort((a, b) => (Number(b.ce_12mo) || 0) - (Number(a.ce_12mo) || 0))
+    .map((a) => {
+      const items = a.items ?? [];
+      const missing = (a.premise && /on/i.test(a.premise) ? popular.On : popular.Off).filter((x) => !items.includes(x)).slice(0, 3);
+      return {
+        outlet_id: a.outlet_id,
+        name: a.name,
+        city: a.city,
+        detail: `Buys: ${items.length ? items.join("; ") : "—"}${missing.length ? ` · Doesn't carry yet: ${missing.join("; ")}` : ""}`,
+        sub: `Last order ${a.last_buy_date ? fmtShort(a.last_buy_date) : "—"} · ${a.last_buy_date ? daysSince(a.last_buy_date) : "?"} days ago · never visited by James`,
+        value: `${ce1(Number(a.ce_12mo) || 0)} CE/yr`,
+      };
+    });
+
   // 6. Stop spending time here: 3+ visits, nothing bought since the first.
   const stop: DirRow[] = [];
   byOutlet.forEach((list, o) => {
@@ -696,6 +723,7 @@ export function directionFor(res: JeResult, data: JeData): { lists: DirList[]; w
       { key: "tnv", title: "Targets not visited yet", why: "On the target list, no check-in yet", rows: notVisited },
       { key: "tnb", title: "Targets visited, not buying", why: "Visited, no order since his first visit", rows: notBuying },
       { key: "lapsed", title: "Win back lapsed buyers", why: "Bought in the last year, nothing in 90+ days, never visited by James", rows: lapsed },
+      { key: "unvisited", title: "Buying accounts he hasn't visited", why: "Ordered in the last 90 days, never visited by James", rows: unvisited },
       { key: "stop", title: "Stop spending time here", why: "3+ visits, nothing ordered since the first", rows: stop },
     ],
     working: { packages: Array.from(pk.values()).sort(byRate), premise: Array.from(pr.values()).sort(byRate) },

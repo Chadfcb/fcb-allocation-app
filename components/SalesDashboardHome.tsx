@@ -167,7 +167,9 @@ export function Row({ left, title, sub, value, valueLabel, href, onClick }: { le
       </span>
     </>
   );
-  const cls = "flex w-full items-center gap-3 border-t border-neutral-800/70 py-3 text-left first:border-t-0 hover:bg-white/[0.02]";
+  // px-2.5 + rounded (2026-10-29): room for the hover tint and green left bar
+  // (app/globals.css 5c) so the row clearly lights up when it's clickable.
+  const cls = "flex w-full items-center gap-3 rounded-lg border-t border-neutral-800/70 px-2.5 py-3 text-left first:border-t-0";
   if (href)
     return (
       <Link href={href} className={cls}>
@@ -640,99 +642,107 @@ export default function SalesDashboardHome({
           </>
         )}
       </p>
-      {/* How to use it (Chad 10/21: instructions right under the data line, "so people understand how the dashboard works") */}
-      <div className="-mt-2 flex flex-col gap-1.5">
-        <Step n={1}>First, select your time frame</Step>
-        <Step n={2}>Second, select your distributor</Step>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        {PERIODS.map((p) => (
-          <Pill
-            key={p.key}
-            on={period === p.key}
-            onClick={() => {
-              setPeriod(p.key);
-              setShowCustom(false);
-              remember(p.key, dist);
-            }}
-          >
-            {p.label}
-          </Pill>
-        ))}
-        <Pill
-          on={period === "custom" || showCustom}
-          onClick={() => {
-            if (!showCustom && !draft.from) {
-              const to = home.as_of ?? "";
-              setDraft({ from: to ? addDaysIso(to, -29) : "", to });
-            }
-            setShowCustom(!showCustom);
-          }}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <rect x="3" y="4" width="18" height="18" rx="2" />
-            <path d="M16 2v4M8 2v4M3 10h18" />
+      {/* How to use it (Chad 10/21: instructions right under the data line, "so people understand how the dashboard works").
+          2026-10-29, per Chad: each step sits in front of its own row, and the
+          panel says these two choices change everything below. */}
+      <div className="flex flex-col gap-3 rounded-xl border border-neutral-800 px-4 py-3.5">
+        <p className="flex items-center gap-2 text-[13.5px] font-semibold text-neutral-100">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6abc46" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M12 5v14M5 12l7 7 7-7" />
           </svg>
-          {period === "custom" && custom ? `${fmtDay(custom.from)} – ${fmtDay(custom.to)}` : "Custom dates"}
-        </Pill>
-        {showCustom && (
-          <form
-            className="flex flex-wrap items-center gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!draft.from || !draft.to) return;
-              const r = draft.from <= draft.to ? draft : { from: draft.to, to: draft.from };
-              setDraft(r);
-              setCustom(r);
-              setPeriod("custom");
-              remember("custom", dist, r);
-            }}
-          >
-            <label className={`flex items-center gap-1.5 text-[13px] ${MUTED}`}>
-              From
-              <input
-                type="date"
-                value={draft.from}
-                max={home.as_of ?? undefined}
-                onChange={(e) => setDraft({ ...draft, from: e.target.value })}
-                className="min-h-9 rounded-full border border-neutral-700 bg-neutral-950 px-3 text-[13px] text-neutral-100 [color-scheme:dark]"
-              />
-            </label>
-            <label className={`flex items-center gap-1.5 text-[13px] ${MUTED}`}>
-              To
-              <input
-                type="date"
-                value={draft.to}
-                max={home.as_of ?? undefined}
-                onChange={(e) => setDraft({ ...draft, to: e.target.value })}
-                className="min-h-9 rounded-full border border-neutral-700 bg-neutral-950 px-3 text-[13px] text-neutral-100 [color-scheme:dark]"
-              />
-            </label>
-            <button
-              type="submit"
-              disabled={!draft.from || !draft.to}
-              className="inline-flex min-h-9 items-center rounded-full border border-[#6abc46]/45 bg-[#6abc46]/15 px-3.5 text-[13px] font-semibold text-neutral-50 hover:bg-[#6abc46]/25 disabled:opacity-50"
+          These two choices change every block below.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Step n={1}>First, select your time frame</Step>
+          {PERIODS.map((p) => (
+            <Pill
+              key={p.key}
+              on={period === p.key}
+              onClick={() => {
+                setPeriod(p.key);
+                setShowCustom(false);
+                remember(p.key, dist);
+              }}
             >
-              Apply
-            </button>
-            {period === "custom" && !customReady && <span className={`text-xs ${MUTED}`}>Loading…</span>}
-          </form>
-        )}
-      </div>
-      <div className="flex gap-2 overflow-x-auto pb-0.5">
-        {["", ...v.dd.withData].map((d) => (
+              {p.label}
+            </Pill>
+          ))}
           <Pill
-            key={d || "all"}
-            on={dist === d}
+            on={period === "custom" || showCustom}
             onClick={() => {
-              setDist(d);
-              remember(period, d);
+              if (!showCustom && !draft.from) {
+                const to = home.as_of ?? "";
+                setDraft({ from: to ? addDaysIso(to, -29) : "", to });
+              }
+              setShowCustom(!showCustom);
             }}
           >
-            <Dot color={d ? distColor(d) : "#6abc46"} />
-            {d || "All distributors"}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="3" y="4" width="18" height="18" rx="2" />
+              <path d="M16 2v4M8 2v4M3 10h18" />
+            </svg>
+            {period === "custom" && custom ? `${fmtDay(custom.from)} – ${fmtDay(custom.to)}` : "Custom dates"}
           </Pill>
-        ))}
+          {showCustom && (
+            <form
+              className="flex flex-wrap items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!draft.from || !draft.to) return;
+                const r = draft.from <= draft.to ? draft : { from: draft.to, to: draft.from };
+                setDraft(r);
+                setCustom(r);
+                setPeriod("custom");
+                remember("custom", dist, r);
+              }}
+            >
+              <label className={`flex items-center gap-1.5 text-[13px] ${MUTED}`}>
+                From
+                <input
+                  type="date"
+                  value={draft.from}
+                  max={home.as_of ?? undefined}
+                  onChange={(e) => setDraft({ ...draft, from: e.target.value })}
+                  className="min-h-9 rounded-full border border-neutral-700 bg-neutral-950 px-3 text-[13px] text-neutral-100 [color-scheme:dark]"
+                />
+              </label>
+              <label className={`flex items-center gap-1.5 text-[13px] ${MUTED}`}>
+                To
+                <input
+                  type="date"
+                  value={draft.to}
+                  max={home.as_of ?? undefined}
+                  onChange={(e) => setDraft({ ...draft, to: e.target.value })}
+                  className="min-h-9 rounded-full border border-neutral-700 bg-neutral-950 px-3 text-[13px] text-neutral-100 [color-scheme:dark]"
+                />
+              </label>
+              <button
+                type="submit"
+                disabled={!draft.from || !draft.to}
+                className="inline-flex min-h-9 items-center rounded-full border border-[#6abc46]/45 bg-[#6abc46]/15 px-3.5 text-[13px] font-semibold text-neutral-50 hover:bg-[#6abc46]/25 disabled:opacity-50"
+              >
+                Apply
+              </button>
+              {period === "custom" && !customReady && <span className={`text-xs ${MUTED}`}>Loading…</span>}
+            </form>
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Step n={2}>Second, select your distributor</Step>
+          {["", ...v.dd.withData].map((d) => (
+            <Pill
+              key={d || "all"}
+              on={dist === d}
+              onClick={() => {
+                setDist(d);
+                remember(period, d);
+              }}
+            >
+              <Dot color={d ? distColor(d) : "#6abc46"} />
+              {d || "All distributors"}
+            </Pill>
+          ))}
+        </div>
       </div>
 
       {/* Needs attention + Win backs */}
@@ -1132,7 +1142,7 @@ export function fmtChecked(ts: string): string {
 
 function Step({ n, children }: { n: number; children: React.ReactNode }) {
   return (
-    <p className="flex items-center gap-2 text-[13px] text-neutral-300">
+    <p className="mr-1 flex w-full items-center gap-2 text-[13.5px] text-neutral-200 sm:w-[250px] sm:shrink-0">
       <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[#6abc46]/50 bg-[#6abc46]/10 text-[11px] font-semibold text-[#9edc7f]">{n}</span>
       {children}
     </p>
