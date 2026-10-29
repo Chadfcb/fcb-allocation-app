@@ -84,10 +84,12 @@ export const POS_LINKS: AppLink[] = [
   { href: "/pos/football", label: "Football POS", section: "football_pos", about: "Football-season POS artwork library." },
 ];
 
-// Twilio (2026-10-29) — texting accounts about new items. Own sidebar category.
+// Twilio (2026-10-29) — texting accounts about new items. Drawn as a
+// sub-category inside Admin, between Audit Log and Ekos Sync.
 export const TWILIO_LINKS: AppLink[] = [
   { href: "/twilio/setup", label: "Setup & Compliance", section: "twilio", about: "FCB's Twilio texting setup: the texting number (559) 478-0269, messaging service, brand and campaign registration status, text-to-join keyword and wording, and links to the public Privacy Policy, Terms and text sign-up pages." },
   { href: "/twilio/sign-ups", label: "Text Sign-ups", section: "twilio", about: "Everyone who agreed to get FCB new-item texts (texted JOIN or used the sign-up page): cell, name, business, linked account, rep, when they joined, and anyone who opted out with STOP." },
+  { href: "/twilio/how-it-works", label: "How It Works", section: "twilio", about: "Plain-English explanation of FCB new-item texts from the customer's point of view: signing up (text JOIN to (559) 478-0269 or the web form), what texts they get, replies going to their sales rep, STOP to opt out, where setup stands, and cost." },
 ];
 
 // Users and Ekos Sync have no section: admins only.
@@ -230,7 +232,7 @@ export function pagesForErnie(role: Role | undefined, sections: AnySectionKey[],
   for (const l of DISTRIBUTOR_LINKS) if (can(l.section)) out.push(line("Sales > Distributors > ", l));
   for (const l of CALENDARS_LINKS) if (can(l.section)) out.push(line("Calendars > ", l));
   for (const l of POS_LINKS) if (can(l.section)) out.push(line("Sales > POS > ", l));
-  for (const l of TWILIO_LINKS) if (can(l.section)) out.push(line("Twilio > ", l));
+  for (const l of TWILIO_LINKS) if (can(l.section)) out.push(line("Admin > Twilio > ", l));
   for (const l of ADMIN_LINKS) {
     if (l.section ? can(l.section) : role === "admin") out.push(line("Admin > ", l));
   }

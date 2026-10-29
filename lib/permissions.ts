@@ -235,8 +235,8 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
     items: [{ key: "tasks", label: "Tasks" }],
   },
   {
-    // Twilio — its own top-level sidebar category, added 2026-10-29 per Chad
-    // ("we will need a new category in the left panel, Called Twilio").
+    // Twilio — added 2026-10-29 per Chad; in the sidebar it's a sub-category
+    // of Admin (between Audit Log and Ekos Sync). Admins always have it.
     // Setup & Compliance + Text Sign-ups (texting accounts about new items).
     // RLS: has_section(auth.uid(), 'twilio') in sql/twilio_sms.sql.
     key: "twilio",

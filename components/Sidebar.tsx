@@ -80,9 +80,10 @@ const NEW_SIDEBAR_IDS: string[] = [
   // anywhere in the tree, not just Operations.
   "/chain-calendar",
   "/social-media-calendar",
-  // Twilio (2026-10-29) — new top-level category.
+  // Twilio (2026-10-29) — sub-category of Admin.
   "/twilio/setup",
   "/twilio/sign-ups",
+  "/twilio/how-it-works",
   // Oobli and Ugly Fresca — new brands added under Labels (2026-09-05),
   // per Chad: "remember, these will be new to everyone."
   "section:pos-labels-oobli",
@@ -169,8 +170,11 @@ const SALES_STORAGE_KEY = "fcb-sidebar-sales-expanded";
 // state is the "distributors" key of the tree state, like UPC's).
 const CALENDARS_STORAGE_KEY = "fcb-sidebar-calendars-expanded";
 const ERNIE_STORAGE_KEY = "fcb-sidebar-ernie-expanded";
-// Twilio (2026-10-29, per Chad) — texting accounts: Setup & Compliance and
-// Text Sign-ups. Own top-level category, below Calendars.
+// Twilio (2026-10-29, per Chad) — texting accounts: Setup & Compliance, Text
+// Sign-ups and How It Works. A sub-category inside Admin, between Audit Log
+// and Ekos Sync (moved there the same day, per Chad: "since twilio is admin
+// only access, lets move it to the admin section"). This key remembers
+// whether its sub-list is open.
 const TWILIO_STORAGE_KEY = "fcb-sidebar-twilio-expanded";
 
 // Ernie AI — split into two sub-links, added 2026-09-10 per Chad ("we need
@@ -192,7 +196,7 @@ const ADMIN_STORAGE_KEY = "fcb-sidebar-admin-expanded";
 
 // ERNIE_LINKS — moved to lib/appPages.ts (2026-10-16) so Ernie reads the same page list.
 
-type TopLevelCategory = "ernie" | "finance" | "operations" | "sales" | "calendars" | "twilio" | "admin";
+type TopLevelCategory = "ernie" | "finance" | "operations" | "sales" | "calendars" | "admin";
 
 // Which top-level category (if any) a given pathname belongs to — added
 // 2026-09-10, per Chad ("we built in that other categories would close if
@@ -222,7 +226,7 @@ function topLevelCategoryForPath(pathname: string): TopLevelCategory | null {
     return "sales";
   }
   if (CALENDARS_LINKS.some((l) => l.href === pathname)) return "calendars";
-  if (pathname.startsWith("/twilio")) return "twilio";
+  if (pathname.startsWith("/twilio")) return "admin"; // Twilio lives inside Admin
   if (ADMIN_LINKS.some((l) => l.href === pathname)) return "admin";
   return null;
 }
@@ -420,7 +424,6 @@ export default function Sidebar({
       { key: "operations", setExpanded: setOperationsExpanded, storageKey: OPERATIONS_STORAGE_KEY },
       { key: "sales", setExpanded: setSalesExpanded, storageKey: SALES_STORAGE_KEY },
       { key: "calendars", setExpanded: setCalendarsExpanded, storageKey: CALENDARS_STORAGE_KEY },
-      { key: "twilio", setExpanded: setTwilioExpanded, storageKey: TWILIO_STORAGE_KEY },
       { key: "admin", setExpanded: setAdminExpanded, storageKey: ADMIN_STORAGE_KEY },
     ];
     for (const section of sections) {
@@ -433,6 +436,11 @@ export default function Sidebar({
     const sub = salesSubTreeForPath(pathname);
     // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing sidebar expand state to the current route, not a UI-driven update
     if (sub) setPosTreeExpanded((prev) => (prev[sub] ? prev : { ...prev, [sub]: true }));
+    // Landing on a Twilio page opens Admin's Twilio sub-list too.
+    if (pathname.startsWith("/twilio")) {
+      setTwilioExpanded(true);
+      localStorage.setItem(TWILIO_STORAGE_KEY, "true");
+    }
   }, [pathname]);
 
   useEffect(() => {
@@ -593,10 +601,6 @@ export default function Sidebar({
       setCalendarsExpanded(false);
       localStorage.setItem(CALENDARS_STORAGE_KEY, "false");
     }
-    if (except !== "twilio") {
-      setTwilioExpanded(false);
-      localStorage.setItem(TWILIO_STORAGE_KEY, "false");
-    }
   }
 
   function toggleAdmin() {
@@ -657,7 +661,6 @@ export default function Sidebar({
     setTwilioExpanded((prev) => {
       const next = !prev;
       localStorage.setItem(TWILIO_STORAGE_KEY, String(next));
-      if (next) closeOtherTopLevelSections("twilio");
       return next;
     });
   }
@@ -747,6 +750,12 @@ export default function Sidebar({
   // Users and Ekos Sync are admins-only (same rule Users always had); Audit
   // Log follows its own "audit_log" section grant.
   const visibleAdmin = ADMIN_LINKS.filter((link) => (link.section ? can(link.section) : role === "admin"));
+  // Admin's rows in order, with the Twilio sub-category slotted in just
+  // before Ekos Sync (i.e. right under Audit Log), or at the end if this
+  // person can't see Ekos Sync.
+  const ekosIndex = visibleAdmin.findIndex((link) => link.href === "/admin/ekos-sync");
+  const adminRows: Array<(typeof visibleAdmin)[number] | "twilio"> = [...visibleAdmin];
+  if (visibleTwilio.length > 0) adminRows.splice(ekosIndex === -1 ? adminRows.length : ekosIndex, 0, "twilio");
 
   const nothingVisible =
     role !== "admin" &&
@@ -787,8 +796,7 @@ export default function Sidebar({
     visibleOperations.length > 0 ||
     showPosTree ||
     showSalesSection ||
-    visibleCalendars.length > 0 ||
-    visibleTwilio.length > 0;
+    visibleCalendars.length > 0;
 
   // Right side of a parent row: its New! tag (if any) + the open/closed arrow.
   const parentRight = (isNew: boolean, open: boolean) => (
@@ -1247,10 +1255,38 @@ export default function Sidebar({
                       )}
                     </>
                   )}
+                </>
+              )}
+            </div>
+          )}
 
-                  {/* Twilio (2026-10-29, per Chad) — texting accounts. */}
-                  {visibleTwilio.length > 0 && (
-                    <>
+          {/* Admin — added 2026-10-03, per Chad (Users, Audit Log, Ekos
+              Sync). The section label is its open/close switch. */}
+          {(visibleAdmin.length > 0 || visibleTwilio.length > 0) && (
+            <div className="flex flex-col gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  toggleAdmin();
+                  dismissNew("section:admin");
+                }}
+                className="fcb-nav-label"
+              >
+                <span>Admin</span>
+                <span className="flex items-center gap-2">
+                  {sectionShowsNew("section:admin", [
+                    ...visibleAdmin.map((link) => link.href),
+                    ...(visibleTwilio.length ? ["section:twilio", ...visibleTwilio.map((link) => link.href)] : []),
+                  ]) && <NewBadge inline />}
+                  <IconChevron open={adminExpanded} small />
+                </span>
+              </button>
+              {adminExpanded &&
+                adminRows.map((row) =>
+                  row === "twilio" ? (
+                    // Twilio (2026-10-29, per Chad) — sub-category between
+                    // Audit Log and Ekos Sync.
+                    <div key="twilio" className="flex flex-col">
                       <button
                         type="button"
                         onClick={() => {
@@ -1281,44 +1317,20 @@ export default function Sidebar({
                           ))}
                         </div>
                       )}
-                    </>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Admin — added 2026-10-03, per Chad (Users, Audit Log, Ekos
-              Sync). The section label is its open/close switch. */}
-          {visibleAdmin.length > 0 && (
-            <div className="flex flex-col gap-1.5">
-              <button
-                type="button"
-                onClick={() => {
-                  toggleAdmin();
-                  dismissNew("section:admin");
-                }}
-                className="fcb-nav-label"
-              >
-                <span>Admin</span>
-                <span className="flex items-center gap-2">
-                  {sectionShowsNew("section:admin", visibleAdmin.map((link) => link.href)) && <NewBadge inline />}
-                  <IconChevron open={adminExpanded} small />
-                </span>
-              </button>
-              {adminExpanded &&
-                visibleAdmin.map((link) => (
-                  <Link
-                    key={link.href}
-                    href={link.href}
-                    className={topLinkClass(link.href)}
-                    onClick={() => dismissNew(link.href)}
-                  >
-                    <AdminIcon href={link.href} />
-                    {link.label}
-                    {showsNew(link.href) && <NewBadge />}
-                  </Link>
-                ))}
+                    </div>
+                  ) : (
+                    <Link
+                      key={row.href}
+                      href={row.href}
+                      className={topLinkClass(row.href)}
+                      onClick={() => dismissNew(row.href)}
+                    >
+                      <AdminIcon href={row.href} />
+                      {row.label}
+                      {showsNew(row.href) && <NewBadge />}
+                    </Link>
+                  ),
+                )}
             </div>
           )}
 
