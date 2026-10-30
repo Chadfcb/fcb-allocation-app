@@ -23,20 +23,34 @@ import {
 
 // Brew Planner page (2026-10-23, per Chad — EXPERIMENTAL). Same layout as the
 // approved preview: summary → base-beer table (click a row for why, a 10-week
-// chart, brand split, distributors, tanks) → Needs a look + Settings side by
-// side. Settings are saved in this browser only (localStorage) for now.
+// chart, brand split, distributors, tanks) → Settings. Settings are saved in
+// this browser only (localStorage) for now.
+// 2026-10-30 (Chad): "remove the needs a look section ... its extra stuff for the
+// eye that can confuse people" + "simplify the base beers block" for someone who
+// isn't computer savvy. Needs a look is gone (its warnings are now short notes in
+// each beer's row) and the Base beers table opens in a simple 4-column view
+// (Beer · How much is left · Runs out · What to do). "Show all numbers" brings
+// back the full table; remembered in this browser.
 
 const STORE = "fcb-brew-planner-settings";
+const VIEW_STORE = "fcb-brew-planner-all-numbers";
 const CARD = "rounded-xl border border-neutral-800 bg-neutral-950";
 const PILL_BREW = "rounded-full bg-[#6ABC46] px-2.5 py-0.5 text-xs font-semibold text-black";
 const PILL_HOLD = "rounded-full border border-neutral-700 px-2.5 py-0.5 text-xs font-semibold text-neutral-400";
 
-function coverClass(w: number | null) {
-  if (w === null) return "text-neutral-500";
+function coverClass(w0: number | null) {
+  if (w0 === null) return "text-neutral-500";
+  const w = Math.round(w0 * 10) / 10; // color matches the number shown
   if (w < 2) return "bg-red-500/15 text-red-300";
   if (w < 4) return "bg-amber-500/15 text-amber-300";
   return "bg-[#6ABC46]/15 text-[#8fd46b]";
 }
+// Goes by the number as shown (1.97 shows "2.0", so it's "Getting low", not "Low").
+const coverWord = (w: number | null) => {
+  if (w === null) return "";
+  const x = Math.round(w * 10) / 10;
+  return x < 2 ? "Low" : x < 4 ? "Getting low" : "Plenty";
+};
 const Cover = ({ w }: { w: number | null }) => (
   <span className={`inline-block min-w-[44px] rounded-md px-1.5 text-center font-semibold tabular-nums ${coverClass(w)}`}>{w === null ? "–" : r1(w)}</span>
 );
@@ -111,6 +125,37 @@ function shortReason(p: Plan, S: Settings): string {
   if (rate <= 0) return "No sales showing.";
   if ((r.nextLand ?? 0) >= rate * S.safetyWeeks) return `Still ${wks(r.nextLand ?? 0, rate)} weeks of beer even if you wait ${S.cycleWeeks} weeks.`;
   return `Only ${r1(Math.max(r.need ?? 0, 0))} bbl short, under the ${S.minBrew} bbl minimum.`;
+}
+
+// Plainer reason for the simple view (2026-10-30).
+function simpleReason(p: Plan, S: Settings): string {
+  const r = p.rec;
+  const rate = r.rateNext ?? p.demand;
+  if (r.action === "Brew") {
+    return (r.nextLand ?? 0) <= 0
+      ? "If we wait, it runs out before a new batch is ready."
+      : "If we wait, it gets too low before a new batch is ready.";
+  }
+  if (rate <= 0) return "No sales showing.";
+  if ((r.nextLand ?? 0) >= rate * S.safetyWeeks) return "Enough beer for now.";
+  return "Only a little needed, so it can wait.";
+}
+
+// Short warnings shown in a beer's row (these used to be the "Needs a look" box).
+function rowNotes(p: Plan, S: Settings): string[] {
+  const out: string[] = [];
+  for (const t of p.tanks) {
+    if (t.ready && (t.days ?? 0) > 30) out.push(`${r1(t.bbl)} bbl ready in ${t.tank} for ${t.days} days.`);
+  }
+  if (p.demand > 0.5 && p.tanks.length === 0 && p.cover !== null && p.cover < S.targetWeeks + S.cycleWeeks) out.push("Nothing in tank.");
+  for (const b of p.brands) {
+    if (b.pullOff && b.weeks !== null && b.weeks < 1) out.push(`${b.name} almost out.`);
+  }
+  if (p.dstock + p.wh > 0) {
+    const low = p.rows.filter((x) => x.rate > 0.2 && x.stock / x.rate < 1);
+    if (low.length && p.wh < p.demand) out.push(`Low now at ${low.map((x) => x.dist).join(", ")}.`);
+  }
+  return out;
 }
 
 type Para = { head: string; text: string; tone?: "warn" };
@@ -460,10 +505,14 @@ const SETS: { key: keyof Settings; label: string; sub?: string; text?: boolean }
 export default function BrewPlannerClient({ data }: { data: PlannerData }) {
   const [S, setS] = useState<Settings>(DEFAULT_SETTINGS);
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const [allNumbers, setAllNumbers] = useState(false);
   useEffect(() => {
     try {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- read the saved view once after mount
+      if (localStorage.getItem(VIEW_STORE) === "1") setAllNumbers(true);
+    } catch {}
+    try {
       const saved = JSON.parse(localStorage.getItem(STORE) ?? "null");
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- read saved settings once after mount
       if (saved) setS({ ...DEFAULT_SETTINGS, ...saved, lead: { ...DEFAULT_SETTINGS.lead, ...(saved.lead ?? {}) } });
     } catch {}
   }, []);
@@ -483,41 +532,6 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
   const holds = P.filter((p) => p.rec.action !== "Brew");
   const today = new Date(`${data.today}T12:00:00`);
 
-  const flags = useMemo(() => {
-    const F: { tone: "bad" | "warn" | "info"; title: string; text: string }[] = [];
-    for (const p of P) {
-      for (const t of p.tanks) {
-        if (t.ready && (t.days ?? 0) > 30) {
-          const weeks = p.demand ? (t.out / p.demand) : null;
-          F.push({
-            tone: weeks !== null && weeks > 12 ? "bad" : "warn",
-            title: `${p.base.name}: ${r1(t.bbl)} bbl ready in ${t.tank}, ${t.days} days in tank`,
-            text: weeks === null ? "No sales showing for it." : `That's about ${Math.round(weeks)} weeks of sales.`,
-          });
-        }
-      }
-      if (p.demand > 0.5 && p.tanks.length === 0 && p.cover !== null && p.cover < S.targetWeeks + S.cycleWeeks) {
-        F.push({ tone: "warn", title: `${p.base.name}: nothing in tank`, text: `About ${r1(p.cover)} weeks left outside the tanks.` });
-      }
-      for (const b of p.brands) {
-        if (b.pullOff && b.weeks !== null && b.weeks < 1) {
-          F.push({ tone: "warn", title: `${b.name} almost out at distributors`, text: `About ${r1(b.stock)} bbl left at the measured distributors, under a week of sales. Pull it off the next ${p.base.name} that's ready.` });
-        }
-      }
-      if (p.dstock + p.wh > 0) {
-        const low = p.rows.filter((x) => x.rate > 0.2 && x.stock / x.rate < 1);
-        if (low.length && p.wh < p.demand) {
-          F.push({ tone: "warn", title: `${p.base.name}: low now at ${low.map((x) => x.dist).join(", ")}`, text: `Under a week each, and our warehouse has ${r1(p.wh)} bbl.` });
-        }
-      }
-    }
-    if (data.ignored.length) {
-      const bbl = data.ignored.reduce((a, x) => a + x.bbl, 0);
-      F.push({ tone: "info", title: "Coast Ekos rows left out", text: `${data.ignored.length} row(s), ${r1(bbl)} bbl (${data.ignored.slice(0, 2).map((x) => x.what).join("; ")}). Coast stays on estimates from our deliveries until its own data is set up.` });
-    }
-    F.push({ tone: "info", title: "Saccani counted as gone", text: "Saccani's past sales aren't counted. Mussetter's own LilyPad sales pick up converted accounts; the setting adds more if you expect it." });
-    return F;
-  }, [P, S, data.ignored]);
 
   const toggle = (k: string) =>
     setOpen((prev) => {
@@ -530,6 +544,9 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
   const th = "px-2.5 py-2.5 text-right text-[11px] font-semibold uppercase tracking-wide text-neutral-500 first:text-left whitespace-nowrap";
   const td = "px-2.5 py-3 text-right align-top tabular-nums whitespace-nowrap first:text-left";
   const sub = "block text-[11px] font-normal text-neutral-500";
+  // Simple view: left-aligned, wraps, roomier (2026-10-30).
+  const thS = "px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-neutral-500 whitespace-nowrap";
+  const tdS = "px-4 py-3.5 text-left align-top";
   // Column headers say their unit; hover for a one-line explanation.
   const COLS: { label: string; tip: string }[] = [
     { label: "Base beer", tip: "One brew. Brands made from the same beer are listed under it." },
@@ -541,6 +558,20 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
     { label: "Runs out", tip: "The week distributors + our warehouse would hit zero at today's selling rate, counting tanks as they get packaged." },
     { label: "This cycle", tip: "Brew (and how many barrels to brew) or Hold, with the main reason. Click the row for the full explanation." },
   ];
+  // Simple view (2026-10-30) — the default, for anyone who isn't used to the page.
+  const SIMPLE_COLS: { label: string; tip: string }[] = [
+    { label: "Beer", tip: "One brew. Brands made from the same beer are listed under it." },
+    { label: "How much is left", tip: "How many weeks the beer at distributors and in our warehouse will last at today's sales. Doesn't count beer still in a tank." },
+    { label: "Runs out", tip: "The week it would run out at today's sales, counting tanks as they get packaged." },
+    { label: "What to do", tip: "Brew (and how many barrels) or Hold, and why. Click the beer for all the numbers." },
+  ];
+  const cols = allNumbers ? COLS : SIMPLE_COLS;
+  const setView = (v: boolean) => {
+    setAllNumbers(v);
+    try {
+      localStorage.setItem(VIEW_STORE, v ? "1" : "0");
+    } catch {}
+  };
 
   return (
     <div className="flex flex-col gap-5">
@@ -587,10 +618,16 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
       <section className={CARD} aria-label="Base beers">
         <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
           <h2 className="text-base font-semibold">Base beers</h2>
-          <span className="flex items-center gap-1.5 text-xs text-neutral-500">
-            Click a beer to see why it&apos;s recommended
-            {whyNew.isNew && <NewBadge inline />}
-          </span>
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="flex items-center gap-1.5 text-xs text-neutral-500">
+              Click a beer to see {allNumbers ? "why it's recommended" : "all the numbers and why"}
+              {whyNew.isNew && <NewBadge inline />}
+            </span>
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-neutral-300">
+              <input id="bp-all-numbers" type="checkbox" checked={allNumbers} onChange={(e) => setView(e.target.checked)} className="accent-[#6ABC46]" />
+              Show all numbers
+            </label>
+          </div>
         </div>
         {/* Units key (2026-10-26) — clicking it clears its New! tag. */}
         <div
@@ -598,18 +635,24 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
           onClick={() => unitsNew.dismiss()}
         >
           {unitsNew.isNew && <NewBadge inline />}
+          {!allNumbers ? (
+            <span>
+              <b className="text-neutral-100">Amounts are in barrels (bbl).</b> 1 bbl = 2 half-barrel kegs, or about 10 cases of 16oz cans.
+            </span>
+          ) : (
           <span>
             <b className="text-neutral-100">All numbers are barrels (bbl) of beer.</b> 1 bbl = 31 gallons ≈ 2 half-barrel kegs (6 sixtels) ≈ 10 cases of
             16oz 4-packs ≈ 14 cases of 12oz 6-packs. The gray line under a number turns it into cases and kegs, using that beer&apos;s recent can / keg mix
             from LilyPad. Hover a column name for what it means.
           </span>
+          )}
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr>
-                {COLS.map((c) => (
-                  <th key={c.label} className={`${th} cursor-help`} title={c.tip}>{c.label}</th>
+                {cols.map((c) => (
+                  <th key={c.label} className={`${allNumbers ? th : thS} cursor-help`} title={c.tip}>{c.label}</th>
                 ))}
               </tr>
             </thead>
@@ -620,6 +663,14 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
                 const isOpen = open.has(p.base.key);
                 const mix = mixes[p.base.key];
                 const cv = (bbl: number) => conv(bbl, mix);
+                const notes = rowNotes(p, S);
+                const noteList =
+                  notes.length > 0 ? (
+                    <span className="mt-1 block max-w-[260px] text-[12px] leading-snug text-amber-300">{notes.join(" ")}</span>
+                  ) : null;
+                const brewPill = (
+                  <span className={`${p.rec.action === "Brew" ? PILL_BREW : PILL_HOLD} whitespace-nowrap`}>{p.rec.action === "Brew" ? `Brew ${p.rec.bbl} bbl` : "Hold"}</span>
+                );
                 return (
                   <Fragment key={p.base.key}>
                     <tr
@@ -638,42 +689,67 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
                         }
                       }}
                     >
-                      <td className={td}>
+                      <td className={allNumbers ? td : `${tdS} w-[30%]`}>
                         <span className="font-semibold">{p.base.name}</span>
-                        <span className="block max-w-[260px] whitespace-normal text-xs text-neutral-500">{p.base.brands.map((b) => b.name).join(" · ")}</span>
+                        {p.base.brands.length > 1 && <span className="block max-w-[260px] whitespace-normal text-xs text-neutral-500">{p.base.brands.map((b) => b.name).join(" · ")}</span>}
                       </td>
-                      <td className={td}>
-                        {r1(p.demand)} bbl
-                        {cv(p.demand) && <span className={sub}>{cv(p.demand)} a week</span>}
-                        {p.commitNow > 0 && <span className="block text-[11px] text-[#c9a6f2]">+{r1(p.commitNow)} bbl committed</span>}
-                        <PotBar p={p} />
-                      </td>
-                      <td className={td}>
-                        {r1(p.dstock)} bbl
-                        {cv(p.dstock) && <span className={sub}>{cv(p.dstock)}</span>}
-                      </td>
-                      <td className={td}>
-                        {r1(p.wh)} bbl
-                        {cv(p.wh) && <span className={sub}>{cv(p.wh)}</span>}
-                      </td>
-                      <td className={td}>
-                        {p.inTank ? `${r1(p.inTank)} bbl` : "–"}
-                        <span className={sub}>{[next ? `packaged ~${fmtDay(next.pkg)}` : null, ready ? "ready now" : null].filter(Boolean).join(" · ")}</span>
-                      </td>
-                      <td className={td}>
-                        <Cover w={p.cover} />
-                        {p.cover !== null && <span className={sub}>weeks</span>}
-                      </td>
-                      <td className={td}>{p.runout ? fmtDay(p.runout) : p.demand ? "10+ wks" : "–"}</td>
-                      <td className={`${td} whitespace-normal`}>
-                        <span className={`${p.rec.action === "Brew" ? PILL_BREW : PILL_HOLD} whitespace-nowrap`}>{p.rec.action === "Brew" ? `Brew ${p.rec.bbl} bbl` : "Hold"}</span>
-                        {mangoLine(p) && <span className="mt-1 block text-[11px] text-neutral-500">{mangoLine(p)}</span>}
-                        <span className="ml-auto mt-1 block max-w-[220px] text-[11px] leading-snug text-neutral-400">{shortReason(p, S)}</span>
-                      </td>
+                      {!allNumbers ? (
+                        <>
+                          <td className={`${tdS} w-[18%] tabular-nums`}>
+                            {p.cover === null ? (
+                              <span className="text-neutral-500">No sales</span>
+                            ) : (
+                              <>
+                                <Cover w={p.cover} /> <span className="ml-1 text-[13px]">weeks</span>
+                                <span className="mt-1 block text-[12px] text-neutral-400">{coverWord(p.cover)}</span>
+                              </>
+                            )}
+                          </td>
+                          <td className={`${tdS} w-[17%]`}>{p.runout ? fmtDay(p.runout) : p.demand ? "Not in the next 10 weeks" : "–"}</td>
+                          <td className={tdS}>
+                            {brewPill}
+                            {mangoLine(p) && <span className="mt-1 block text-[12px] text-neutral-400">{mangoLine(p)}</span>}
+                            <span className="mt-1.5 block text-[13px] leading-snug text-neutral-300">{simpleReason(p, S)}</span>
+                            {noteList}
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td className={td}>
+                            {r1(p.demand)} bbl
+                            {cv(p.demand) && <span className={sub}>{cv(p.demand)} a week</span>}
+                            {p.commitNow > 0 && <span className="block text-[11px] text-[#c9a6f2]">+{r1(p.commitNow)} bbl committed</span>}
+                            <PotBar p={p} />
+                          </td>
+                          <td className={td}>
+                            {r1(p.dstock)} bbl
+                            {cv(p.dstock) && <span className={sub}>{cv(p.dstock)}</span>}
+                          </td>
+                          <td className={td}>
+                            {r1(p.wh)} bbl
+                            {cv(p.wh) && <span className={sub}>{cv(p.wh)}</span>}
+                          </td>
+                          <td className={td}>
+                            {p.inTank ? `${r1(p.inTank)} bbl` : "–"}
+                            <span className={sub}>{[next ? `packaged ~${fmtDay(next.pkg)}` : null, ready ? "ready now" : null].filter(Boolean).join(" · ")}</span>
+                          </td>
+                          <td className={td}>
+                            <Cover w={p.cover} />
+                            {p.cover !== null && <span className={sub}>weeks</span>}
+                          </td>
+                          <td className={td}>{p.runout ? fmtDay(p.runout) : p.demand ? "10+ wks" : "–"}</td>
+                          <td className={`${td} whitespace-normal`}>
+                            {brewPill}
+                            {mangoLine(p) && <span className="mt-1 block text-[11px] text-neutral-500">{mangoLine(p)}</span>}
+                            <span className="ml-auto mt-1 block max-w-[220px] text-[11px] leading-snug text-neutral-400">{shortReason(p, S)}</span>
+                            {noteList}
+                          </td>
+                        </>
+                      )}
                     </tr>
                     {isOpen && (
                       <tr className="bg-neutral-900/40">
-                        <td colSpan={8} className="p-4"><Detail p={p} S={S} mix={mix} /></td>
+                        <td colSpan={cols.length} className="p-4"><Detail p={p} S={S} mix={mix} /></td>
                       </tr>
                     )}
                   </Fragment>
@@ -686,21 +762,7 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
 
       <Commitments data={data} />
 
-      <div className="grid items-start gap-4 lg:grid-cols-[1.5fr_1fr]">
-        <section className={CARD} aria-label="Needs a look">
-          <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
-            <h2 className="text-base font-semibold">Needs a look</h2>
-            <span className="text-xs text-neutral-500">{flags.length} items</span>
-          </div>
-          <div className="flex max-h-[460px] flex-col gap-3 overflow-y-auto p-4">
-            {flags.map((f, i) => (
-              <div key={i} className={`border-l-[3px] pl-3 ${f.tone === "bad" ? "border-red-400" : f.tone === "warn" ? "border-amber-400" : "border-neutral-700"}`}>
-                <div className="text-[13px] font-semibold">{f.title}</div>
-                <p className="mt-0.5 text-[12.5px] text-neutral-400">{f.text}</p>
-              </div>
-            ))}
-          </div>
-        </section>
+      <div>
         <section className={CARD} aria-label="Settings">
           <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
             <h2 className="text-base font-semibold">Settings</h2>
@@ -717,8 +779,8 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
               Reset
             </button>
           </div>
-          <div className="flex max-h-[460px] flex-col gap-2.5 overflow-y-auto p-4">
-            <p className="text-[11px] text-neutral-500">Saved in this browser only.</p>
+          <p className="px-4 pt-3 text-[11px] text-neutral-500">Saved in this browser only.</p>
+          <div className="grid gap-x-8 gap-y-2.5 p-4 md:grid-cols-2 xl:grid-cols-3">
             {SETS.map((s) => (
               <label key={s.key} className="grid grid-cols-[1fr_88px] items-center gap-2 text-[12.5px]">
                 <span>{s.label}{s.sub && <span className="block text-[11px] text-neutral-500">{s.sub}</span>}</span>

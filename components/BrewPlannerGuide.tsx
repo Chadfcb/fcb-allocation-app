@@ -77,17 +77,30 @@ function sections(P: Plan[], S: Settings, data: PlannerData): Section[] {
               fermenters are empty right now.
             </li>
             <li>
-              <K>Base beers table</K>: one row per beer we brew. Selling per week, beer at distributors, in our warehouse, in our tanks,{" "}
-              <K>weeks of beer left</K> (<span className="text-red-300">red</span> = under 2 weeks, <span className="text-amber-300">amber</span> = under 4,{" "}
-              <span className="text-[#8fd46b]">green</span> = 4 or more), the week it would <K>run out</K>, and Brew or Hold with a one-line reason.
-              Hover a column name for what it means.
+              <K>Base beers table</K>: one row per beer we brew, with three things:
+              <Bullets>
+                <li>
+                  <K>How much is left</K>: how many weeks the beer at distributors and in our warehouse will last, with a word:{" "}
+                  <span className="text-red-300">Low</span> (under 2 weeks), <span className="text-amber-300">Getting low</span> (under 4) or{" "}
+                  <span className="text-[#8fd46b]">Plenty</span>.
+                </li>
+                <li><K>Runs out</K>: the week it would run out at today&apos;s sales.</li>
+                <li><K>What to do</K>: Brew (and how many barrels) or Hold, and why in one line.</li>
+              </Bullets>
             </li>
             <li>
-              <K>Click any row</K> to open the full explanation for that beer: why it says Brew or Hold, a 10-week chart, how it splits between
-              brands, each distributor, and what&apos;s in the tanks.
+              <span className="text-amber-300">Yellow notes</span> under What to do point out something worth checking, like beer sitting ready
+              in a tank, a brand almost out, or a distributor running low.
+            </li>
+            <li>
+              <K>Click any beer</K> to open all its numbers: why it says Brew or Hold, a 10-week chart, how it splits between brands, each
+              distributor, and what&apos;s in the tanks.
+            </li>
+            <li>
+              <K>Show all numbers</K> (top right of the table) adds the full columns back: selling per week, at distributors, our warehouse and
+              in tank. Your choice is remembered in your browser.
             </li>
             <li><K>Commitments</K>: accounts that promised to buy a set amount. These raise that beer&apos;s demand (more below).</li>
-            <li><K>Needs a look</K>: things worth checking by hand, like beer sitting in a tank a long time, or a beer that&apos;s almost out somewhere.</li>
             <li><K>Settings</K>: the rules the planner uses. Changing one updates the whole page right away.</li>
           </Bullets>
         </>
