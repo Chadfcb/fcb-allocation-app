@@ -164,7 +164,10 @@ export default function EmailStudioClient({
       {tab === "emails" ? (
         <EmailsGrid designs={designs} onDuplicate={(d) => void newEmail(d)} onArchive={(d) => void archive(d)} />
       ) : tab === "library" ? (
-        <CreativeLibrary supabase={supabase} assets={assets} setAssets={setAssets} />
+        <>
+          <CanvaHowTo />
+          <CreativeLibrary supabase={supabase} assets={assets} setAssets={setAssets} />
+        </>
       ) : tab === "audience" ? (
         <EmailAudienceTab lists={lists} suppressionCount={suppressionCount} accountEmailCount={accountEmailCount} />
       ) : (
@@ -434,6 +437,35 @@ function CreativeLibrary({
             );
           })}
         </div>
+      )}
+    </div>
+  );
+}
+
+// Canva → Creative Library how-to (added 2026-10-30, per Chad: "we need to do
+// ernie and canva now"). A direct Canva connection needs Canva Enterprise
+// (company-only apps) or Canva's public app review, so for now designs come
+// in as exported files. Collapsed by default.
+function CanvaHowTo() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mb-4 rounded-2xl border border-neutral-800 bg-neutral-900/40 px-4 py-3 text-sm text-neutral-300">
+      <button type="button" onClick={() => setOpen((v) => !v)} className="flex w-full items-center justify-between font-semibold text-neutral-100">
+        <span>Bringing in Canva designs</span>
+        <span className="text-xs text-neutral-500">{open ? "Hide" : "Show how"}</span>
+      </button>
+      {open && (
+        <ol className="mt-2 list-decimal space-y-1 pl-5">
+          <li>In Canva, open the design and click <strong>Share</strong> → <strong>Download</strong>.</li>
+          <li>
+            Pick the file type: <strong>PNG</strong> or <strong>JPG</strong> for pictures, <strong>GIF</strong> for a moving picture that
+            plays inside the email. (MP4 videos can&apos;t play inside most email apps — use GIF for motion.)
+          </li>
+          <li>For email, set the width to about <strong>1200 px</strong> (sharp on phones, still loads fast). Keep GIFs under ~5 MB.</li>
+          <li>Click <strong>Download</strong>, then drag the file onto this Creative Library (or click Upload).</li>
+          <li>In the email designer, double-click an image (or drag in an Image block) and pick it from the library.</li>
+          <li>Made a change in Canva? Download it again and upload it — the new version shows up next to the old one.</li>
+        </ol>
       )}
     </div>
   );

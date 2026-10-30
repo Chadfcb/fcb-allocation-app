@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import { isWebImage, uploadCreativeAsset, type CreativeAsset } from "@/lib/creativeAssets";
 import { buildEmailDocument } from "@/lib/email/studio";
 import EmailSendDialog from "@/components/EmailSendDialog";
+import ErnieStudioPanel from "@/components/ErnieStudioPanel";
 
 // Email Studio's drag-and-drop email designer (added 2026-10-29, per Chad —
 // Phase 1 of claude/email-designer-plan.md). Built on GrapesJS + its
@@ -79,6 +80,9 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState(design.updated_at);
   const [sendOpen, setSendOpen] = useState(false);
+  // Ernie panel (added 2026-10-30) + the Creative Library as it grows this session.
+  const [ernieOpen, setErnieOpen] = useState(false);
+  const [library, setLibrary] = useState<CreativeAsset[]>(assets);
 
   // Start the designer once.
   useEffect(() => {
@@ -150,6 +154,59 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [dirty]);
+
+  // Ernie results → Creative Library list + the designer's image picker.
+  const addToLibrary = useCallback((a: CreativeAsset) => {
+    setLibrary((list) => (list.some((x) => x.id === a.id) ? list : [a, ...list]));
+    if (isWebImage(a)) editorRef.current?.AssetManager.add(toAsset(a));
+  }, []);
+
+  // Puts a block into the email: right after whatever is selected in the
+  // canvas, or at the end of the email if nothing is selected. If an image is
+  // selected and we're inserting a plain image, it swaps that image instead.
+  const insertBlock = useCallback((html: string, swapSrc?: string) => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const sel = editor.getSelected();
+    if (swapSrc && sel && sel.get("type") === "image") {
+      sel.set("src", swapSrc);
+    } else {
+      const parent = sel?.parent();
+      if (sel && parent) parent.append(html, { at: sel.index() + 1 });
+      else editor.getWrapper()?.append(html);
+    }
+    setDirty(true);
+    setMsg({ text: "Added to the email — drag it where you want it." });
+  }, []);
+
+  const insertImage = useCallback(
+    (a: CreativeAsset) => {
+      insertBlock(
+        `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" style="padding:10px 0;">` +
+          `<img src="${a.public_url}" alt="" width="600" style="display:block;width:100%;max-width:600px;height:auto;border:0;" />` +
+          `</td></tr></table>`,
+        a.public_url,
+      );
+    },
+    [insertBlock],
+  );
+
+  // Video can't play inside most email apps: the still picture links to the
+  // video, plus a "Watch the video" button.
+  const insertVideo = useCallback(
+    (video: CreativeAsset, poster: CreativeAsset | null) => {
+      const pic = poster
+        ? `<a href="${video.public_url}" target="_blank"><img src="${poster.public_url}" alt="Watch the video" width="600" style="display:block;width:100%;max-width:600px;height:auto;border:0;" /></a>`
+        : "";
+      insertBlock(
+        `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" style="padding:10px 0;">` +
+          pic +
+          `<a href="${video.public_url}" target="_blank" style="display:inline-block;margin-top:10px;padding:10px 22px;background-color:#6ABC46;color:#000000;font-family:Arial,Helvetica,sans-serif;font-size:15px;font-weight:bold;text-decoration:none;border-radius:999px;">&#9654; Watch the video</a>` +
+          `</td></tr></table>`,
+      );
+    },
+    [insertBlock],
+  );
 
   const inlinedHtml = useCallback((): string => {
     const editor = editorRef.current;
@@ -279,6 +336,9 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
           <option value="ready">Ready</option>
         </select>
         <div className="ml-auto flex flex-wrap items-center gap-2">
+          <button type="button" className={btn} disabled={!ready} onClick={() => setErnieOpen(true)}>
+            ✨ Ernie
+          </button>
           <button type="button" className={btn} disabled={!ready} onClick={openPreview}>
             Preview email
           </button>
@@ -353,6 +413,16 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
         {!ready && <p className="p-6 text-sm text-neutral-500">Loading the designer…</p>}
         <div ref={containerRef} className="h-full" />
       </div>
+
+      {ernieOpen && (
+        <ErnieStudioPanel
+          assets={library}
+          onClose={() => setErnieOpen(false)}
+          onNewAsset={addToLibrary}
+          onInsertImage={insertImage}
+          onInsertVideo={insertVideo}
+        />
+      )}
 
       {sendOpen && (
         <EmailSendDialog designId={design.id} subject={subject} onClose={() => setSendOpen(false)} beforeSend={save} />
