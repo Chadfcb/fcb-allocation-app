@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { Editor } from "grapesjs";
 import { createClient } from "@/lib/supabase/client";
-import { isWebImage, uploadCreativeAsset, type CreativeAsset } from "@/lib/creativeAssets";
+import { isWebImage, uploadCreativeFiles, type CreativeAsset } from "@/lib/creativeAssets";
 import { buildEmailDocument } from "@/lib/email/studio";
 import EmailSendDialog from "@/components/EmailSendDialog";
 import ErnieStudioPanel from "@/components/ErnieStudioPanel";
@@ -113,8 +113,13 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
             const files = Array.from(dt?.files ?? target?.files ?? []);
             for (const f of files) {
               try {
-                const row = await uploadCreativeAsset(supabase, f);
-                editor?.AssetManager.add(toAsset(row));
+                // Photoshop/Illustrator files also get an email-ready PNG copy.
+                const { rows, note } = await uploadCreativeFiles(supabase, f);
+                for (const row of rows) {
+                  setLibrary((list) => [row, ...list]);
+                  if (isWebImage(row)) editor?.AssetManager.add(toAsset(row));
+                }
+                if (note) setMsg({ text: note, bad: true });
               } catch (e) {
                 setMsg({ text: e instanceof Error ? e.message : String(e), bad: true });
               }

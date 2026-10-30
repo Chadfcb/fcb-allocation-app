@@ -9,7 +9,8 @@ import {
   formatBytes,
   isWebImage,
   kindOf,
-  uploadCreativeAsset,
+  uploadCreativeFiles,
+  makeEmailCopy,
   type CreativeAsset,
 } from "@/lib/creativeAssets";
 import EmailAudienceTab, { type ListRow } from "@/components/EmailAudienceTab";
@@ -261,6 +262,21 @@ function CreativeLibrary({
   const [dragOver, setDragOver] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [converting, setConverting] = useState<string | null>(null);
+
+  // Photoshop/Illustrator files uploaded before 2026-10-30 (or re-tries).
+  async function emailCopy(a: AssetRow) {
+    setConverting(a.id);
+    setErrors([]);
+    try {
+      const row = await makeEmailCopy(supabase, null, a);
+      setAssets((prev) => [row, ...prev]);
+    } catch (e) {
+      setErrors([`${a.name}: ${e instanceof Error ? e.message : String(e)}`]);
+    } finally {
+      setConverting(null);
+    }
+  }
 
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -279,8 +295,9 @@ function CreativeLibrary({
     for (let i = 0; i < list.length; i++) {
       setUploading(`Uploading ${i + 1} of ${list.length}: ${list[i].name}`);
       try {
-        const row = await uploadCreativeAsset(supabase, list[i]);
-        setAssets((prev) => [row, ...prev]);
+        const { rows, note } = await uploadCreativeFiles(supabase, list[i]);
+        setAssets((prev) => [...rows.slice().reverse(), ...prev]);
+        if (note) errs.push(note);
       } catch (e) {
         errs.push(e instanceof Error ? e.message : String(e));
       }
@@ -343,7 +360,8 @@ function CreativeLibrary({
       >
         <p className="font-semibold text-neutral-200">Drop files here, or click to choose</p>
         <p className="mt-1 text-xs">
-          Images, GIFs, Photoshop (.psd), videos, PDFs — up to 50 MB each. Images here can be used in any email.
+          Images, GIFs, Photoshop (.psd), Illustrator (.ai), videos, PDFs — up to 50 MB each. Images here can be used in any
+          email. Photoshop and Illustrator files get an email-ready PNG copy made automatically.
         </p>
         <input
           ref={inputRef}
@@ -367,7 +385,7 @@ function CreativeLibrary({
         {chip("all", "All")}
         {chip("image", "Images")}
         {chip("gif", "GIFs")}
-        {chip("psd", "Photoshop")}
+        {chip("psd", "Photoshop / Illustrator")}
         {chip("video", "Videos")}
         {chip("other", "Other")}
         <input
@@ -396,7 +414,7 @@ function CreativeLibrary({
                     <video src={a.public_url} className="max-h-full max-w-full" muted preload="metadata" />
                   ) : (
                     <span className="rounded-lg bg-neutral-800 px-3 py-2 text-sm font-bold uppercase text-neutral-300">
-                      {k === "psd" ? "PSD" : k === "pdf" ? "PDF" : (a.name.split(".").pop() ?? "file").slice(0, 4)}
+                      {k === "psd" ? (a.name.toLowerCase().endsWith(".ai") ? "AI" : "PSD") : k === "pdf" ? "PDF" : (a.name.split(".").pop() ?? "file").slice(0, 4)}
                     </span>
                   )}
                 </div>
@@ -416,6 +434,16 @@ function CreativeLibrary({
                     <a href={a.public_url} download={a.name} target="_blank" rel="noreferrer" className="text-neutral-300 underline">
                       Download
                     </a>
+                    {k === "psd" && (
+                      <button
+                        type="button"
+                        disabled={converting === a.id}
+                        onClick={() => void emailCopy(a)}
+                        className="text-brand underline disabled:opacity-60"
+                      >
+                        {converting === a.id ? "Making PNG…" : "Make email copy"}
+                      </button>
+                    )}
                     {confirmId === a.id ? (
                       <span className="text-red-300">
                         Delete?{" "}

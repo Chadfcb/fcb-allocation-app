@@ -33,7 +33,8 @@ export function kindOf(a: { mime_type: string | null; name: string }): "image" |
   const n = a.name.toLowerCase();
   if (a.mime_type === "image/gif" || n.endsWith(".gif")) return "gif";
   if (isWebImage(a)) return "image";
-  if (n.endsWith(".psd") || a.mime_type === "image/vnd.adobe.photoshop") return "psd";
+  // "psd" = design files: Photoshop and (since 2026-10-30) Illustrator.
+  if (n.endsWith(".psd") || n.endsWith(".ai") || a.mime_type === "image/vnd.adobe.photoshop") return "psd";
   if (a.mime_type?.startsWith("video/") || /\.(mp4|mov|webm)$/.test(n)) return "video";
   if (a.mime_type === "application/pdf" || n.endsWith(".pdf")) return "pdf";
   return "file";
@@ -70,14 +71,21 @@ async function imageSize(file: File): Promise<{ width: number; height: number } 
   });
 }
 
+function mimeFor(file: File): string | null {
+  const n = file.name.toLowerCase();
+  if (n.endsWith(".psd")) return "image/vnd.adobe.photoshop";
+  if (n.endsWith(".ai")) return "application/illustrator";
+  return file.type || null;
+}
+
 /** Uploads one file to the Creative Library and returns its new row. */
-export async function uploadCreativeAsset(supabase: SupabaseClient, file: File): Promise<CreativeAsset> {
+export async function uploadCreativeAsset(supabase: SupabaseClient, file: File, source = "upload"): Promise<CreativeAsset> {
   if (file.size > MAX_ASSET_BYTES) throw new Error(`${file.name} is over 50 MB.`);
   const now = new Date();
   const path = `${now.getFullYear()}/${String(now.getMonth() + 1).padStart(2, "0")}/${crypto.randomUUID()}-${safeName(file.name)}`;
 
   const { error: upErr } = await supabase.storage.from(CREATIVE_BUCKET).upload(path, file, {
-    contentType: file.type || undefined,
+    contentType: mimeFor(file) || undefined,
     cacheControl: "31536000",
     upsert: false,
   });
@@ -95,11 +103,11 @@ export async function uploadCreativeAsset(supabase: SupabaseClient, file: File):
       name: file.name,
       storage_path: path,
       public_url: publicUrl,
-      mime_type: file.type || (file.name.toLowerCase().endsWith(".psd") ? "image/vnd.adobe.photoshop" : null),
+      mime_type: mimeFor(file),
       size_bytes: file.size,
       width: size?.width ?? null,
       height: size?.height ?? null,
-      source: "upload",
+      source,
       created_by: user?.id ?? null,
     })
     .select("*")
@@ -109,4 +117,38 @@ export async function uploadCreativeAsset(supabase: SupabaseClient, file: File):
     throw new Error(`${file.name}: ${error?.message ?? "couldn't save"}`);
   }
   return data as CreativeAsset;
+}
+
+/** Uploads a file; for a Photoshop (.psd) or Illustrator (.ai) file it also
+ *  makes and uploads an email-ready PNG copy (lib/designFileConvert.ts).
+ *  rows = everything added (original first). note = why no PNG was made. */
+export async function uploadCreativeFiles(
+  supabase: SupabaseClient,
+  file: File,
+): Promise<{ rows: CreativeAsset[]; note: string | null }> {
+  const original = await uploadCreativeAsset(supabase, file);
+  const { designKind } = await import("@/lib/designFileConvert");
+  if (!designKind(file.name, original.mime_type)) return { rows: [original], note: null };
+  try {
+    const png = await makeEmailCopy(supabase, file, original);
+    return { rows: [original, png], note: null };
+  } catch (e) {
+    return { rows: [original], note: `${file.name}: saved, but no email copy — ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+/** Makes the email-ready PNG for a Photoshop/Illustrator file already in the
+ *  library (pass the file itself if you have it; otherwise it's downloaded). */
+export async function makeEmailCopy(supabase: SupabaseClient, file: Blob | null, original: CreativeAsset): Promise<CreativeAsset> {
+  const { designFileToPng, designKind } = await import("@/lib/designFileConvert");
+  const kind = designKind(original.name, original.mime_type);
+  if (!kind) throw new Error("Not a Photoshop or Illustrator file.");
+  let data = file;
+  if (!data) {
+    const res = await fetch(original.public_url);
+    if (!res.ok) throw new Error("Couldn't download the original.");
+    data = await res.blob();
+  }
+  const png = await designFileToPng(data, original.name, original.mime_type);
+  return uploadCreativeAsset(supabase, png, kind);
 }
