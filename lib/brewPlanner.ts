@@ -131,8 +131,10 @@ export function brandOfProduct(productName: string): { base: string; brand: stri
   return null;
 }
 
+// Ekos's product wins over the batch title (2026-10-30: CID-1 is product "Captain HAZY"
+// — Chad: "cid1 is mango bomb" — but batch "#1305 Big Daddy.1"; title-first counted it as Big Daddy).
 export function baseOfTank(batchTitle: string | null, productName: string | null): string | null {
-  for (const text of [batchTitle ?? "", productName ?? ""]) {
+  for (const text of [productName ?? "", batchTitle ?? ""]) {
     if (!text) continue;
     const hit = BASES.find((b) => b.tank.test(text));
     if (hit) return hit.key;
@@ -168,6 +170,12 @@ export interface PlannerData {
   ignored: { what: string; bbl: number }[]; // rows left out on purpose (Coast's Ekos rows …)
   fresh: { label: string; value: string; old: boolean }[];
   commitments: Commitment[];
+  // Par levels (Chad, 2026-10-30: "Brew planner HAS to look at par levels, period").
+  // pars[base] = one row per distributor × product with a par set; bbl.
+  pars: Record<string, { dist: string; product: string; par: number; onHand: number; gap: number }[]>;
+  // onOrder[base][distributor] = bbl on this week's Inventory & Allocation orders (active distributors).
+  onOrder: Record<string, Record<string, number>>;
+  ordersWeek: string | null;
   products: { id: string; name: string; base: string; brand: string }[]; // for the Add commitment form
 }
 
@@ -217,7 +225,7 @@ export const DEFAULT_SETTINGS: Settings = {
   safetyWeeks: 3,
   maxDays: 60,
   yieldPct: 95,
-  sizes: "7, 15, 30, 60",
+  sizes: "15, 30, 45, 60", // Chad, 2026-10-30: "15 30 45 and 60 bbl batch sizes"
   minBrew: 5,
   recentWeight: 2,
   saccaniPct: 0,
@@ -299,6 +307,18 @@ export interface Rec {
   required?: number; // bbl needed to cover the cycle + target weeks
   nextLand?: number; // bbl left when a batch brewed one cycle later would be ready
   rateNext?: number; // bbl / week selling then (incl. commitments)
+  basis?: "par" | "sales"; // which need decided the batch size
+  salesNeed?: number; // bbl to brew (before loss) for sales cover alone
+}
+// Par levels for one base beer (same math as the "To Brew" sheet Chad + Mark use).
+export interface ParInfo {
+  hasPars: boolean;
+  gap: number; // bbl short of par at distributors (per product, 0 floor)
+  onOrder: number; // bbl on this week's orders
+  short: number; // still short after orders (per distributor, 0 floor)
+  tankLeft: number; // finished bbl left in tank after this week's orders
+  need: number; // finished bbl to brew to reach par = short − tankLeft (0 floor)
+  byDist: { dist: string; gap: number; onOrder: number; short: number }[];
 }
 export interface Plan {
   base: BaseDef;
@@ -319,6 +339,7 @@ export interface Plan {
   commitments: Commitment[]; // this base's commitments
   commitNow: number; // bbl / week of commitments active at the landing date
   recWithout: Rec | null; // the call without commitments (null when there are none)
+  par: ParInfo;
 }
 
 export const r1 = (x: number) => (Math.round(x * 10) / 10).toFixed(1);
@@ -337,29 +358,37 @@ function commitBbl(list: Commitment[], from: Date, to: Date): number {
 const commitAt = (list: Commitment[], day: Date) =>
   list.filter((c) => d(c.start_date) <= day && (!c.end_date || d(c.end_date) >= day)).reduce((a, c) => a + c.bblPerWeek, 0);
 
-function decide(S: Settings, sizes: number[], y: number, demand: number, list: Commitment[], atLand: number, land: Date): Rec {
+// parNeed = finished bbl needed to bring distributors up to par (ParInfo.need). The batch
+// is sized for whichever is bigger: par or sales cover (Chad, 2026-10-30).
+function decide(S: Settings, sizes: number[], y: number, demand: number, list: Commitment[], atLand: number, land: Date, parNeed = 0): Rec {
   const cycleEnd = addDays(land, S.cycleWeeks * 7);
   const horizonEnd = addDays(land, (S.cycleWeeks + S.targetWeeks) * 7);
   const required = demand * (S.cycleWeeks + S.targetWeeks) + commitBbl(list, land, horizonEnd);
-  const need = (required - Math.max(atLand, 0)) / y;
+  const salesNeed = (required - Math.max(atLand, 0)) / y;
   const nextLand = atLand - demand * S.cycleWeeks - commitBbl(list, land, cycleEnd);
   const rateNext = demand + commitAt(list, cycleEnd);
-  if (rateNext <= 0 || nextLand >= rateNext * S.safetyWeeks || need < S.minBrew) {
+  const parTank = parNeed / y;
+  const salesBrew = !(rateNext <= 0 || nextLand >= rateNext * S.safetyWeeks || salesNeed < S.minBrew);
+  const parBrew = parTank >= S.minBrew;
+  const need = Math.max(salesBrew ? salesNeed : 0, parTank);
+  const basis: "par" | "sales" = parBrew && parTank >= (salesBrew ? salesNeed : 0) ? "par" : "sales";
+  if (!salesBrew && !parBrew) {
     let why: string;
     if (rateNext <= 0) why = "No sales showing.";
     else if (nextLand >= rateNext * S.safetyWeeks)
       why = `If you wait a cycle, there's still ${r1(nextLand)} bbl (${r1(nextLand / rateNext)} weeks) when that batch would be ready.`;
-    else why = `Short by only ${r1(Math.max(need, 0))} bbl, under the ${S.minBrew} bbl minimum.`;
-    return { action: "Hold", bbl: 0, why, need, required, nextLand, rateNext };
+    else why = `Short by only ${r1(Math.max(salesNeed, 0))} bbl, under the ${S.minBrew} bbl minimum.`;
+    return { action: "Hold", bbl: 0, why, need: salesNeed, required, nextLand, rateNext, salesNeed, basis: "sales" };
   }
-  const rateLand = demand + commitAt(list, land);
+  const rateLand = Math.max(demand + commitAt(list, land), 0.0001);
   let size = sizes.find((s) => s >= need) ?? sizes[sizes.length - 1];
   let sell = ((Math.max(atLand, 0) + size * y) / rateLand) * 7;
   let warn: string | null = null;
   if (sell > S.maxDays) {
     const smaller = sizes.filter((s) => s < size);
     const down = smaller[smaller.length - 1];
-    if (down && ((Math.max(atLand, 0) + down * y) / rateLand) * 7 >= S.cycleWeeks * 7) {
+    // Never size down below what par needs — just warn (Chad, 2026-10-30).
+    if (down && down * y >= parNeed && ((Math.max(atLand, 0) + down * y) / rateLand) * 7 >= S.cycleWeeks * 7) {
       warn = `${size} bbl would take ${Math.round(sell)} days to sell, so it went down to ${down} bbl.`;
       size = down;
       sell = ((Math.max(atLand, 0) + size * y) / rateLand) * 7;
@@ -374,7 +403,9 @@ function decide(S: Settings, sizes: number[], y: number, demand: number, list: C
     required,
     nextLand,
     rateNext,
-    why: `Brewed today it's ready about ${fmtDay(land)}. By then about ${r1(Math.max(atLand, 0))} bbl is left outside the tanks. You need ${r1(
+    basis,
+    salesNeed,
+    why: basis === "par" ? `Distributors are ${r1(parNeed)} bbl short of par after this week's orders and the beer left in tank.` : `Brewed today it's ready about ${fmtDay(land)}. By then about ${r1(Math.max(atLand, 0))} bbl is left outside the tanks. You need ${r1(
       required,
     )} bbl to cover ${S.cycleWeeks} weeks to the next batch plus ${S.targetWeeks} weeks of stock: ${r1(need)} bbl to brew before packaging loss.`,
   };
@@ -458,12 +489,34 @@ export function plan(D: PlannerData, S: Settings, base: BaseDef): Plan {
     if (stock < 0 && !runout) runout = day;
   }
 
+  // Par levels → finished bbl still needed after this week's orders and the beer in tank.
+  const parRows = D.pars?.[base.key] ?? [];
+  const oo = D.onOrder?.[base.key] ?? {};
+  const byDistMap = new Map<string, { dist: string; gap: number; onOrder: number; short: number }>();
+  for (const r of parRows) {
+    const x = byDistMap.get(r.dist) ?? { dist: r.dist, gap: 0, onOrder: 0, short: 0 };
+    x.gap += r.gap;
+    byDistMap.set(r.dist, x);
+  }
+  for (const [dist, v] of Object.entries(oo)) {
+    const x = byDistMap.get(dist) ?? { dist, gap: 0, onOrder: 0, short: 0 };
+    x.onOrder += v;
+    byDistMap.set(dist, x);
+  }
+  for (const x of byDistMap.values()) x.short = Math.max(x.gap - x.onOrder, 0);
+  const byDist = [...byDistMap.values()].filter((x) => x.gap > 0.05 || x.onOrder > 0.05).sort((a, b) => b.short - a.short);
+  const parGap = byDist.reduce((a, x) => a + x.gap, 0);
+  const parOnOrder = byDist.reduce((a, x) => a + x.onOrder, 0);
+  const parShort = byDist.reduce((a, x) => a + x.short, 0);
+  const tankLeft = Math.max(tanks.reduce((s2, t) => s2 + t.out, 0) - parOnOrder, 0);
+  const par: ParInfo = { hasPars: parRows.length > 0, gap: parGap, onOrder: parOnOrder, short: parShort, tankLeft, need: Math.max(parShort - tankLeft, 0), byDist };
+
   const land = addDays(TODAY, lead);
   const arriving = tanks.filter((t) => t.pkg <= land).reduce((s, t) => s + t.out, 0);
   const atLandNo = dstock + wh + arriving - (demand * lead) / 7;
   const atLand = atLandNo - commitBbl(list, TODAY, land);
-  const rec = decide(S, sizes, y, demand, list, atLand, land);
-  const recWithout = list.length ? decide(S, sizes, y, demand, [], atLandNo, land) : null;
+  const rec = decide(S, sizes, y, demand, list, atLand, land, par.need);
+  const recWithout = list.length ? decide(S, sizes, y, demand, [], atLandNo, land, par.need) : null;
   const commitNow = commitAt(list, land);
   pots.commitments = commitNow;
 
@@ -514,5 +567,6 @@ export function plan(D: PlannerData, S: Settings, base: BaseDef): Plan {
     commitments: list,
     commitNow,
     recWithout,
+    par,
   };
 }

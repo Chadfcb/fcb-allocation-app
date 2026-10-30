@@ -48,7 +48,7 @@ async function gather(admin: Admin): Promise<PlannerData> {
 
   const [{ data: products }, { data: distributors }, { data: meta }, { data: tankRows }, { data: weeks }] = await Promise.all([
     admin.from("products").select("id, name, active"),
-    admin.from("distributors").select("id, name"),
+    admin.from("distributors").select("id, name, active"),
     admin.from("sales_data_meta").select("as_of, imported_at").order("imported_at", { ascending: false }).limit(1).maybeSingle(),
     admin.from("ekos_tanks").select("tank_name, volume_bbl, product_name, batch_title, start_date, stage, synced_at"),
     admin.from("weeks").select("id, label, week_start, uses_record").order("week_start", { ascending: false }).limit(6),
@@ -136,6 +136,56 @@ async function gather(admin: Admin): Promise<PlannerData> {
     (distStock[dist] ??= {})[br.brand] = (distStock[dist]?.[br.brand] ?? 0) + bbl;
     if (!distCountAt[dist] || at > (distCountAt[dist] as string)) distCountAt[dist] = at;
     if (!distSynced || at > distSynced) distSynced = at;
+  }
+
+  // --- Par levels (Chad, 2026-10-30: "Brew planner HAS to look at par levels, period").
+  // Gap per distributor × product = par − that distributor's newest Ekos count (0 floor),
+  // in bbl — the same math as the "To Brew" sheet (claude/to-brew-sheet-2026-10-30.md).
+  const newestOnHand = new Map<string, number>(); // `${dist}|${product}`
+  for (const r of inv) {
+    const dist = dName.get(r.distributor_id) ?? "";
+    if ((weekOrder.get(r.week_id) ?? 99) !== newestWeekFor.get(dist)) continue;
+    const k = `${dist}|${r.product_id}`;
+    newestOnHand.set(k, (newestOnHand.get(k) ?? 0) + (Number(r.on_hand_qty) || 0));
+  }
+  const { data: parRows, error: parErr } = await admin.from("distributor_par_levels").select("distributor_id, product_id, par_level").gt("par_level", 0);
+  if (parErr) throw new Error(`Couldn't read par levels for the Brew Planner: ${parErr.message}`);
+  const pars: PlannerData["pars"] = {};
+  const parSeen = new Map<string, { dist: string; product: string; par: number; onHand: number; gap: number; base: string }>();
+  for (const r of (parRows ?? []) as { distributor_id: string; product_id: string; par_level: number }[]) {
+    const br = brandOf(r.product_id);
+    if (!br) continue;
+    const dist = dName.get(r.distributor_id) ?? "";
+    const k = `${dist}|${r.product_id}`;
+    const x = parSeen.get(k) ?? { dist, product: prodName.get(r.product_id) ?? "?", par: 0, onHand: newestOnHand.get(k) ?? 0, gap: 0, base: br.base };
+    x.par += Number(r.par_level) || 0; // split distributor records ("Markstein Cans") add into one
+    parSeen.set(k, x);
+  }
+  for (const [k, x] of parSeen) {
+    const u = bblPerUnit(x.product);
+    x.gap = Math.max(x.par - x.onHand, 0) * u;
+    (pars[x.base] ??= []).push({ dist: x.dist, product: x.product, par: x.par * u, onHand: x.onHand * u, gap: x.gap });
+    void k;
+  }
+
+  // --- This week's orders on Inventory & Allocation (active distributors only — the
+  // old "Markstein Cans" / "Matagrano Cans" / "Valley Wide Cans" records are inactive,
+  // hidden on that page, and still hold copied-forward lines).
+  const activeDist = new Set((distributors ?? []).filter((x) => (x as { active?: boolean }).active !== false).map((x) => x.id as string));
+  const thisWeek = (weeks ?? [])[0] as { id: string; label: string } | undefined;
+  const onOrder: PlannerData["onOrder"] = {};
+  if (thisWeek) {
+    const wa = await readAll<{ distributor_id: string; product_id: string; quantity: number }>((f, t) =>
+      admin.from("allocations").select("distributor_id, product_id, quantity").eq("week_id", thisWeek.id).gt("quantity", 0).order("id").range(f, t),
+    );
+    for (const a of wa) {
+      if (!activeDist.has(a.distributor_id)) continue;
+      const br = brandOf(a.product_id);
+      if (!br) continue;
+      const dist = dName.get(a.distributor_id) ?? "";
+      const row = (onOrder[br.base] ??= {});
+      row[dist] = (row[dist] ?? 0) + (Number(a.quantity) || 0) * bpu(a.product_id);
+    }
   }
 
   // --- Delivered POs in the last 10 weeks → what each distributor was shipped
@@ -261,6 +311,9 @@ async function gather(admin: Admin): Promise<PlannerData> {
   return {
     today,
     commitments,
+    pars,
+    onOrder,
+    ordersWeek: thisWeek?.label ?? null,
     products: planProducts,
     lily: { months, partialFactor, ce, pots, accounts, kegCe, canCe },
     distStock,

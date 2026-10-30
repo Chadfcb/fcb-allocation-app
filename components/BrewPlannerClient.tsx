@@ -118,6 +118,7 @@ const wks = (bbl: number, rate: number) => (rate > 0 ? r1(Math.max(bbl, 0) / rat
 function shortReason(p: Plan, S: Settings): string {
   const r = p.rec;
   const rate = r.rateNext ?? p.demand;
+  if (r.action === "Brew" && r.basis === "par") return `Distributors are ${r1(p.par.need)} bbl short of par after this week's orders and the beer in tank.`;
   if (r.action === "Brew") {
     if ((r.nextLand ?? 0) <= 0) return `Waiting ${S.cycleWeeks} more weeks, distributors would run out before the next batch is ready.`;
     return `Waiting ${S.cycleWeeks} more weeks leaves only ${wks(r.nextLand ?? 0, rate)} weeks of beer when it's ready (needs ${S.safetyWeeks}).`;
@@ -131,6 +132,7 @@ function shortReason(p: Plan, S: Settings): string {
 function simpleReason(p: Plan, S: Settings): string {
   const r = p.rec;
   const rate = r.rateNext ?? p.demand;
+  if (r.action === "Brew" && r.basis === "par") return `Distributors are ${r1(p.par.need)} bbl short of par, even after this week's orders and the beer in tank.`;
   if (r.action === "Brew") {
     return (r.nextLand ?? 0) <= 0
       ? "If we wait, it runs out before a new batch is ready."
@@ -205,7 +207,22 @@ function explain(p: Plan, S: Settings, m: Mix): Para[] {
     out.push({ head: "What we have now", text });
   }
 
-  if (total <= 0) return out;
+  // 2b. Par levels (Chad, 2026-10-30: "Brew planner HAS to look at par levels, period").
+  {
+    const pr = p.par;
+    if (!pr.hasPars) {
+      out.push({ head: "Par levels", text: "No par levels are set for this beer at any distributor, so the call goes by sales only." });
+    } else {
+      const top = pr.byDist.filter((x) => x.gap > 0.05).slice(0, 4).map((x) => `${x.dist} ${r1(x.gap)}`).join(", ");
+      let text = `Distributors are ${r1(pr.gap)} bbl short of their par levels${top ? ` (${top})` : ""}.`;
+      text += pr.onOrder > 0.05 ? ` This week's orders on Inventory & Allocation cover ${r1(pr.onOrder)} bbl, leaving ${r1(pr.short)} bbl short.` : " Nothing is on order this week.";
+      text += p.tanks.length ? ` After those orders, about ${r1(pr.tankLeft)} bbl of finished beer is left in tank.` : " Nothing is in tank.";
+      text += pr.need > 0.05 ? ` So it still takes ${r1(pr.need)} bbl of finished beer to bring everyone up to par.` : " So par levels are covered.";
+      out.push({ head: "Par levels", text });
+    }
+  }
+
+  if (total <= 0 && !(r.action === "Brew" && r.basis === "par")) return out;
 
   // 3. When a new batch would be ready
   {
@@ -225,7 +242,21 @@ function explain(p: Plan, S: Settings, m: Mix): Para[] {
   // 4. The call
   const nextLand = r.nextLand ?? 0;
   const rate = r.rateNext ?? total;
-  if (r.action === "Brew") {
+  if (r.action === "Brew" && r.basis === "par") {
+    const sizes = String(S.sizes).split(/[ ,]+/).map(Number).filter((x) => x > 0).sort((a, b) => a - b);
+    const biggest = sizes[sizes.length - 1];
+    const need = r.need ?? 0;
+    let text = `Par levels decide this one. Bringing distributors up to par takes ${r1(p.par.need)} bbl of finished beer, or ${r1(need)} bbl in tank at ${S.yieldPct}% yield.`;
+    const sn = r.salesNeed ?? 0;
+    text += sn >= S.minBrew && nextLand < rate * S.safetyWeeks ? ` Store sales alone would call for about ${r1(sn)} bbl, less than par needs.` : " Store sales alone would say it can wait, but par levels need beer now.";
+    if (r.bbl === biggest && need > biggest) text += ` ${biggest} bbl is the largest batch size, so brew ${biggest} bbl.`;
+    else text += ` The next batch size up is ${r.bbl} bbl.`;
+    if (r.sell !== undefined && r.sell < 9999) text += ` At today's store sales, ${r.bbl} bbl lasts about ${Math.round(r.sell)} days after it's packaged.`;
+    out.push({ head: `Why brew ${r.bbl} bbl`, text });
+    const pull = p.brands.find((b) => b.pullOff);
+    if (pull && pull.fromBatch >= 0.05) out.push({ head: "How to split the batch", text: `Pull ~${r1(pull.fromBatch)} bbl off for ${pull.name} (its share of sales), ${pull.key === "LM" ? "add lime" : pull.key === "MB" ? "add mango" : "finish it"}, then can or keg it.` });
+    if (r.warn) out.push({ head: "Watch out", text: `${r.warn} Par levels may be set higher than stores are buying right now.`, tone: "warn" });
+  } else if (r.action === "Brew") {
     let text =
       nextLand > 0
         ? `If you waited one more cycle (${S.cycleWeeks} weeks), the next batch would be ready with only ${r1(nextLand)} bbl left, about ${wks(nextLand, rate)} weeks. That's under the ${S.safetyWeeks}-week safety line, so brew now.`
@@ -262,6 +293,7 @@ function explain(p: Plan, S: Settings, m: Mix): Para[] {
       text = `Even if you wait one more cycle (${S.cycleWeeks} weeks), there's still ${r1(nextLand)} bbl, about ${wks(nextLand, rate)} weeks, when that batch would be ready. That's above the ${S.safetyWeeks}-week safety line, so it can wait.`;
     else
       text = `It would need only ${r1(Math.max(r.need ?? 0, 0))} bbl, under the ${S.minBrew} bbl smallest batch worth brewing, so it can wait a cycle.`;
+    if (p.par.hasPars) text += " Par levels are covered too.";
     out.push({ head: "Why hold", text });
   }
 
@@ -530,6 +562,8 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
     } catch {}
     try {
       const saved = JSON.parse(localStorage.getItem(STORE) ?? "null");
+      // Batch sizes changed to 15/30/45/60 (2026-10-30): drop the old default if it was never edited.
+      if (saved && String(saved.sizes ?? "").replace(/\s/g, "") === "7,15,30,60") delete saved.sizes;
       if (saved) setS({ ...DEFAULT_SETTINGS, ...saved, lead: { ...DEFAULT_SETTINGS.lead, ...(saved.lead ?? {}) } });
     } catch {}
   }, []);

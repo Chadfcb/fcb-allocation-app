@@ -211,6 +211,10 @@ function sections(P: Plan[], S: Settings, data: PlannerData): Section[] {
               batch is ready. If that&apos;s still <K>{S.safetyWeeks} weeks of sales or more</K>, it says <K>Hold</K>. If not, it says <K>Brew</K>.
             </li>
             <li>It also says Hold if the amount needed is under {S.minBrew} bbl, the smallest batch worth brewing.</li>
+            <li>
+              <K>Par levels always count.</K> Even when sales say Hold, it says Brew if distributors are short of their par levels after this
+              week&apos;s orders and the beer left in tank (see &quot;Par levels&quot; below).
+            </li>
           </Steps>
           {ex && ex.rec.action === "Brew" && (
             <Example>
@@ -265,8 +269,9 @@ function sections(P: Plan[], S: Settings, data: PlannerData): Section[] {
             <li><K>Round up</K> to the next batch size we brew: {sizes} bbl.</li>
             <li>
               <K>Over-brew check:</K> if that batch would take more than {S.maxDays} days to sell, it drops one size, as long as the smaller batch
-              still lasts until the next brew.
+              still lasts until the next brew and still covers par. If par needs the bigger batch, it keeps it and shows a warning.
             </li>
+            <li><K>Par check:</K> the batch is never smaller than what it takes to bring distributors up to par.</li>
           </Steps>
           {ex && ex.rec.action === "Brew" && ex.rec.required !== undefined && (
             <Example>
@@ -278,6 +283,28 @@ function sections(P: Plan[], S: Settings, data: PlannerData): Section[] {
               </p>
             </Example>
           )}
+        </>
+      ),
+    },
+    {
+      id: "pars",
+      title: "Par levels",
+      body: (
+        <>
+          <p>
+            A <K>par level</K> is how much of each product a distributor should keep on hand (set in FCB-Data). The planner always checks them,
+            the same way the &quot;To Brew&quot; sheet does:
+          </p>
+          <Steps>
+            <li><K>Short of par:</K> for each distributor and product, par minus what they have in Ekos today (only where they&apos;re below par), in barrels.</li>
+            <li><K>Minus this week&apos;s orders</K> on Inventory &amp; Allocation (those are already on their way).</li>
+            <li><K>Minus the beer left in tank</K> after those orders, at {S.yieldPct}% packaging yield.</li>
+            <li>What&apos;s left is what it takes to <K>reach par</K>. The batch is the bigger of that and what sales need, rounded up to {sizes} bbl.</li>
+          </Steps>
+          <Note>
+            Beers or distributors with no par set (for example Coast) go by sales only. If par levels are set much higher than stores are buying,
+            the planner will still brew for par and warn that the batch will take a long time to sell — that&apos;s a sign to review the par.
+          </Note>
         </>
       ),
     },
