@@ -151,7 +151,8 @@ function sections(P: Plan[], S: Settings, data: PlannerData): Section[] {
           </Bullets>
           <p>
             When it says Brew for a grouped beer, the <K>brand split</K> (click the row) shows how much of the batch goes to each brand, based on
-            each brand&apos;s share of sales. For Mango Bomb it shows how much to pull off before finishing it.
+            each brand&apos;s share of sales. For Mango Bomb it shows how much to pull off before adding mango, and for Lime 30 how much to
+            pull off the Metropolis base before adding lime.
           </p>
         </>
       ),

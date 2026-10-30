@@ -249,7 +249,7 @@ function explain(p: Plan, S: Settings, m: Mix): Para[] {
     if (pull && pull.fromBatch >= 0.05) {
       out.push({
         head: "How to split the batch",
-        text: `${split.map((b) => `${b.name} ${r1(b.fromBatch)} bbl`).join(", ")}: each brand's share of sales. Pull ~${r1(pull.fromBatch)} bbl off for ${pull.name}, then can or keg it.`,
+        text: `${split.map((b) => `${b.name} ${r1(b.fromBatch)} bbl`).join(", ")}: each brand's share of sales. Pull ~${r1(pull.fromBatch)} bbl off for ${pull.name}, ${pull.key === "LM" ? "add lime" : "finish it"}, then can or keg it.`,
       });
     } else if (split.length > 1) {
       out.push({ head: "How to split the batch", text: `${split.map((b) => `${b.name} ${r1(b.fromBatch)} bbl`).join(", ")}: each brand's share of sales.` });
@@ -822,7 +822,7 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
       </div>
 
       <p className="text-xs text-neutral-500">
-        Numbers: LilyPad store sales (last 3 full months, latest counted more), each distributor&apos;s newest Ekos count, delivered POs for Coast and any distributor without LilyPad sales yet, this week&apos;s Inventory &amp; Allocation minus delivered POs, and the Ekos tank sync. 1 case-equivalent = 2.25 gal (13.78 per bbl). Base beers: Big Daddy + Capt. WC are one brew; Capt. Hazy + Juicy + Mystic Haze + Mango Bomb (pulled off) are one brew.
+        Numbers: LilyPad store sales (last 3 full months, latest counted more), each distributor&apos;s newest Ekos count, delivered POs for Coast and any distributor without LilyPad sales yet, this week&apos;s Inventory &amp; Allocation minus delivered POs, and the Ekos tank sync. 1 case-equivalent = 2.25 gal (13.78 per bbl). Base beers: Big Daddy + Capt. WC are one brew; Capt. Hazy + Juicy + Mystic Haze + Mango Bomb (pulled off) are one brew; Metropolis + Victory Vibes + Lime 30 (pulled off, lime added) are one brew.
       </p>
     </div>
   );

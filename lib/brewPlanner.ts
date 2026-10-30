@@ -62,9 +62,21 @@ export const BASES: BaseDef[] = [
   { key: "PR", name: "Prohibition Red Ale", tank: /prohibition/i, lead: 21, brands: [{ key: "PR", name: "Prohibition", lily: ["Prohibition Red Ale"], app: /^Prohibition/i }] },
   { key: "PV", name: "Peachy Vibes", tank: /peachy/i, lead: 21, brands: [{ key: "PV", name: "Peachy Vibes", lily: ["Peachy Vibes"], app: /^Peachy/i }] },
   { key: "NP", name: "Nectarine Pie of the Tiger", tank: /nectarine/i, lead: 21, brands: [{ key: "NP", name: "Nectarine Pie", lily: ["Nectarine Pie of the Tiger"], app: /^Nectarine/i }] },
-  // LilyPad names checked in sales_account_sales 2026-10-30 (Lime 30 is "Lime Thirty Lager").
-  { key: "LM", name: "Lime 30 Lager", tank: /lime/i, lead: 35, brands: [{ key: "LM", name: "Lime 30", lily: ["Lime Thirty Lager"], app: /^Lime 30/i }] },
-  { key: "ME", name: "Metropolis Lager", tank: /metropolis/i, lead: 35, brands: [{ key: "ME", name: "Metropolis", lily: ["Metropolis Lager"], app: /^Metropolis/i }] },
+  // Metropolis base (Chad, 2026-10-30): "that tank isnt lime 30 its victory vibes, which is
+  // also metropolis lager, same beer, but we can take that beer, pull off say 7 bbls, add
+  // lime to it, and that makes lime 30". Same pattern as Mango Bomb off the hazy base.
+  // LilyPad names checked in sales_account_sales 2026-10-30.
+  {
+    key: "ME",
+    name: "Metropolis base",
+    tank: /metropolis|victory|lime/i,
+    lead: 35,
+    brands: [
+      { key: "ME", name: "Metropolis", lily: ["Metropolis Lager"], app: /^Metropolis/i },
+      { key: "VV", name: "Victory Vibes", lily: ["Victory Vibes Blonde"], app: /^Victory/i },
+      { key: "LM", name: "Lime 30", lily: ["Lime Thirty Lager"], app: /^Lime 30/i, pullOff: true },
+    ],
+  },
   {
     key: "CI",
     name: "Ciders",
