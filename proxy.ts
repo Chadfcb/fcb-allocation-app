@@ -35,11 +35,15 @@ export async function proxy(request: NextRequest) {
 // login: /privacy, /terms, /sms-signup and the form's /api/sms-signup. These
 // pages show nothing from the app's data.
 //
+// Same for email (added 2026-10-30): SendGrid's event webhook
+// (/api/email-studio/events — checks SendGrid's signature itself) and the
+// public unsubscribe page + its one-click endpoint (signed links).
+//
 // Any other route under /api/cron/* or /api/slack/* added later gets the
 // same exemption; every other route (pages and the rest of /api/*) is
 // untouched and still requires a real login exactly as before.
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/cron|api/slack|api/google-calendar/hook|api/twilio|api/sms-signup|privacy$|privacy/|terms$|terms/|sms-signup$|sms-signup/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/cron|api/slack|api/google-calendar/hook|api/twilio|api/sms-signup|api/email-studio/events|api/email/unsubscribe|email/unsubscribe|privacy$|privacy/|terms$|terms/|sms-signup$|sms-signup/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

@@ -7,6 +7,7 @@ import type { Editor } from "grapesjs";
 import { createClient } from "@/lib/supabase/client";
 import { isWebImage, uploadCreativeAsset, type CreativeAsset } from "@/lib/creativeAssets";
 import { buildEmailDocument } from "@/lib/email/studio";
+import EmailSendDialog from "@/components/EmailSendDialog";
 
 // Email Studio's drag-and-drop email designer (added 2026-10-29, per Chad —
 // Phase 1 of claude/email-designer-plan.md). Built on GrapesJS + its
@@ -77,6 +78,7 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
   const [msg, setMsg] = useState<{ text: string; bad?: boolean } | null>(null);
   const [previewHtml, setPreviewHtml] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState(design.updated_at);
+  const [sendOpen, setSendOpen] = useState(false);
 
   // Start the designer once.
   useEffect(() => {
@@ -285,6 +287,20 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
           </button>
           <button
             type="button"
+            className={btn}
+            disabled={!ready || saving}
+            onClick={() => {
+              if (!subject.trim()) {
+                setMsg({ text: "Add a subject line first.", bad: true });
+                return;
+              }
+              setSendOpen(true);
+            }}
+          >
+            Send…
+          </button>
+          <button
+            type="button"
             disabled={!ready || saving}
             onClick={() => void save()}
             className="rounded-full bg-brand px-4 py-1.5 text-sm font-semibold text-black disabled:opacity-60"
@@ -337,6 +353,10 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
         {!ready && <p className="p-6 text-sm text-neutral-500">Loading the designer…</p>}
         <div ref={containerRef} className="h-full" />
       </div>
+
+      {sendOpen && (
+        <EmailSendDialog designId={design.id} subject={subject} onClose={() => setSendOpen(false)} beforeSend={save} />
+      )}
 
       {previewHtml && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setPreviewHtml(null)}>

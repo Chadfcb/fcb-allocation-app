@@ -12,12 +12,18 @@ import {
   uploadCreativeAsset,
   type CreativeAsset,
 } from "@/lib/creativeAssets";
+import EmailAudienceTab, { type ListRow } from "@/components/EmailAudienceTab";
+import EmailSentTab, { type CampaignRow } from "@/components/EmailSentTab";
 
 // Admin → Email Studio (added 2026-10-29, per Chad — Phase 1 of
 // claude/email-designer-plan.md). Two tabs:
 //   Emails           — saved email designs; New email opens the designer.
 //   Creative Library — every image / GIF / PSD / video / PDF Eddie uses.
 //                      Images here also show up in the designer's image picker.
+//   Audience         — lists (Mailchimp import, pasted) + the do-not-email list
+//                      (Phase 5, 2026-10-30).
+//   Sent             — every email sent or scheduled, with delivered / opened /
+//                      clicked / bounced / unsubscribed (Phase 5).
 
 export type DesignRow = {
   id: string;
@@ -30,7 +36,7 @@ export type DesignRow = {
 };
 export type AssetRow = CreativeAsset;
 
-type Tab = "emails" | "library";
+type Tab = "emails" | "library" | "audience" | "sent";
 type KindFilter = "all" | "image" | "gif" | "psd" | "video" | "other";
 
 function fmtWhen(iso: string) {
@@ -48,10 +54,18 @@ export default function EmailStudioClient({
   designs: initialDesigns,
   assets: initialAssets,
   loadError,
+  lists,
+  suppressionCount,
+  accountEmailCount,
+  campaigns,
 }: {
   designs: DesignRow[];
   assets: AssetRow[];
   loadError: string | null;
+  lists: ListRow[];
+  suppressionCount: number;
+  accountEmailCount: number | null;
+  campaigns: CampaignRow[];
 }) {
   const router = useRouter();
   const [supabase] = useState(() => createClient());
@@ -115,8 +129,8 @@ export default function EmailStudioClient({
         <div>
           <h1 className="text-lg font-semibold text-neutral-100">Email Studio</h1>
           <p className="text-sm text-neutral-400">
-            Design FCB&apos;s emails with drag-and-drop, and keep every image, GIF, Photoshop file and video in the
-            Creative Library. Test emails send from ernie@fullcirclebrewing.com to you only.
+            Design FCB&apos;s emails with drag-and-drop, keep every image, GIF, Photoshop file and video in the Creative
+            Library, and send to account contacts and lists from ernie@fullcirclebrewing.com.
           </p>
         </div>
         <button
@@ -139,12 +153,18 @@ export default function EmailStudioClient({
       <div className="flex gap-2">
         {tabBtn("emails", "Emails", designs.length)}
         {tabBtn("library", "Creative Library", assets.length)}
+        {tabBtn("audience", "Audience", lists.length)}
+        {tabBtn("sent", "Sent", campaigns.length)}
       </div>
 
       {tab === "emails" ? (
         <EmailsGrid designs={designs} onDuplicate={(d) => void newEmail(d)} onArchive={(d) => void archive(d)} />
-      ) : (
+      ) : tab === "library" ? (
         <CreativeLibrary supabase={supabase} assets={assets} setAssets={setAssets} />
+      ) : tab === "audience" ? (
+        <EmailAudienceTab lists={lists} suppressionCount={suppressionCount} accountEmailCount={accountEmailCount} />
+      ) : (
+        <EmailSentTab campaigns={campaigns} />
       )}
     </div>
   );
