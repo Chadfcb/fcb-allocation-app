@@ -133,7 +133,7 @@ function explain(p: Plan, S: Settings, m: Mix): Para[] {
     const src: string[] = [];
     if (p.pots.recurring > 0.05) src.push(`${r1(p.pots.recurring)} bbl from stores that buy it regularly`);
     if (p.pots.newCounted > 0.05) src.push(`${r1(p.pots.newCounted)} bbl from new stores (first order in the last 60 days${S.newPct !== 100 ? `, counted at ${S.newPct}%` : ""})`);
-    if (p.pots.estimated > 0.05) src.push(`${r1(p.pots.estimated)} bbl estimated from what we've shipped (Superior, Coast, or beers LilyPad doesn't track)`);
+    if (p.pots.estimated > 0.05) src.push(`${r1(p.pots.estimated)} bbl estimated from what we've shipped (Coast, distributors with no LilyPad sales yet, or beers LilyPad doesn't track)`);
     let text = `Distributors are selling about ${r1(p.demand)} bbl a week${c(p.demand)}.`;
     if (src.length) text += ` That's ${src.join(", ")}.`;
     if (p.commitNow > 0.05) text += ` Commitments add ${r1(p.commitNow)} bbl a week by the time a new batch would be ready.`;
@@ -282,8 +282,9 @@ function Chart({ p, S }: { p: Plan; S: Settings }) {
   );
 }
 
-// Demand pots (Chad, 2026-10-23): recurring / new / estimated (Superior, Coast,
-// beers without LilyPad) / commitments — lost shown but not counted.
+// Demand pots (Chad, 2026-10-23): recurring / new / estimated (Coast,
+// distributors with no LilyPad sales yet, beers without LilyPad) /
+// commitments — lost shown but not counted.
 const POT_COLORS = { recurring: "#6ABC46", new: "#4aa3df", estimated: "#c9a227", commitments: "#b07ce8" } as const;
 function PotBar({ p }: { p: Plan }) {
   const parts = [
@@ -312,7 +313,7 @@ function PotsBox({ p, S }: { p: Plan; S: Settings }) {
   const rows: { name: string; color?: string; accounts: number | null; bbl: number; counted: string }[] = [
     { name: "Recurring accounts", color: POT_COLORS.recurring, accounts: acc("recurring"), bbl: p.pots.recurring, counted: "Yes" },
     { name: "New accounts (first order in 60 days)", color: POT_COLORS.new, accounts: acc("new"), bbl: p.pots.new, counted: `${S.newPct}%` },
-    { name: "Superior / Coast / no LilyPad (estimated)", color: POT_COLORS.estimated, accounts: null, bbl: p.pots.estimated, counted: "Yes" },
+    { name: "Coast / no LilyPad (estimated)", color: POT_COLORS.estimated, accounts: null, bbl: p.pots.estimated, counted: "Yes" },
     { name: "Commitments", color: POT_COLORS.commitments, accounts: p.commitments.length || null, bbl: p.pots.commitments, counted: "Yes, from start date" },
     { name: "Lost / slipping (no order in 60+ days)", accounts: acc("lost"), bbl: p.pots.lost, counted: "No" },
   ];
@@ -408,7 +409,7 @@ function Detail({ p, S, mix }: { p: Plan; S: Settings; mix: Mix }) {
                 {p.rows.map((x) => (
                   <tr key={x.dist} className="border-t border-neutral-800">
                     <td className={td}>{x.dist}</td>
-                    <td className={td}><span className={`rounded px-1.5 text-[11px] font-semibold ${x.q === "Measured" ? "bg-[#6ABC46]/15 text-[#8fd46b]" : "bg-amber-500/15 text-amber-300"}`}>{x.q}</span></td>
+                    <td className={td}><span className={`rounded px-1.5 text-[11px] font-semibold ${x.q === "Measured" ? "bg-[#6ABC46]/15 text-[#8fd46b]" : x.q === "Partly measured" ? "bg-sky-500/15 text-sky-300" : "bg-amber-500/15 text-amber-300"}`}>{x.q}</span></td>
                     <td className={td}>{r1(x.rate)}</td>
                     <td className={td}>{r1(x.stock)}</td>
                     <td className={td}><Cover w={x.rate ? x.stock / x.rate : null} /></td>
@@ -417,7 +418,7 @@ function Detail({ p, S, mix }: { p: Plan; S: Settings; mix: Mix }) {
               </tbody>
             </table>
           </div>
-          <p className="mt-1 text-[11px] text-neutral-500">Measured = Ekos count + LilyPad sales. Estimated = no count yet; worked out from our deliveries. Our warehouse: {r1(p.wh)} bbl.</p>
+          <p className="mt-1 text-[11px] text-neutral-500">Measured = Ekos count + LilyPad sales. Partly measured = Ekos count; sales worked out from our deliveries (no LilyPad sales yet). Estimated = no count yet; worked out from our deliveries. Our warehouse: {r1(p.wh)} bbl.</p>
         </div>
         <div className={box}>
           <h3 className="mb-2 text-sm font-semibold">In tank</h3>
@@ -510,7 +511,7 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
     }
     if (data.ignored.length) {
       const bbl = data.ignored.reduce((a, x) => a + x.bbl, 0);
-      F.push({ tone: "info", title: "Superior / Coast Ekos rows left out", text: `${data.ignored.length} row(s), ${r1(bbl)} bbl (${data.ignored.slice(0, 2).map((x) => x.what).join("; ")}). They stay on estimates from our deliveries until their own data is set up.` });
+      F.push({ tone: "info", title: "Coast Ekos rows left out", text: `${data.ignored.length} row(s), ${r1(bbl)} bbl (${data.ignored.slice(0, 2).map((x) => x.what).join("; ")}). Coast stays on estimates from our deliveries until its own data is set up.` });
     }
     F.push({ tone: "info", title: "Saccani counted as gone", text: "Saccani's past sales aren't counted. Mussetter's own LilyPad sales pick up converted accounts; the setting adds more if you expect it." });
     return F;
@@ -530,8 +531,8 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
   // Column headers say their unit; hover for a one-line explanation.
   const COLS: { label: string; tip: string }[] = [
     { label: "Base beer", tip: "One brew. Brands made from the same beer are listed under it." },
-    { label: "Selling per week (bbl)", tip: "What distributors sell to stores each week, in barrels. From LilyPad store sales, last 3 full months (latest counted more); Superior, Coast and beers LilyPad doesn't track are estimated from our deliveries." },
-    { label: "At distributors (bbl)", tip: "Barrels sitting in distributor warehouses now: each one's newest Ekos count (estimated for Superior and Coast)." },
+    { label: "Selling per week (bbl)", tip: "What distributors sell to stores each week, in barrels. From LilyPad store sales, last 3 full months (latest counted more); Coast, distributors with no LilyPad sales yet (Superior for now) and beers LilyPad doesn't track are estimated from our deliveries." },
+    { label: "At distributors (bbl)", tip: "Barrels sitting in distributor warehouses now: each one's newest Ekos count (estimated for Coast)." },
     { label: "Our warehouse (bbl)", tip: "Barrels of packaged beer in our warehouse, from this week's Inventory & Allocation." },
     { label: "In tank (bbl)", tip: "Barrels in our fermenters for this beer, with when they'll be packaged." },
     { label: "Weeks of beer left", tip: "(At distributors + our warehouse) ÷ selling per week. Doesn't count beer still in tank. Red under 2, amber under 4." },
@@ -746,7 +747,7 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
       </div>
 
       <p className="text-xs text-neutral-500">
-        Numbers: LilyPad store sales (last 3 full months, latest counted more), each distributor&apos;s newest Ekos count, delivered POs for Superior and Coast, this week&apos;s Inventory &amp; Allocation minus delivered POs, and the Ekos tank sync. 1 case-equivalent = 2.25 gal (13.78 per bbl). Base beers: Big Daddy + Capt. WC are one brew; Capt. Hazy + Juicy + Mystic Haze + Mango Bomb (pulled off) are one brew.
+        Numbers: LilyPad store sales (last 3 full months, latest counted more), each distributor&apos;s newest Ekos count, delivered POs for Coast and any distributor without LilyPad sales yet, this week&apos;s Inventory &amp; Allocation minus delivered POs, and the Ekos tank sync. 1 case-equivalent = 2.25 gal (13.78 per bbl). Base beers: Big Daddy + Capt. WC are one brew; Capt. Hazy + Juicy + Mystic Haze + Mango Bomb (pulled off) are one brew.
       </p>
     </div>
   );

@@ -99,8 +99,14 @@ async function gather(admin: Admin): Promise<PlannerData> {
   // --- Distributor counts: each measured distributor's newest Ekos count
   const weekIds = (weeks ?? []).map((w) => w.id as string);
   const inv = weekIds.length
-    ? await readAll<{ week_id: string; distributor_id: string; product_id: string; on_hand_qty: number; imported_at: string | null; updated_at: string }>((f, t) =>
-        admin.from("distributor_inventory").select("week_id, distributor_id, product_id, on_hand_qty, imported_at, updated_at").in("week_id", weekIds).order("id").range(f, t),
+    ? (
+        await readAll<{ week_id: string; distributor_id: string; product_id: string; on_hand_qty: number; source: string | null; imported_at: string | null; updated_at: string }>((f, t) =>
+          admin.from("distributor_inventory").select("week_id, distributor_id, product_id, on_hand_qty, source, imported_at, updated_at").in("week_id", weekIds).order("id").range(f, t),
+        )
+      ).filter(
+        // Superior: only its Ekos counts (2026-10-30). Rows from the retired
+        // Monday VIP file upload are left out so old file numbers never mix in.
+        (r) => dName.get(r.distributor_id) !== "Superior" || r.source === "ekos",
       )
     : [];
   const weekOrder = new Map(weekIds.map((id, i) => [id, i])); // 0 = newest
@@ -121,8 +127,8 @@ async function gather(admin: Admin): Promise<PlannerData> {
     const bbl = (Number(r.on_hand_qty) || 0) * bpu(r.product_id);
     const at = r.imported_at ?? r.updated_at;
     if (ESTIMATED.includes(dist)) {
-      // Superior / Coast stay on estimates until their own data is set up
-      // (claude/brew-planner-plan.md — Superior's one Ekos row didn't fit).
+      // Coast stays on estimates until its own data is set up
+      // (claude/brew-planner-plan.md). Superior left this list 2026-10-30.
       if (bbl) ignored.push({ what: `${dist}: ${prodName.get(r.product_id) ?? "?"} × ${Number(r.on_hand_qty)}`, bbl });
       continue;
     }

@@ -4,7 +4,8 @@
 //
 // Says, per base beer, whether to brew this 2-week cycle and how much, from:
 //   - LilyPad store sales (sales_account_sales) for the measured distributors,
-//   - delivered POs (distributor_pos + allocations) for Superior and Coast,
+//   - delivered POs (distributor_pos + allocations) for Coast, and for any
+//     distributor with no LilyPad sales yet (Superior, 2026-10-30),
 //   - each distributor's newest Ekos count (distributor_inventory),
 //   - our warehouse (this week's Inventory & Allocation, minus delivered POs),
 //   - what's in tank (ekos_tanks).
@@ -81,8 +82,12 @@ export const BASES: BaseDef[] = [
 // worked out from our deliveries ("Estimated"). Saccani is closed (Chad,
 // 2026-10-23) — never "needs stock"; its sales only count via the
 // "Saccani sales moving to Mussetter" setting.
-export const MEASURED = ["Guardian", "Markstein", "Matagrano", "Mussetter", "Valley Wide"];
-export const ESTIMATED = ["Superior", "Coast"];
+// Superior moved to MEASURED 2026-10-30 (its inventory now comes from Ekos).
+// Each measured distributor uses the best data it has (Chad, 2026-10-23):
+// no LilyPad sales yet → sales estimated from our deliveries; no Ekos count
+// yet → stock estimated too. It switches on its own when the data shows up.
+export const MEASURED = ["Guardian", "Markstein", "Matagrano", "Mussetter", "Valley Wide", "Superior"];
+export const ESTIMATED = ["Coast"];
 
 // Distributor names in the app have split / old duplicates
 // ("Markstein C", "Matagrano Cans 1", "Valleywide" …) → one name.
@@ -139,14 +144,14 @@ export interface PlannerData {
     canCe: Record<string, number>;
   };
   distStock: Record<string, Record<string, number>>; // [distributor][brand]
-  distCountAt: Record<string, string | null>; // newest Ekos count per measured distributor
-  shipments: Record<string, { date: string; items: Record<string, number> }[]>; // delivered POs, Superior / Coast / everyone
+  distCountAt: Record<string, string | null>; // newest Ekos count per measured distributor (missing = no count yet)
+  shipments: Record<string, { date: string; items: Record<string, number> }[]>; // delivered POs, every distributor
   windowStart: string; // first day of the shipments window
   warehouse: Record<string, number>; // [brand]
   warehouseWeek: string | null;
   tanks: { tank: string; base: string; bbl: number; start: string | null; stage: string | null; label: string }[];
   emptyTanks: number;
-  ignored: { what: string; bbl: number }[]; // rows left out on purpose (Superior's odd Ekos row …)
+  ignored: { what: string; bbl: number }[]; // rows left out on purpose (Coast's Ekos rows …)
   fresh: { label: string; value: string; old: boolean }[];
   commitments: Commitment[];
   products: { id: string; name: string; base: string; brand: string }[]; // for the Add commitment form
@@ -230,6 +235,11 @@ function potRates(D: PlannerData, S: Settings, brand: string, dist: string) {
   return { recurring: rateOf(D, S, p.recurring), new: rateOf(D, S, p.new), lost: rateOf(D, S, p.lost) };
 }
 
+// Does this distributor have any LilyPad sales in the window? (Superior had none on 2026-10-30.)
+function hasLily(D: PlannerData, dist: string): boolean {
+  return Object.values(D.lily.ce).some((byDist) => (byDist[dist] ?? []).some((v) => v > 0));
+}
+
 function shipList(D: PlannerData, dist: string, brand: string) {
   return (D.shipments[dist] ?? []).filter((x) => (x.items[brand] ?? 0) > 0).sort((a, b) => a.date.localeCompare(b.date));
 }
@@ -254,7 +264,8 @@ function estStock(D: PlannerData, dist: string, brand: string): number {
   return Math.max(0, tot - shipRate(D, dist, brand) * wks);
 }
 
-export interface DistRow { dist: string; q: "Measured" | "Estimated"; rate: number; stock: number }
+// "Partly measured" = Ekos count, but sales estimated from our deliveries (no LilyPad sales yet).
+export interface DistRow { dist: string; q: "Measured" | "Partly measured" | "Estimated"; rate: number; stock: number }
 export interface BrandRow { key: string; name: string; pullOff: boolean; share: number; rate: number; stock: number; weeks: number | null; kegShare: number | null; fromBatch: number; accounts: Record<Pot, number> }
 export interface TankRow { tank: string; bbl: number; start: string | null; stage: string | null; label: string; ready: boolean; pkg: Date; out: number; days: number | null }
 // Where demand comes from (bbl / week). Lost isn't counted — shown so you can see what went away.
@@ -371,8 +382,10 @@ export function plan(D: PlannerData, S: Settings, base: BaseDef): Plan {
   };
   for (const br of base.brands) {
     for (const dist of MEASURED) {
+      const lily = hasLily(D, dist);
+      const counted = !!D.distCountAt[dist];
       let r: number;
-      if (br.lily.length) {
+      if (br.lily.length && lily) {
         const pr = potRates(D, S, br.key, dist);
         pots.recurring += pr.recurring;
         pots.new += pr.new;
@@ -388,8 +401,8 @@ export function plan(D: PlannerData, S: Settings, base: BaseDef): Plan {
         r = shipRate(D, dist, br.key);
         pots.estimated += r;
       }
-      const st = D.distStock[dist]?.[br.key] ?? 0;
-      if (r || st) add(dist, "Measured", br.key, r, st);
+      const st = counted ? (D.distStock[dist]?.[br.key] ?? 0) : estStock(D, dist, br.key);
+      if (r || st) add(dist, lily && counted ? "Measured" : counted ? "Partly measured" : "Estimated", br.key, r, st);
     }
     for (const dist of ESTIMATED) {
       const r = shipRate(D, dist, br.key);

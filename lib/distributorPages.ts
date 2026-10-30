@@ -32,8 +32,10 @@ export function distributorBySlug(slug: string): DistributorPage | null {
 }
 
 // Distributors whose weekly inventory comes in a file instead of Ekos (the
-// Upload inventory button). Superior: "SPC Full Circle Inventory.xlsx", emailed
-// by VIP every Monday. Coast sends no inventory at all yet (Chad, 2026-10-22:
-// "a work in progress").
-export const FILE_INVENTORY_DISTRIBUTORS = ["Superior"];
+// Upload inventory button). Empty since 2026-10-30: Superior now reports
+// through Ekos ("Superior Products - Willows"), so its Monday VIP file upload
+// was retired (Chad: "now that they are reporting inventory we no longer need
+// a manual import"). Kept for Coast if it ever sends a file. Coast sends no
+// inventory at all yet (Chad, 2026-10-22: "a work in progress").
+export const FILE_INVENTORY_DISTRIBUTORS: string[] = [];
 export const NO_INVENTORY_DISTRIBUTORS = ["Coast"];
