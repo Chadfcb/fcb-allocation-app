@@ -7,11 +7,12 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 // Secret: EMAIL_UNSUBSCRIBE_SECRET (any long random string, set in Vercel).
 // Falls back to the Supabase service role key so links work before it's set
 // — but once emails have gone out, don't change whichever one is in use or
-// older unsubscribe links stop working.
+// older unsubscribe links stop working. The same secret signs the click-
+// tracking links (lib/email/tracking.ts).
 
 export const APP_BASE_URL = "https://www.fcb-data.com";
 
-function secret(): string {
+export function emailLinkSecret(): string {
   const s = process.env.EMAIL_UNSUBSCRIBE_SECRET || process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!s) throw new Error("Missing EMAIL_UNSUBSCRIBE_SECRET");
   return s;
@@ -21,7 +22,7 @@ const b64url = (b: Buffer) => b.toString("base64").replace(/\+/g, "-").replace(/
 const fromB64url = (s: string) => Buffer.from(s.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 
 function sign(email: string): string {
-  return b64url(createHmac("sha256", secret()).update(`unsub:${email.toLowerCase()}`).digest()).slice(0, 32);
+  return b64url(createHmac("sha256", emailLinkSecret()).update(`unsub:${email.toLowerCase()}`).digest()).slice(0, 32);
 }
 
 function params(email: string): string {

@@ -58,6 +58,8 @@ export default function EmailStudioClient({
   suppressionCount,
   accountEmailCount,
   campaigns,
+  sentToday,
+  dailyCap,
 }: {
   designs: DesignRow[];
   assets: AssetRow[];
@@ -66,6 +68,8 @@ export default function EmailStudioClient({
   suppressionCount: number;
   accountEmailCount: number | null;
   campaigns: CampaignRow[];
+  sentToday: number;
+  dailyCap: number;
 }) {
   const router = useRouter();
   const [supabase] = useState(() => createClient());
@@ -164,7 +168,7 @@ export default function EmailStudioClient({
       ) : tab === "audience" ? (
         <EmailAudienceTab lists={lists} suppressionCount={suppressionCount} accountEmailCount={accountEmailCount} />
       ) : (
-        <EmailSentTab campaigns={campaigns} />
+        <EmailSentTab campaigns={campaigns} sentToday={sentToday} dailyCap={dailyCap} />
       )}
     </div>
   );

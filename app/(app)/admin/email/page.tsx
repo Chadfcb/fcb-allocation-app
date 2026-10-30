@@ -4,6 +4,7 @@ import { firstNameFor } from "@/lib/displayName";
 import EmailStudioClient, { type DesignRow, type AssetRow } from "@/components/EmailStudioClient";
 import type { ListRow } from "@/components/EmailAudienceTab";
 import type { CampaignRow } from "@/components/EmailSentTab";
+import { DAILY_CAP, sentToday } from "@/lib/email/queue";
 
 // Admin → Email Studio (added 2026-10-29, per Chad — Phase 1 of
 // claude/email-designer-plan.md): Eddie's saved email designs and his
@@ -58,6 +59,8 @@ export default async function EmailStudioPage() {
     for (const p of people ?? []) names[p.id] = firstNameFor(p);
   }
 
+  const todayCount = await sentToday(admin).catch(() => 0);
+
   const loadError = designsError?.message ?? assetsError?.message ?? null;
 
   return (
@@ -73,6 +76,8 @@ export default async function EmailStudioPage() {
         created_by_name: c.created_by ? names[c.created_by] ?? null : null,
         stats: statsById[c.id] ?? null,
       }))}
+      sentToday={todayCount}
+      dailyCap={DAILY_CAP}
     />
   );
 }

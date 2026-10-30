@@ -4,9 +4,10 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 // Email Studio → "Send…" (added 2026-10-30, per Chad — Phase 5). Pick who
 // gets the email, see exactly how many people that is, then send now or
-// schedule (up to 72 hours ahead). Sends through SendGrid from
-// ernie@fullcirclebrewing.com. Everyone on the do-not-email list is always
-// left out automatically.
+// schedule. Sends from ernie@fullcirclebrewing.com's Gmail (reworked
+// 2026-10-30, per Chad: no paid service, "capped at 1800 a day") in small
+// batches every 5 minutes, 7am–6pm Pacific; big lists finish over several
+// days. Everyone on the do-not-email list is always left out automatically.
 
 type Audience = {
   accounts: { enabled: boolean; distributors: string[]; premises: string[]; boughtWithinDays: number | null };
@@ -17,8 +18,10 @@ type Options = {
   distributors: string[];
   premises: string[];
   lists: { id: string; name: string; source: string }[];
-  sendgridReady: boolean;
+  ready: boolean;
   fromAddress: string;
+  dailyCap: number;
+  sentToday: number;
 };
 type Counts = { fromAccounts: number; fromLists: number; fromExtra: number; suppressed: number; invalid: number; total: number };
 type Sample = { email: string; name: string | null; business: string | null };
@@ -66,13 +69,13 @@ export default function EmailSendDialog({
   const [tested, setTested] = useState(false);
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
-  // Limit the schedule picker to the next 72 hours (worked out once, when the dialog opens).
+  // Limit the schedule picker to the next 60 days (worked out once, when the dialog opens).
   const [{ minLocal, maxLocal }] = useState(() => {
     const now = Date.now();
     const tz = new Date().getTimezoneOffset() * 60000;
     return {
       minLocal: new Date(now + 5 * 60000 - tz).toISOString().slice(0, 16),
-      maxLocal: new Date(now + 71.5 * 3600000 - tz).toISOString().slice(0, 16),
+      maxLocal: new Date(now + 60 * 86400000 - tz).toISOString().slice(0, 16),
     };
   });
 
@@ -139,17 +142,29 @@ export default function EmailSendDialog({
           expectedCount: counts.total,
         }),
       });
-      const j = (await r.json().catch(() => ({}))) as { ok?: boolean; sent?: number; failed?: number; status?: string; error?: string };
+      const j = (await r.json().catch(() => ({}))) as {
+        ok?: boolean;
+        status?: string;
+        queued?: number;
+        firstBatch?: number;
+        days?: number;
+        inHours?: boolean;
+        error?: string;
+      };
       if (r.ok && j.ok) {
+        const n = (j.queued ?? counts.total).toLocaleString();
+        const span = j.days && j.days > 1 ? ` It will finish over about ${j.days} days.` : "";
         setResult({
           ok: true,
           text:
             j.status === "scheduled"
-              ? `Scheduled for ${counts.total} people. See it under Email Studio → Sent.`
-              : `Sent to ${j.sent} people. Opens and clicks show under Email Studio → Sent.`,
+              ? `Scheduled for ${n} people.${span} Track it under Email Studio → Sent.`
+              : j.inHours
+                ? `Sending to ${n} people — the first ${j.firstBatch ?? 0} just went out, the rest go out a few at a time.${span} Track it under Email Studio → Sent.`
+                : `Lined up for ${n} people. Sending starts at 7am Pacific.${span} Track it under Email Studio → Sent.`,
         });
       } else {
-        setResult({ ok: false, text: j.error ?? (j.sent ? `Sent ${j.sent}, but ${j.failed} failed.` : "Couldn't send.") });
+        setResult({ ok: false, text: j.error ?? "Couldn't send." });
       }
     } catch {
       setResult({ ok: false, text: "Couldn't send." });
@@ -163,7 +178,7 @@ export default function EmailSendDialog({
   const field = "w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100";
 
 
-  const canSend = !!opts?.sendgridReady && !!counts?.total && tested && !sending && !result?.ok && (when === "now" || !!sendAt);
+  const canSend = !!opts?.ready && !!counts?.total && tested && !sending && !result?.ok && (when === "now" || !!sendAt);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
@@ -183,10 +198,10 @@ export default function EmailSendDialog({
 
         <div className="space-y-5 overflow-y-auto px-5 py-4 text-sm text-neutral-300">
           {loadErr && <p className="text-red-300">{loadErr}</p>}
-          {opts && !opts.sendgridReady && (
+          {opts && !opts.ready && (
             <p className="rounded-lg border border-amber-800 bg-amber-950/40 px-3 py-2 text-amber-200">
-              Email sending isn&apos;t connected yet (SendGrid). You can pick the audience and see the count, but the Send
-              button stays off until SendGrid is set up.
+              Email sending isn&apos;t connected (the ernie@ Gmail login is missing in Vercel). You can pick the audience
+              and see the count, but the Send button stays off until it&apos;s fixed.
             </p>
           )}
 
@@ -345,7 +360,13 @@ export default function EmailSendDialog({
                 className={`${field} max-w-xs`}
               />
             )}
-            {when === "later" && <p className="text-xs text-neutral-500">Up to 72 hours ahead.</p>}
+            <p className="text-xs text-neutral-500">
+              Goes out a few at a time, 7am–6pm Pacific, up to {(opts?.dailyCap ?? 1800).toLocaleString()} a day
+              {opts ? ` (${opts.sentToday.toLocaleString()} sent so far today)` : ""}.
+              {counts && counts.total > (opts?.dailyCap ?? 1800)
+                ? ` This one will take about ${Math.ceil(counts.total / (opts?.dailyCap ?? 1800))} days to finish.`
+                : ""}
+            </p>
           </section>
 
           <label className="flex items-start gap-2 text-sm">

@@ -1,31 +1,31 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { emailStudioProfile } from "@/lib/email/studioAccess";
 import { resolveAudience, type Audience } from "@/lib/email/audience";
-import { buildEmailDocument, htmlToText, EMAIL_FROM_NAME } from "@/lib/email/studio";
-import { sendgridConfigured, sendgridSendBatch, UNSUB_PLACEHOLDER } from "@/lib/email/sendgrid";
-import { unsubscribeOneClickUrl, unsubscribePageUrl } from "@/lib/email/unsubscribe";
+import { buildEmailDocument, EMAIL_FROM_NAME } from "@/lib/email/studio";
+import { gmailConfigured, UNSUB_PLACEHOLDER } from "@/lib/email/gmailSend";
+import { estimateDays, inSendingHours, processEmailQueue } from "@/lib/email/queue";
 
-// Email Studio → Send (added 2026-10-30, per Chad — email is the main
-// new-item channel). Sends the SAVED version of a design to the chosen
-// audience through SendGrid, from ernie@fullcirclebrewing.com:
+// Email Studio → Send (added 2026-10-30; reworked the same day to send from
+// ernie@ Gmail instead of SendGrid, per Chad: no separate paid service,
+// "capped at 1800 a day"). This route only LINES THE EMAIL UP:
 //   1. works out the recipients (do-not-email list always removed),
 //   2. freezes a copy of the email as sent (email_campaigns),
-//   3. records one row per recipient (email_sends),
-//   4. sends in batches of 500, each person with their own unsubscribe link,
-//   5. SendGrid's Event Webhook (/api/email-studio/events) later fills in
-//      delivered / opened / clicked / bounced.
-// Optional sendAt (ISO time, up to 72 hours ahead) = SendGrid schedules it.
+//   3. records one row per recipient, waiting in line (email_sends),
+//   4. if it's "send now" during sending hours, sends the first few right
+//      away so the sender sees it working.
+// The rest goes out in small batches every 5 minutes, 7am–6pm Pacific, up
+// to 1,800 a day (lib/email/queue.ts, called by /api/email-studio/worker).
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 120;
 
-const BATCH = 500;
 const MAX_RECIPIENTS = 20000;
+const MAX_SCHEDULE_DAYS = 60;
 
 export async function POST(request: Request) {
   const profile = await emailStudioProfile();
   if (!profile) return Response.json({ error: "No access" }, { status: 403 });
-  if (!sendgridConfigured()) {
-    return Response.json({ error: "SendGrid isn't connected yet — add SENDGRID_API_KEY in Vercel first." }, { status: 503 });
+  if (!gmailConfigured()) {
+    return Response.json({ error: "Email sending isn't connected (GMAIL_USER / GMAIL_APP_PASSWORD missing in Vercel)." }, { status: 503 });
   }
 
   let body: { designId?: string; audience?: Audience; fromName?: string; replyTo?: string; sendAt?: string | null; expectedCount?: number };
@@ -36,13 +36,14 @@ export async function POST(request: Request) {
   }
   if (!body.designId || !body.audience) return Response.json({ error: "Missing email or audience" }, { status: 400 });
 
-  let sendAtUnix: number | null = null;
+  let scheduledFor: string | null = null;
   if (body.sendAt) {
     const t = Date.parse(body.sendAt);
     if (Number.isNaN(t)) return Response.json({ error: "Bad schedule time" }, { status: 400 });
-    const ahead = t - Date.now();
-    if (ahead > 72 * 3600 * 1000) return Response.json({ error: "You can schedule up to 72 hours ahead." }, { status: 400 });
-    if (ahead > 60 * 1000) sendAtUnix = Math.floor(t / 1000);
+    if (t - Date.now() > MAX_SCHEDULE_DAYS * 86400000) {
+      return Response.json({ error: `You can schedule up to ${MAX_SCHEDULE_DAYS} days ahead.` }, { status: 400 });
+    }
+    if (t - Date.now() > 60000) scheduledFor = new Date(t).toISOString();
   }
 
   const admin = createAdminClient();
@@ -68,12 +69,9 @@ export async function POST(request: Request) {
     );
   }
 
-  const fromName = body.fromName?.trim() || EMAIL_FROM_NAME;
-  const replyTo = body.replyTo?.trim() || null;
   const subject = design.subject.trim();
+  // Frozen copy; the placeholder becomes each person's own unsubscribe link at send time.
   const html = buildEmailDocument({ bodyHtml: design.html, subject, preheader: design.preheader, unsubscribeUrl: UNSUB_PLACEHOLDER });
-  // The placeholder stays in both versions; SendGrid swaps in each person's link.
-  const text = htmlToText(html);
 
   const { data: campaign, error: campErr } = await admin
     .from("email_campaigns")
@@ -82,12 +80,14 @@ export async function POST(request: Request) {
       name: design.name,
       subject,
       preheader: design.preheader,
-      from_name: fromName,
-      reply_to: replyTo,
+      from_name: body.fromName?.trim() || EMAIL_FROM_NAME,
+      reply_to: body.replyTo?.trim() || null,
       html_snapshot: html,
       audience: body.audience,
-      status: sendAtUnix ? "scheduled" : "sending",
-      scheduled_for: sendAtUnix ? new Date(sendAtUnix * 1000).toISOString() : null,
+      // Held as "scheduled" until every recipient is lined up, so the sender
+      // can't start on half a list.
+      status: "scheduled",
+      scheduled_for: scheduledFor ?? new Date().toISOString(),
       recipient_count: recipients.length,
       created_by: profile.id,
     })
@@ -95,8 +95,6 @@ export async function POST(request: Request) {
     .single();
   if (campErr || !campaign) return Response.json({ error: `Couldn't start the send: ${campErr?.message}` }, { status: 500 });
 
-  // One row per recipient (their id goes to SendGrid so events match back).
-  const sendRows: { id: string; email: string; name: string | null }[] = [];
   for (let i = 0; i < recipients.length; i += 1000) {
     const chunk = recipients.slice(i, i + 1000).map((r) => ({
       campaign_id: campaign.id,
@@ -104,52 +102,31 @@ export async function POST(request: Request) {
       name: r.name,
       business: r.business,
       outlet_id: r.outlet_id,
+      status: "queued",
     }));
-    const { data, error } = await admin.from("email_sends").insert(chunk).select("id, email, name");
+    const { error } = await admin.from("email_sends").insert(chunk);
     if (error) {
       await admin.from("email_campaigns").update({ status: "failed", finished_at: new Date().toISOString() }).eq("id", campaign.id);
-      return Response.json({ error: `Couldn't record recipients: ${error.message}` }, { status: 500 });
-    }
-    sendRows.push(...(data ?? []));
-  }
-
-  let sent = 0;
-  let failed = 0;
-  const errors: string[] = [];
-  for (let i = 0; i < sendRows.length; i += BATCH) {
-    const batch = sendRows.slice(i, i + BATCH);
-    const result = await sendgridSendBatch({
-      recipients: batch.map((r) => ({
-        email: r.email,
-        name: r.name,
-        sendId: r.id,
-        campaignId: campaign.id,
-        unsubscribePageUrl: unsubscribePageUrl(r.email),
-        oneClickUrl: unsubscribeOneClickUrl(r.email),
-      })),
-      subject,
-      html,
-      text,
-      fromName,
-      replyTo,
-      sendAt: sendAtUnix,
-    });
-    const ids = batch.map((r) => r.id);
-    if (result.ok) {
-      sent += batch.length;
-      await admin.from("email_sends").update({ status: "accepted", sg_message_id: result.messageId }).in("id", ids);
-    } else {
-      failed += batch.length;
-      errors.push(result.error);
-      await admin.from("email_sends").update({ status: "failed", error: result.error.slice(0, 500) }).in("id", ids);
+      return Response.json({ error: `Couldn't line up recipients: ${error.message}` }, { status: 500 });
     }
   }
 
-  const status = failed === 0 ? (sendAtUnix ? "scheduled" : "sent") : sent === 0 ? "failed" : "partial";
-  await admin
-    .from("email_campaigns")
-    .update({ status, sent_count: sent, failed_count: failed, finished_at: new Date().toISOString() })
-    .eq("id", campaign.id);
+  let firstBatch = 0;
+  if (!scheduledFor) {
+    await admin.from("email_campaigns").update({ status: "sending" }).eq("id", campaign.id);
+    if (inSendingHours()) {
+      const run = await processEmailQueue(admin);
+      firstBatch = run.sent;
+    }
+  }
 
-  return Response.json({ ok: failed === 0, campaignId: campaign.id, sent, failed, status, error: errors[0] ?? null });
+  return Response.json({
+    ok: true,
+    campaignId: campaign.id,
+    status: scheduledFor ? "scheduled" : "sending",
+    queued: recipients.length,
+    firstBatch,
+    days: estimateDays(recipients.length),
+    inHours: inSendingHours(),
+  });
 }
