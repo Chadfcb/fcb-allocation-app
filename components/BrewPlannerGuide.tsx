@@ -93,12 +93,12 @@ function sections(P: Plan[], S: Settings, data: PlannerData): Section[] {
               in a tank, a brand almost out, or a distributor running low.
             </li>
             <li>
-              <K>Click any beer</K> to open all its numbers: why it says Brew or Hold, a 10-week chart, how it splits between brands, each
-              distributor, and what&apos;s in the tanks.
+              <K>Click any beer</K> to see <K>why</K> it says Brew or Hold, in plain words. With Show all numbers on, you also get a 10-week
+              chart, where the demand comes from, how it splits between brands, each distributor, and what&apos;s in the tanks.
             </li>
             <li>
-              <K>Show all numbers</K> (top right of the table) adds the full columns back: selling per week, at distributors, our warehouse and
-              in tank. Your choice is remembered in your browser.
+              <K>Show all numbers</K> (top right of the table) adds the full columns back (selling per week, at distributors, our warehouse and
+              in tank) and the extra detail when you click a beer. Your choice is remembered in your browser.
             </li>
             <li><K>Commitments</K>: accounts that promised to buy a set amount. These raise that beer&apos;s demand (more below).</li>
             <li><K>Settings</K>: the rules the planner uses. Changing one updates the whole page right away.</li>
@@ -177,7 +177,10 @@ function sections(P: Plan[], S: Settings, data: PlannerData): Section[] {
           <Bullets>
             <li><K>Recurring accounts</K> (buying regularly): counted.</li>
             <li><K>New accounts</K> (first order in the last 60 days): counted at {S.newPct}% (a setting), since some won&apos;t reorder.</li>
-            <li><K>Lost accounts</K> (no order in 60+ days): <K>not counted</K>. They&apos;re shown so you can see what went away.</li>
+            <li>
+              <K>Lost accounts</K> (no order in 60+ days): <K>never counted</K>. We don&apos;t assume they&apos;ll come back. If one starts
+              buying again, it counts again on its own.
+            </li>
             <li><K>Saccani</K> is closed. Its old sales aren&apos;t counted unless you set how much is moving to Mussetter.</li>
           </Bullets>
           <p>Click a row and look at <K>Where demand comes from</K> to see this broken down for that beer.</p>

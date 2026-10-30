@@ -183,7 +183,7 @@ function explain(p: Plan, S: Settings, m: Mix): Para[] {
     let text = `Distributors are selling about ${r1(p.demand)} bbl a week${c(p.demand)}.`;
     if (src.length) text += ` That's ${src.join(", ")}.`;
     if (p.commitNow > 0.05) text += ` Commitments add ${r1(p.commitNow)} bbl a week by the time a new batch would be ready.`;
-    if (p.pots.lost > 0.05) text += ` Stores that stopped ordering (no order in 60+ days) used to buy ${r1(p.pots.lost)} bbl a week; that isn't counted.`;
+    if (p.pots.lost > 0.05) text += ` Stores that stopped ordering (no order in 60+ days) used to buy ${r1(p.pots.lost)} bbl a week. That is not counted unless they start buying again.`;
     const selling = p.brands.filter((b) => Math.round(b.share * 100) > 0);
     if (selling.length) text += ` By brand: ${selling.map((b) => `${b.name} ${Math.round(b.share * 100)}%`).join(", ")}.`;
     text += " Based on LilyPad store sales over the last 3 full months, with the latest month counted more.";
@@ -361,7 +361,7 @@ function PotsBox({ p, S }: { p: Plan; S: Settings }) {
     { name: "New accounts (first order in 60 days)", color: POT_COLORS.new, accounts: acc("new"), bbl: p.pots.new, counted: `${S.newPct}%` },
     { name: "Coast / no LilyPad (estimated)", color: POT_COLORS.estimated, accounts: null, bbl: p.pots.estimated, counted: "Yes" },
     { name: "Commitments", color: POT_COLORS.commitments, accounts: p.commitments.length || null, bbl: p.pots.commitments, counted: "Yes, from start date" },
-    { name: "Lost / slipping (no order in 60+ days)", accounts: acc("lost"), bbl: p.pots.lost, counted: "No" },
+    { name: "Lost (no order in 60+ days)", accounts: acc("lost"), bbl: p.pots.lost, counted: "No, only if they buy again" },
   ];
   return (
     <div className={box}>
@@ -374,7 +374,7 @@ function PotsBox({ p, S }: { p: Plan; S: Settings }) {
               <tr key={r.name} className="border-t border-neutral-800">
                 <td className={td}><span className="mr-1.5 inline-block h-2 w-2 rounded-sm align-middle" style={{ background: r.color ?? "#555" }} />{r.name}</td>
                 <td className={td}>{r.accounts ?? "–"}</td>
-                <td className={td}>{r.name.startsWith("Lost") && r.bbl > 0 ? `−${r1(r.bbl)}` : r1(r.bbl)}</td>
+                <td className={`${td} ${r.name.startsWith("Lost") ? "text-neutral-500" : ""}`}>{r1(r.bbl)}</td>
                 <td className={td}>{r.counted}</td>
               </tr>
             ))}
@@ -391,14 +391,17 @@ function PotsBox({ p, S }: { p: Plan; S: Settings }) {
   );
 }
 
-function Detail({ p, S, mix }: { p: Plan; S: Settings; mix: Mix }) {
+// Clicking a beer (2026-10-30, Chad: "waaaaay too much data for the average person
+// ... we just need to know the why mainly. The why needs to be its only block and span
+// the width of the page"): simple view = the Why block only, full width. With "Show all
+// numbers" on, the chart / demand / brand / distributor / tank blocks follow below it.
+function Detail({ p, S, mix, full }: { p: Plan; S: Settings; mix: Mix; full: boolean }) {
   const box = "rounded-lg border border-neutral-800 bg-neutral-900/60 p-3 min-w-0";
   const th = "px-1.5 py-1 text-right text-[10.5px] font-semibold uppercase tracking-wide text-neutral-500 first:text-left";
   const td = "px-1.5 py-1 text-right tabular-nums first:text-left";
   const paras = explain(p, S, mix);
   return (
-    <div className="grid gap-4 lg:grid-cols-[1.1fr_1fr]">
-      <div className="flex min-w-0 flex-col gap-4">
+    <div className="flex flex-col gap-4">
         <div className={box}>
           <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
             Why this recommendation:
@@ -414,6 +417,9 @@ function Detail({ p, S, mix }: { p: Plan; S: Settings; mix: Mix }) {
           </ol>
           <p className="mt-2.5 text-[11px] text-neutral-500">All amounts are barrels (bbl) of beer. 1 bbl = 31 gallons ≈ 2 half-barrel kegs.</p>
         </div>
+      {full && (
+      <div className="grid gap-4 lg:grid-cols-[1.1fr_1fr]">
+      <div className="flex min-w-0 flex-col gap-4">
         <div className={box}>
           <h3 className="mb-2 text-sm font-semibold">Beer outside the tanks, next 10 weeks (bbl)</h3>
           <Chart p={p} S={S} />
@@ -485,6 +491,8 @@ function Detail({ p, S, mix }: { p: Plan; S: Settings; mix: Mix }) {
           <p className="mt-1 text-[11px] text-neutral-500">Ready beer counts from next week. Others: start date + {S.lead[p.base.key]} days (setting).</p>
         </div>
       </div>
+      </div>
+      )}
     </div>
   );
 }
@@ -620,7 +628,7 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
           <h2 className="text-base font-semibold">Base beers</h2>
           <div className="flex flex-wrap items-center gap-3">
             <span className="flex items-center gap-1.5 text-xs text-neutral-500">
-              Click a beer to see {allNumbers ? "why it's recommended" : "all the numbers and why"}
+              Click a beer to see why it&apos;s recommended
               {whyNew.isNew && <NewBadge inline />}
             </span>
             <label className="flex cursor-pointer items-center gap-1.5 text-xs text-neutral-300">
@@ -749,7 +757,7 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
                     </tr>
                     {isOpen && (
                       <tr className="bg-neutral-900/40">
-                        <td colSpan={cols.length} className="p-4"><Detail p={p} S={S} mix={mix} /></td>
+                        <td colSpan={cols.length} className="p-4"><Detail p={p} S={S} mix={mix} full={allNumbers} /></td>
                       </tr>
                     )}
                   </Fragment>

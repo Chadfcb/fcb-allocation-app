@@ -230,8 +230,11 @@ const lilyRate = (D: PlannerData, S: Settings, brand: string, dist: string) => r
 // A distributor's selling rate for one brand, by pot. Lost accounts aren't counted.
 function potRates(D: PlannerData, S: Settings, brand: string, dist: string) {
   const p = D.lily.pots[brand]?.[dist];
-  // A distributor+brand that only shows up together (pots missing) falls back to all accounts as recurring.
-  if (!p) return { recurring: lilyRate(D, S, brand, dist), new: 0, lost: 0 };
+  // Lost accounts are never counted toward what to brew (Chad, 2026-10-30: "those should
+  // only be factored in if we regained them"). No groups = no sales to count — the old
+  // fallback (all accounts as recurring, lost included) is gone. ce and pots are built
+  // from the same rows in page.tsx, so this never happened in practice.
+  if (!p) return { recurring: 0, new: 0, lost: 0 };
   return { recurring: rateOf(D, S, p.recurring), new: rateOf(D, S, p.new), lost: rateOf(D, S, p.lost) };
 }
 
