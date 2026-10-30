@@ -62,15 +62,17 @@ export const BASES: BaseDef[] = [
   { key: "PR", name: "Prohibition Red Ale", tank: /prohibition/i, lead: 21, brands: [{ key: "PR", name: "Prohibition", lily: ["Prohibition Red Ale"], app: /^Prohibition/i }] },
   { key: "PV", name: "Peachy Vibes", tank: /peachy/i, lead: 21, brands: [{ key: "PV", name: "Peachy Vibes", lily: ["Peachy Vibes"], app: /^Peachy/i }] },
   { key: "NP", name: "Nectarine Pie of the Tiger", tank: /nectarine/i, lead: 21, brands: [{ key: "NP", name: "Nectarine Pie", lily: ["Nectarine Pie of the Tiger"], app: /^Nectarine/i }] },
-  { key: "LM", name: "Lime 30 Lager", tank: /lime/i, lead: 35, brands: [{ key: "LM", name: "Lime 30", lily: [], app: /^Lime 30/i }] },
-  { key: "ME", name: "Metropolis Lager", tank: /metropolis/i, lead: 35, brands: [{ key: "ME", name: "Metropolis", lily: [], app: /^Metropolis/i }] },
+  // LilyPad names checked in sales_account_sales 2026-10-30 (Lime 30 is "Lime Thirty Lager").
+  { key: "LM", name: "Lime 30 Lager", tank: /lime/i, lead: 35, brands: [{ key: "LM", name: "Lime 30", lily: ["Lime Thirty Lager"], app: /^Lime 30/i }] },
+  { key: "ME", name: "Metropolis Lager", tank: /metropolis/i, lead: 35, brands: [{ key: "ME", name: "Metropolis", lily: ["Metropolis Lager"], app: /^Metropolis/i }] },
   {
     key: "CI",
     name: "Ciders",
     tank: /cider|hatchet|pitchfork|sickle|hacksaw/i,
     lead: 21,
     brands: [
-      { key: "HA", name: "The Hatchet", lily: [], app: /hatchet/i },
+      { key: "HA", name: "The Hatchet", lily: ["The Hatchet - Cider"], app: /hatchet/i },
+      // Sickle and Hacksaw have never had LilyPad sales (checked 2026-10-30) — no names to add.
       { key: "PF", name: "The Pitchfork", lily: ["The Pitchfork - Cider"], app: /pitchfork/i },
       { key: "SI", name: "The Sickle", lily: [], app: /sickle/i },
       { key: "HS", name: "The Hacksaw", lily: [], app: /hacksaw/i },
@@ -388,7 +390,11 @@ export function plan(D: PlannerData, S: Settings, base: BaseDef): Plan {
       const lily = hasLily(D, dist);
       const counted = !!D.distCountAt[dist];
       let r: number;
-      if (br.lily.length && lily) {
+      // A distributor with LilyPad store sales only ever counts real store sales
+      // (Chad, 2026-10-30: "it shouldnt have any numbers for metropolis if nothing has
+      // been sold"). Deliveries are NOT sales for them — a beer with no LilyPad sales
+      // there sells 0. Deliveries stand in only where there's no store data at all.
+      if (lily) {
         const pr = potRates(D, S, br.key, dist);
         pots.recurring += pr.recurring;
         pots.new += pr.new;

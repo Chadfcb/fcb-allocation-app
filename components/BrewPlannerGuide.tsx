@@ -173,6 +173,10 @@ function sections(P: Plan[], S: Settings, data: PlannerData): Section[] {
             <li><span className="rounded bg-amber-500/15 px-1.5 text-[11px] font-semibold text-amber-300">Estimated</span> no count and no store sales (Coast today). Both are worked out from our deliveries: what we shipped, minus what they likely sold.</li>
           </Bullets>
           <p>A distributor moves up a label on its own as soon as the better data shows up.</p>
+          <Note>
+            <K>A delivery is never counted as a sale</K> for a distributor that has store sales in LilyPad. If no stores have bought a beer
+            there yet, it shows <K>0</K>, even if we just delivered it.
+          </Note>
           <p className="font-semibold text-neutral-100">Which stores count</p>
           <Bullets>
             <li><K>Recurring accounts</K> (buying regularly): counted.</li>

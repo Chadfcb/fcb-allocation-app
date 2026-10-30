@@ -179,7 +179,7 @@ function explain(p: Plan, S: Settings, m: Mix): Para[] {
     const src: string[] = [];
     if (p.pots.recurring > 0.05) src.push(`${r1(p.pots.recurring)} bbl from stores that buy it regularly`);
     if (p.pots.newCounted > 0.05) src.push(`${r1(p.pots.newCounted)} bbl from new stores (first order in the last 60 days${S.newPct !== 100 ? `, counted at ${S.newPct}%` : ""})`);
-    if (p.pots.estimated > 0.05) src.push(`${r1(p.pots.estimated)} bbl estimated from what we've shipped (Coast, distributors with no LilyPad sales yet, or beers LilyPad doesn't track)`);
+    if (p.pots.estimated > 0.05) src.push(`${r1(p.pots.estimated)} bbl estimated from what we've shipped (Coast, and distributors with no LilyPad sales yet)`);
     let text = `Distributors are selling about ${r1(p.demand)} bbl a week${c(p.demand)}.`;
     if (src.length) text += ` That's ${src.join(", ")}.`;
     if (p.commitNow > 0.05) text += ` Commitments add ${r1(p.commitNow)} bbl a week by the time a new batch would be ready.`;
@@ -558,7 +558,7 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
   // Column headers say their unit; hover for a one-line explanation.
   const COLS: { label: string; tip: string }[] = [
     { label: "Base beer", tip: "One brew. Brands made from the same beer are listed under it." },
-    { label: "Selling per week (bbl)", tip: "What distributors sell to stores each week, in barrels. From LilyPad store sales, last 3 full months (latest counted more); Coast, distributors with no LilyPad sales yet (Superior for now) and beers LilyPad doesn't track are estimated from our deliveries." },
+    { label: "Selling per week (bbl)", tip: "What distributors sell to stores each week, in barrels. From LilyPad store sales, last 3 full months (latest counted more); Coast and distributors with no LilyPad sales yet (Superior for now) are estimated from our deliveries. Everyone else: real store sales only, a delivery never counts as a sale." },
     { label: "At distributors (bbl)", tip: "Barrels sitting in distributor warehouses now: each one's newest Ekos count (estimated for Coast)." },
     { label: "Our warehouse (bbl)", tip: "Barrels of packaged beer in our warehouse, from this week's Inventory & Allocation." },
     { label: "In tank (bbl)", tip: "Barrels in our fermenters for this beer, with when they'll be packaged." },
