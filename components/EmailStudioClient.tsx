@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -15,6 +15,7 @@ import {
 } from "@/lib/creativeAssets";
 import EmailAudienceTab, { type ListRow } from "@/components/EmailAudienceTab";
 import EmailSentTab, { type CampaignRow } from "@/components/EmailSentTab";
+import EmailStudioGuide from "@/components/EmailStudioGuide";
 
 // Admin → Email Studio (added 2026-10-29, per Chad — Phase 1 of
 // claude/email-designer-plan.md). Two tabs:
@@ -25,6 +26,8 @@ import EmailSentTab, { type CampaignRow } from "@/components/EmailSentTab";
 //                      (Phase 5, 2026-10-30).
 //   Sent             — every email sent or scheduled, with delivered / opened /
 //                      clicked / bounced / unsubscribed (Phase 5).
+//   How to use       — step-by-step guide (2026-10-30), plus a one-time
+//                      welcome box pointing new users to the Quick start.
 
 export type DesignRow = {
   id: string;
@@ -37,7 +40,8 @@ export type DesignRow = {
 };
 export type AssetRow = CreativeAsset;
 
-type Tab = "emails" | "library" | "audience" | "sent";
+type Tab = "emails" | "library" | "audience" | "sent" | "guide";
+const WELCOME_KEY = "fcb-email-studio-welcome-dismissed";
 type KindFilter = "all" | "image" | "gif" | "psd" | "video" | "other";
 
 function fmtWhen(iso: string) {
@@ -75,6 +79,26 @@ export default function EmailStudioClient({
   const router = useRouter();
   const [supabase] = useState(() => createClient());
   const [tab, setTab] = useState<Tab>("emails");
+  // First-visit welcome (remembered per browser; shows again if storage is blocked).
+  const [showWelcome, setShowWelcome] = useState(false);
+  useEffect(() => {
+    let seen = false;
+    try {
+      seen = window.localStorage.getItem(WELCOME_KEY) === "1";
+    } catch {
+      // storage blocked — just show it
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- read once after mount (localStorage isn't available during server render)
+    if (!seen) setShowWelcome(true);
+  }, []);
+  function dismissWelcome() {
+    setShowWelcome(false);
+    try {
+      window.localStorage.setItem(WELCOME_KEY, "1");
+    } catch {
+      // ignore
+    }
+  }
   const [designs, setDesigns] = useState(initialDesigns);
   const [assets, setAssets] = useState(initialAssets);
   const [busy, setBusy] = useState(false);
@@ -116,7 +140,7 @@ export default function EmailStudioClient({
     setDesigns((prev) => prev.filter((x) => x.id !== d.id));
   }
 
-  const tabBtn = (key: Tab, label: string, count: number) => (
+  const tabBtn = (key: Tab, label: string, count: number | null) => (
     <button
       type="button"
       onClick={() => setTab(key)}
@@ -124,7 +148,7 @@ export default function EmailStudioClient({
         tab === key ? "bg-brand/20 text-neutral-100" : "text-neutral-400 hover:text-neutral-200"
       }`}
     >
-      {label} <span className="text-neutral-500">{count}</span>
+      {label} {count !== null && <span className="text-neutral-500">{count}</span>}
     </button>
   );
 
@@ -155,11 +179,36 @@ export default function EmailStudioClient({
       )}
       {msg && <p className="text-sm text-amber-300">{msg}</p>}
 
-      <div className="flex gap-2">
+      {showWelcome && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-brand/40 bg-brand/10 px-4 py-3 text-sm text-neutral-200">
+          <p>
+            <strong className="text-neutral-100">New to Email Studio?</strong> The Quick start walks you through your first email in 6
+            steps. You can always find it under <strong>How to use</strong>.
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setTab("guide");
+                dismissWelcome();
+              }}
+              className="rounded-full bg-brand px-4 py-1.5 text-sm font-semibold text-black"
+            >
+              Open the Quick start
+            </button>
+            <button type="button" onClick={dismissWelcome} className="rounded-full border border-neutral-700 px-4 py-1.5 text-sm text-neutral-200">
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="flex flex-wrap gap-2">
         {tabBtn("emails", "Emails", designs.length)}
         {tabBtn("library", "Creative Library", assets.length)}
         {tabBtn("audience", "Audience", lists.length)}
         {tabBtn("sent", "Sent", campaigns.length)}
+        {tabBtn("guide", "How to use", null)}
       </div>
 
       {tab === "emails" ? (
@@ -169,6 +218,8 @@ export default function EmailStudioClient({
           <CanvaHowTo />
           <CreativeLibrary supabase={supabase} assets={assets} setAssets={setAssets} />
         </>
+      ) : tab === "guide" ? (
+        <EmailStudioGuide />
       ) : tab === "audience" ? (
         <EmailAudienceTab lists={lists} suppressionCount={suppressionCount} accountEmailCount={accountEmailCount} />
       ) : (

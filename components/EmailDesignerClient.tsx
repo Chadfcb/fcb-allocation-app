@@ -9,6 +9,7 @@ import { isWebImage, uploadCreativeFiles, type CreativeAsset } from "@/lib/creat
 import { buildEmailDocument } from "@/lib/email/studio";
 import EmailSendDialog from "@/components/EmailSendDialog";
 import ErnieStudioPanel from "@/components/ErnieStudioPanel";
+import EmailStudioGuide from "@/components/EmailStudioGuide";
 
 // Email Studio's drag-and-drop email designer (added 2026-10-29, per Chad —
 // Phase 1 of claude/email-designer-plan.md). Built on GrapesJS + its
@@ -82,6 +83,8 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
   const [sendOpen, setSendOpen] = useState(false);
   // Ernie panel (added 2026-10-30) + the Creative Library as it grows this session.
   const [ernieOpen, setErnieOpen] = useState(false);
+  // "?" — the How to use guide beside the designer (added 2026-10-30).
+  const [helpOpen, setHelpOpen] = useState(false);
   const [library, setLibrary] = useState<CreativeAsset[]>(assets);
 
   // Start the designer once.
@@ -341,7 +344,27 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
           <option value="ready">Ready</option>
         </select>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <button type="button" className={btn} disabled={!ready} onClick={() => setErnieOpen(true)}>
+          <button
+            type="button"
+            className={btn}
+            onClick={() => {
+              setErnieOpen(false);
+              setHelpOpen(true);
+            }}
+            title="How to use"
+            aria-label="How to use"
+          >
+            ?
+          </button>
+          <button
+            type="button"
+            className={btn}
+            disabled={!ready}
+            onClick={() => {
+              setHelpOpen(false);
+              setErnieOpen(true);
+            }}
+          >
             ✨ Ernie
           </button>
           <button type="button" className={btn} disabled={!ready} onClick={openPreview}>
@@ -418,6 +441,20 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
         {!ready && <p className="p-6 text-sm text-neutral-500">Loading the designer…</p>}
         <div ref={containerRef} className="h-full" />
       </div>
+
+      {helpOpen && (
+        <aside className="fixed inset-y-0 right-0 z-40 flex w-full max-w-[460px] flex-col border-l border-neutral-800 bg-neutral-950 shadow-2xl">
+          <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
+            <h2 className="text-base font-semibold text-neutral-100">How to use</h2>
+            <button type="button" onClick={() => setHelpOpen(false)} className="text-sm text-neutral-400 hover:text-neutral-100">
+              Close
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto px-4 py-4">
+            <EmailStudioGuide compact initialOpen="designing" />
+          </div>
+        </aside>
+      )}
 
       {ernieOpen && (
         <ErnieStudioPanel
