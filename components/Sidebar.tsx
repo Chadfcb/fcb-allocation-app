@@ -86,6 +86,8 @@ const NEW_SIDEBAR_IDS: string[] = [
   "/twilio/how-it-works",
   // Email Studio (2026-10-29) — Eddie's email designer, under Admin.
   "/admin/email",
+  // Age Check (2026-10-30) — website 21+ check editor, under Admin.
+  "/admin/age-check",
   // Oobli and Ugly Fresca — new brands added under Labels (2026-09-05),
   // per Chad: "remember, these will be new to everyone."
   "section:pos-labels-oobli",
@@ -1484,6 +1486,14 @@ function AdminIcon({ href }: { href: string }) {
       <NavIcon>
         <rect x="3" y="5" width="18" height="14" rx="2.5" />
         <path d="M3.5 7l8.5 6 8.5-6" />
+      </NavIcon>
+    );
+  }
+  if (href.startsWith("/admin/age-check")) {
+    return (
+      <NavIcon>
+        <path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z" />
+        <path d="M9 12.5l2 2 4-4.5" />
       </NavIcon>
     );
   }

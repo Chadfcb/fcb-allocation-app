@@ -42,11 +42,17 @@ export async function proxy(request: NextRequest) {
 // login: /api/email/* (unsubscribe one-click — signed; open pixel; click
 // tracking — signed) and the /email/unsubscribe page.
 //
+// Same for the websites' age check (added 2026-10-30): /api/age-check/script
+// is loaded by fcbbrands.com and fullcirclebrewing.com on every page, by
+// visitors with no app login. It only returns the check's design (no app
+// data). Its default images live in /public/age-check (already exempt as
+// image files).
+//
 // Any other route under /api/cron/* or /api/slack/* added later gets the
 // same exemption; every other route (pages and the rest of /api/*) is
 // untouched and still requires a real login exactly as before.
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/cron|api/slack|api/google-calendar/hook|api/twilio|api/sms-signup|api/email-studio/worker|api/email/|email/unsubscribe|privacy$|privacy/|terms$|terms/|sms-signup$|sms-signup/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/cron|api/slack|api/google-calendar/hook|api/twilio|api/sms-signup|api/email-studio/worker|api/email/|email/unsubscribe|api/age-check|privacy$|privacy/|terms$|terms/|sms-signup$|sms-signup/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

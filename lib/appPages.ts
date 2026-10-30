@@ -98,6 +98,7 @@ export const ADMIN_LINKS: AppLink<SectionKey | undefined>[] = [
   { href: "/admin/users", label: "Users", section: "admin_users", about: "App users and what each can access." },
   { href: "/admin/audit", label: "Audit Log", section: "audit_log", about: "Every change made in the app: who, when, old and new value." },
   { href: "/admin/email", label: "Email Studio", section: "email_studio", about: "Email Studio: FCB's drag-and-drop email designer (saved email designs with subject, preview, send a test) and the Creative Library of images, GIFs, PSDs and other files used in emails." },
+  { href: "/admin/age-check", label: "Age Check", section: "age_check", about: "Age Check: the 21+ birth-date screen visitors must pass on FCB's websites (fcbbrands.com and fullcirclebrewing.com) — edit its logos, background, wording and colors; changes show on both sites within a minute." },
   { href: "/admin/ekos-sync", label: "Ekos Sync", section: "ekos_sync", about: "Automatic Ekos sync: sources, last runs, errors." },
 ];
 

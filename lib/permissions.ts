@@ -45,6 +45,9 @@ export type SectionKey =
   | "twilio"
   // Email Studio (2026-10-29) — Eddie's email designer + Creative Library.
   | "email_studio"
+  // Age Check (2026-10-30) — the 21+ birth-date check on FCB's websites
+  // (fcbbrands.com, fullcirclebrewing.com): edit its look and wording.
+  | "age_check"
   // Users and Ekos Sync pages (2026-10-29) — before this they had no key
   // (any admin, either tier, always had them). Now grantable, like the rest
   // of Admin — see ADMIN_PAGE_SECTIONS below.
@@ -253,6 +256,7 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
     //   Users and Ekos Sync can only go to a Manager (their pages write to
     //   admin-only tables); Audit Log, Twilio and Email Studio can go to
     //   anyone — Email Studio is how Eddie gets in with nothing else.
+    //   Age Check (2026-10-30) can go to anyone too.
     // RLS: has_section(...) in sql/admin_section_access.sql plus each
     // feature's own SQL (audit, twilio_sms, email_studio).
     key: "admin",
@@ -262,6 +266,7 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
       { key: "audit_log", label: "Audit Log" },
       { key: "twilio", label: "Twilio" },
       { key: "email_studio", label: "Email Studio" },
+      { key: "age_check", label: "Age Check" },
       { key: "ekos_sync", label: "Ekos Sync" },
     ],
   },
@@ -279,7 +284,7 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
 // 2026-10-29, per Chad: every Admin page joined this list ("managers should
 // not see anything in admin period, only admins, or if an admin grants them
 // access to that section").
-export const ADMIN_PAGE_SECTIONS: SectionKey[] = ["admin_users", "audit_log", "twilio", "email_studio", "ekos_sync"];
+export const ADMIN_PAGE_SECTIONS: SectionKey[] = ["admin_users", "audit_log", "twilio", "email_studio", "age_check", "ekos_sync"];
 // Admin pages that can only be granted to a Manager, never an Employee —
 // their pages write to tables only admins (either tier) can change.
 export const MANAGER_ONLY_ADMIN_SECTIONS: SectionKey[] = ["admin_users", "ekos_sync"];
