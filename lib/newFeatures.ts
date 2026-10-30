@@ -80,6 +80,12 @@ export const NEW_FEATURES: NewFeature[] = [
     added: "2026-10-28",
   },
   {
+    id: "feature:brew-planner-how-it-works",
+    page: "/brew-planner",
+    label: "Brew Planner: How this works button — plain-English guide to the whole page, with examples from today's numbers",
+    added: "2026-10-30",
+  },
+  {
     id: "feature:brew-planner-why",
     page: "/brew-planner",
     label: "Brew Planner: Why this recommendation — plain-English write-up per base beer (click a row) + one-line reason in the table",

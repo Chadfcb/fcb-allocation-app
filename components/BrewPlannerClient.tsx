@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { logChange } from "@/lib/audit";
 import { useNewFeature } from "@/lib/newFeatures";
 import NewBadge from "@/components/NewBadge";
+import BrewPlannerGuide from "@/components/BrewPlannerGuide";
 import {
   BASES,
   DEFAULT_SETTINGS,
@@ -477,6 +478,7 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
   const mixes = useMemo(() => Object.fromEntries(BASES.map((b) => [b.key, mixFor(b, data)])) as Record<string, Mix>, [data]);
   const whyNew = useNewFeature("feature:brew-planner-why");
   const unitsNew = useNewFeature("feature:brew-planner-units");
+  const guideNew = useNewFeature("feature:brew-planner-how-it-works");
   const brews = P.filter((p) => p.rec.action === "Brew");
   const holds = P.filter((p) => p.rec.action !== "Brew");
   const today = new Date(`${data.today}T12:00:00`);
@@ -545,7 +547,10 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <span className="mb-3 inline-flex rounded-full border border-amber-500/60 bg-amber-500/10 px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide text-amber-300">Experimental</span>
-          <h1 className="text-3xl font-semibold tracking-tight">Brew Planner</h1>
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-3xl font-semibold tracking-tight">Brew Planner</h1>
+            <BrewPlannerGuide P={P} S={S} data={data} isNew={guideNew.isNew} onSeen={() => guideNew.dismiss()} />
+          </div>
           <p className="mt-1 max-w-3xl text-sm text-neutral-400">
             Work in progress. What to brew this cycle and how much, from distributor stock, LilyPad sales, our warehouse and what&apos;s in tank. Check it against your own call before brewing.
           </p>

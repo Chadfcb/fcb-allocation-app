@@ -284,6 +284,31 @@ export async function syncLilypadSales(admin: SupabaseClient): Promise<SalesSync
     }
   }
 
+  // First sales ever for a distributor (Chad, 2026-10-30: "i want to use it as
+  // a notification for me to know when their data is coming in" — Superior
+  // started reporting inventory to VIP/Ekos but had no LilyPad sales yet).
+  // Checked BEFORE the save below, against every month already in the app, so
+  // it fires on the one run that first brings a distributor in and never again.
+  // It's added to `issues`, which sends the usual "Automatic sync needs a look"
+  // email — nothing is wrong, the sales are saved normally.
+  const byDist = new Map<string, { rows: number; ce: number }>();
+  for (const r of rows) {
+    if (!r.distributor) continue;
+    const t = byDist.get(r.distributor) ?? { rows: 0, ce: 0 };
+    t.rows += 1;
+    t.ce += r.ce;
+    byDist.set(r.distributor, t);
+  }
+  for (const [dist, t] of byDist) {
+    const { data: seen, error } = await admin.from("sales_account_sales").select("id").eq("distributor", dist).limit(1);
+    if (error) continue; // only a heads-up — never let it stop the sync
+    if (!seen?.length) {
+      issues.push(
+        `New: first LilyPad sales ever for ${dist} — ${t.rows} store-month rows, ${Math.round(t.ce * 10) / 10} cases (CE). Nothing is wrong; this is a one-time heads-up and their sales are saved.`,
+      );
+    }
+  }
+
   // New accounts first (existing ones are never changed here).
   for (let i = 0; i < accounts.length; i += 1000) {
     const { error } = await admin

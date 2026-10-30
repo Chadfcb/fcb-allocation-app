@@ -233,9 +233,12 @@ async function gather(admin: Admin): Promise<PlannerData> {
       value: `synced ${when(meta?.imported_at ?? null)} · newest sale ${meta?.as_of ? pacific(new Date(`${meta.as_of}T12:00:00Z`), { month: "short", day: "numeric" }) : "—"}`,
       old: false,
     },
-    { label: "Ekos tanks", value: `synced ${when(tanksSynced)}`, old: false },
+    // Same order as the Base beers columns (2026-10-30, Chad: the chips showed
+    // our warehouse "but doesnt show our tanks" — it was labeled "Ekos tanks").
     { label: "Distributor counts", value: `from Ekos, synced ${when(distSynced)}`, old: false },
     { label: "Our warehouse", value: `${week?.label ?? "—"}, last updated ${when(whUpdated)}`, old: !!whUpdated && now.getTime() - new Date(whUpdated).getTime() > 8 * 864e5 },
+    // Ekos tank sync runs every morning; orange if it hasn't run in over a day.
+    { label: "Our tanks", value: `from Ekos, synced ${when(tanksSynced)}`, old: !tanksSynced || now.getTime() - new Date(tanksSynced).getTime() > 864e5 + 4 * 36e5 },
   ];
 
   // --- Commitments (entered on this page) + the products they can be for
