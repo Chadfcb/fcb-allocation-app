@@ -73,7 +73,7 @@ function sections(P: Plan[], S: Settings, data: PlannerData): Section[] {
               results with care.
             </li>
             <li>
-              <K>This cycle box</K>: the answer. Beers under <K>Brew</K> (with how many barrels) and beers under <K>Hold</K>. It also shows how many
+              <K>This cycle box</K>: the answer. Beers under <K>Brew</K> (with how many barrels) and beers under <K>Hold</K>. <K>Click any of them</K> to see why, in a pop-up. It also shows how many
               fermenters are empty right now.
             </li>
             <li>

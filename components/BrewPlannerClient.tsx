@@ -249,7 +249,7 @@ function explain(p: Plan, S: Settings, m: Mix): Para[] {
     if (pull && pull.fromBatch >= 0.05) {
       out.push({
         head: "How to split the batch",
-        text: `${split.map((b) => `${b.name} ${r1(b.fromBatch)} bbl`).join(", ")}: each brand's share of sales. Pull ~${r1(pull.fromBatch)} bbl off for ${pull.name}, ${pull.key === "LM" ? "add lime" : "finish it"}, then can or keg it.`,
+        text: `${split.map((b) => `${b.name} ${r1(b.fromBatch)} bbl`).join(", ")}: each brand's share of sales. Pull ~${r1(pull.fromBatch)} bbl off for ${pull.name}, ${pull.key === "LM" ? "add lime" : pull.key === "MB" ? "add mango" : "finish it"}, then can or keg it.`,
       });
     } else if (split.length > 1) {
       out.push({ head: "How to split the batch", text: `${split.map((b) => `${b.name} ${r1(b.fromBatch)} bbl`).join(", ")}: each brand's share of sales.` });
@@ -514,6 +514,15 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
   const [S, setS] = useState<Settings>(DEFAULT_SETTINGS);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [allNumbers, setAllNumbers] = useState(false);
+  // "This cycle" pills open the Why in a pop-up (2026-10-30, Chad: "i need to be able to
+  // click on the recommended brews, to be able to see the why").
+  const [whyKey, setWhyKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!whyKey) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setWhyKey(null);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [whyKey]);
   useEffect(() => {
     try {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- read the saved view once after mount
@@ -606,22 +615,62 @@ export default function BrewPlannerClient({ data }: { data: PlannerData }) {
       <section className={`${CARD} flex flex-col gap-3 p-4`} aria-label="This brew cycle">
         <div className="text-[11px] font-semibold uppercase tracking-wide text-neutral-500">
           This {S.cycleWeeks}-week cycle · {fmtDay(today)} – {fmtDay(addDays(today, 7 * S.cycleWeeks))} · {data.emptyTanks} fermenters empty
+          <span className="ml-2 font-normal normal-case tracking-normal text-neutral-500">· Click a beer to see why</span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="w-12 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Brew</span>
           {brews.length === 0 && <span className="text-sm text-neutral-400">Nothing needed this cycle.</span>}
           {brews.map((p) => (
-            <span key={p.base.key} className="rounded-full bg-[#6ABC46] px-3 py-1 text-[13px] font-semibold text-black">
+            <button
+              key={p.base.key}
+              type="button"
+              onClick={() => setWhyKey(p.base.key)}
+              title="See why"
+              className="cursor-pointer rounded-full bg-[#6ABC46] px-3 py-1 text-[13px] font-semibold text-black hover:bg-[#7fcf5a] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+            >
               {p.base.name} · {p.rec.bbl} bbl{mangoLine(p) ? <span className="font-medium"> ({mangoLine(p)})</span> : null}
-            </span>
+              <span className="ml-1.5 text-[11px] font-medium opacity-70">Why?</span>
+            </button>
           ))}
           {brews.length > 0 && <span className="text-[13px] tabular-nums text-neutral-500">{brews.reduce((a, p) => a + p.rec.bbl, 0)} bbl total</span>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="w-12 text-[11px] font-semibold uppercase tracking-wide text-neutral-500">Hold</span>
-          {holds.map((p) => <span key={p.base.key} className={PILL_HOLD}>{p.base.name}</span>)}
+          {holds.map((p) => (
+            <button
+              key={p.base.key}
+              type="button"
+              onClick={() => setWhyKey(p.base.key)}
+              title="See why"
+              className={`${PILL_HOLD} cursor-pointer hover:border-neutral-500 hover:text-neutral-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60`}
+            >
+              {p.base.name}
+            </button>
+          ))}
         </div>
       </section>
+
+      {(() => {
+        const wp = whyKey ? P.find((x) => x.base.key === whyKey) : null;
+        if (!wp) return null;
+        return (
+          <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto p-4 sm:p-8" role="dialog" aria-modal="true" aria-label={`Why: ${wp.base.name}`}>
+            <div className="absolute inset-0 bg-black/60" onClick={() => setWhyKey(null)} />
+            <div className="relative w-full max-w-3xl rounded-xl border border-neutral-800 bg-neutral-950 p-4 shadow-2xl">
+              <div className="mb-3 flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-semibold">{wp.base.name}</h2>
+                  {wp.base.brands.length > 1 && <p className="text-xs text-neutral-500">{wp.base.brands.map((b) => b.name).join(" · ")}</p>}
+                </div>
+                <button type="button" onClick={() => setWhyKey(null)} className="rounded-md border border-neutral-700 px-2.5 py-1 text-sm hover:border-[#6ABC46]">
+                  Close
+                </button>
+              </div>
+              <Detail p={wp} S={S} mix={mixes[wp.base.key]} full={false} />
+            </div>
+          </div>
+        );
+      })()}
 
       <section className={CARD} aria-label="Base beers">
         <div className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
