@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/client";
 import type { Profile, Role } from "@/lib/types/db";
 import { firstNameFor } from "@/lib/displayName";
 import {
+  ADMIN_PAGE_SECTIONS,
+  MANAGER_ONLY_ADMIN_SECTIONS,
   GROUP_KEYS,
   GROUP_LABEL,
   GROUP_SECTIONS,
@@ -146,9 +148,11 @@ function accessSummary(user: UserRow): string {
   if (tier === "administrator") return "All sections";
 
   if (tier === "manager") {
-    // Everything else is already automatic for a Manager — Finance is the
-    // one thing that isn't, so that's the only thing worth naming here.
-    return state.finance ? "All sections (+ Finance)" : "All sections except Finance";
+    // Everything else is already automatic for a Manager — Finance and the
+    // Admin pages (2026-10-29) aren't, so those are what's worth naming.
+    const adminPages = ADMIN_PAGE_SECTIONS.filter((k) => state.pages.includes(k)).map((k) => SECTION_LABEL[k]);
+    const extras = [...(state.finance ? ["Finance"] : []), ...(adminPages.length ? [`Admin (${adminPages.join(", ")})`] : [])];
+    return extras.length ? `All sections except Finance & Admin, plus ${extras.join(", ")}` : "All sections except Finance & Admin";
   }
 
   // Employee — same as today: list whichever categories are actually
@@ -186,6 +190,44 @@ function formatLastActive(lastActiveAt: string | null): string {
   return date.toLocaleDateString();
 }
 
+// The Admin pages (Users, Audit Log, Twilio, Email Studio, Ekos Sync), each
+// its own checkbox — only ever shown to an Administrator (2026-10-29, per
+// Chad: "managers should not see anything in admin period, only admins, or
+// if an admin grants them access to that section"). Users and Ekos Sync are
+// only offered for a Manager.
+function AdminPagesPicker({
+  tier,
+  state,
+  onToggle,
+}: {
+  tier: Tier;
+  state: GroupSelectionState;
+  onToggle: (key: ToggleKey, checked: boolean) => void;
+}) {
+  const pages = ADMIN_PAGE_SECTIONS.filter((k) => tier === "manager" || !MANAGER_ONLY_ADMIN_SECTIONS.includes(k));
+  return (
+    <div className="rounded-md border border-violet-900 bg-violet-950/30 px-3 py-2">
+      <p className="text-sm font-medium text-neutral-100">Admin pages</p>
+      <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 pl-1">
+        {pages.map((page) => (
+          <label key={page} className="flex items-center gap-1.5 py-0.5 text-[13px] text-neutral-300">
+            <input
+              type="checkbox"
+              checked={state.pages.includes(page)}
+              onChange={(e) => onToggle(page, e.target.checked)}
+              className="h-3.5 w-3.5 accent-white"
+            />
+            {SECTION_LABEL[page]}
+          </label>
+        ))}
+      </div>
+      <p className="mt-1 text-xs text-neutral-400">
+        Nobody but Administrators sees these automatically. Only an Administrator can give them out.
+      </p>
+    </div>
+  );
+}
+
 function GroupChecklist({
   tier,
   viewerIsSuperAdmin,
@@ -202,21 +244,24 @@ function GroupChecklist({
   if (tier === "administrator") {
     return (
       <p className="rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-xs text-neutral-400">
-        Administrators automatically have access to every section, including Finance, Ernie AI,
-        and Users management — nothing to pick.
+        Administrators automatically have access to every section, including Finance, Ernie AI
+        and everything under Admin — nothing to pick.
       </p>
     );
   }
 
   // A Manager already has every ordinary section and Ernie AI automatically
-  // (same as an Administrator) — Finance is the one exception, and only an
-  // Administrator can grant or revoke it.
+  // (same as an Administrator). Exceptions, which only an Administrator can
+  // grant or revoke: Finance, and (since 2026-10-29, per Chad — "managers
+  // should not see anything in admin period, only admins, or if an admin
+  // grants them access to that section") every Admin page.
   if (tier === "manager") {
     if (!viewerIsSuperAdmin) {
       return (
         <p className="rounded-md border border-neutral-700 bg-neutral-900 px-3 py-2 text-xs text-neutral-400">
-          Managers automatically have access to every section except Finance, including Ernie AI
-          and Users management. Only an Administrator can grant Finance access.
+          Managers automatically have access to every section except Finance and the Admin pages
+          (Users, Audit Log, Twilio, Email Studio, Ekos Sync), including Ernie AI. Only an
+          Administrator can grant Finance or Admin pages.
         </p>
       );
     }
@@ -237,6 +282,7 @@ function GroupChecklist({
             admin doesn&apos;t include Finance, per Chad.
           </p>
         </div>
+        <AdminPagesPicker tier={tier} state={state} onToggle={onToggle} />
         <p className="text-xs text-neutral-500">
           Everything else (Operations, Sales, Ernie AI, etc.) is already automatic for Managers —
           nothing else to pick.
@@ -250,8 +296,9 @@ function GroupChecklist({
   // other category but not Finance (if this Employee already has Finance
   // from an earlier Administrator grant, it stays untouched — it's simply
   // not rendered for a Manager to accidentally uncheck).
+  // Admin pages are drawn separately below (Administrators only).
   const visibleGroups = GROUP_KEYS.filter(
-    (group) => GROUP_SECTIONS[group].length > 0 && (group !== "finance" || viewerIsSuperAdmin),
+    (group) => GROUP_SECTIONS[group].length > 0 && group !== "admin" && (group !== "finance" || viewerIsSuperAdmin),
   );
 
   return (
@@ -313,8 +360,10 @@ function GroupChecklist({
         </p>
       </div>
 
+      {viewerIsSuperAdmin && <AdminPagesPicker tier={tier} state={state} onToggle={onToggle} />}
+
       <p className="text-xs text-neutral-500">
-        Dashboard and Users management stay admin-only.
+        The Operations Dashboard stays admin-only. Users and Ekos Sync can only be given to a Manager.
       </p>
     </div>
   );
@@ -423,7 +472,10 @@ export default function UsersPage() {
         .from("profiles")
         .update({ full_name: editFullName.trim() || null })
         .eq("id", userId);
-      const desired = editTier === "administrator" ? [] : expandGroupState(editSections);
+      const desired = (editTier === "administrator" ? [] : expandGroupState(editSections)).filter(
+        // Users / Ekos Sync can only stay with a Manager (2026-10-29).
+        (k) => editTier === "manager" || !(MANAGER_ONLY_ADMIN_SECTIONS as AnySectionKey[]).includes(k),
+      );
       await saveSections(userId, desired);
       setEditingId(null);
       await load();
@@ -526,8 +578,8 @@ export default function UsersPage() {
       <div>
         <h1 className="text-lg font-semibold text-neutral-100">Users</h1>
         <p className="text-sm text-neutral-400">
-          Administrators have access to everything, including Finance. Managers have everything
-          except Finance, unless an Administrator grants it separately. Employees get exactly the
+          Administrators have access to everything, including Finance and Admin. Managers have
+          everything except Finance and the Admin pages, unless an Administrator grants them. Employees get exactly the
           categories checked below — checking a category grants every page under it — including
           whether they have Ernie AI at all.
         </p>

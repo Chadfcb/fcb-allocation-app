@@ -45,6 +45,11 @@ export type SectionKey =
   | "twilio"
   // Email Studio (2026-10-29) — Eddie's email designer + Creative Library.
   | "email_studio"
+  // Users and Ekos Sync pages (2026-10-29) — before this they had no key
+  // (any admin, either tier, always had them). Now grantable, like the rest
+  // of Admin — see ADMIN_PAGE_SECTIONS below.
+  | "admin_users"
+  | "ekos_sync"
   // Distributors (2026-10-22) — one key per distributor page, from
   // lib/distributorPages.ts (dist_matagrano, dist_guardian, …).
   | DistributorSectionKey;
@@ -97,9 +102,7 @@ export type GroupKey =
   | "sales_dashboard"
   | "distributors"
   | "tasks"
-  | "twilio"
-  | "email_studio"
-  | "audit_log";
+  | "admin";
 
 export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[] }[] = [
   {
@@ -238,33 +241,29 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
     items: [{ key: "tasks", label: "Tasks" }],
   },
   {
-    // Twilio — added 2026-10-29 per Chad; in the sidebar it's a sub-category
-    // of Admin (between Audit Log and Ekos Sync). Admins always have it.
-    // Setup & Compliance + Text Sign-ups (texting accounts about new items).
-    // RLS: has_section(auth.uid(), 'twilio') in sql/twilio_sms.sql.
-    key: "twilio",
-    label: "Twilio",
-    items: [{ key: "twilio", label: "Twilio" }],
-  },
-  {
-    // Email Studio — added 2026-10-29 per Chad: "We just need an area where
-    // Eddie can design the emails we want to send out." Under Admin in the
-    // sidebar. Eddie gets only this. RLS: has_section(auth.uid(),
-    // 'email_studio') in sql/email_studio.sql.
-    key: "email_studio",
-    label: "Email Studio",
-    items: [{ key: "email_studio", label: "Email Studio" }],
-  },
-  {
-    key: "audit_log",
-    // Moved out of Operations into its own top-level category — per Chad,
-    // 2026-09-05: "lets move audit log to a main category, below Users,
-    // and out of operations." The underlying SectionKey value is
-    // unchanged ("audit_log"), so existing grants and RLS keep working —
-    // only which Users > Edit toggle it lives under (and where it shows
-    // up in the Sidebar) changed.
-    label: "Audit Log",
-    items: [{ key: "audit_log", label: "Audit Log" }],
+    // Admin — one category for every page in the sidebar's Admin section,
+    // each page its own checkbox (like Distributors). Per Chad, 2026-10-29:
+    // "managers should not see anything in admin period, only admins, or if
+    // an admin grants them access to that section." So every page here is
+    // on ADMIN_RESTRICTED_SECTIONS: only an Administrator has them
+    // automatically and only an Administrator can grant them (Users >
+    // Edit). Replaces the separate Audit Log / Twilio / Email Studio
+    // toggles — the underlying section keys (and everyone's existing
+    // grants) are unchanged.
+    //   Users and Ekos Sync can only go to a Manager (their pages write to
+    //   admin-only tables); Audit Log, Twilio and Email Studio can go to
+    //   anyone — Email Studio is how Eddie gets in with nothing else.
+    // RLS: has_section(...) in sql/admin_section_access.sql plus each
+    // feature's own SQL (audit, twilio_sms, email_studio).
+    key: "admin",
+    label: "Admin",
+    items: [
+      { key: "admin_users", label: "Users" },
+      { key: "audit_log", label: "Audit Log" },
+      { key: "twilio", label: "Twilio" },
+      { key: "email_studio", label: "Email Studio" },
+      { key: "ekos_sync", label: "Ekos Sync" },
+    ],
   },
 ];
 
@@ -276,11 +275,23 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
 // admin, doesnt mean you get access [to Finance]... We dont want all our
 // admins to see it." Keep this in sync with has_section()'s restricted-key
 // list in sql/is_super_admin.sql.
-export const ADMIN_RESTRICTED_SECTIONS: AnySectionKey[] = ["cashflow_dashboard", "distributor_data"];
+//
+// 2026-10-29, per Chad: every Admin page joined this list ("managers should
+// not see anything in admin period, only admins, or if an admin grants them
+// access to that section").
+export const ADMIN_PAGE_SECTIONS: SectionKey[] = ["admin_users", "audit_log", "twilio", "email_studio", "ekos_sync"];
+// Admin pages that can only be granted to a Manager, never an Employee —
+// their pages write to tables only admins (either tier) can change.
+export const MANAGER_ONLY_ADMIN_SECTIONS: SectionKey[] = ["admin_users", "ekos_sync"];
+export const ADMIN_RESTRICTED_SECTIONS: AnySectionKey[] = [
+  "cashflow_dashboard",
+  "distributor_data",
+  ...ADMIN_PAGE_SECTIONS,
+];
 
 // Categories whose pages can be granted one by one in Users > Edit access
 // (every other category is all-or-nothing).
-export const PER_PAGE_GROUPS: GroupKey[] = ["distributors"];
+export const PER_PAGE_GROUPS: GroupKey[] = ["distributors", "admin"];
 
 export const GROUP_KEYS: GroupKey[] = SECTION_GROUPS.map((g) => g.key);
 

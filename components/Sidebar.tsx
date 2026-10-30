@@ -485,8 +485,11 @@ export default function Sidebar({
   // feature part — only clicking the new button does — so the trail
   // (section → page → button) stays lit until they actually find it.
   // Parent sections pick this up automatically via sectionShowsNew().
+  // Ekos sync status card: only for people with the Ekos Sync page (since
+  // 2026-10-29 that's Administrators, or a Manager granted it).
+  const canSeeEkos = hasSection(role, sections, "ekos_sync", isSuperAdmin);
   useEffect(() => {
-    if (role !== "admin") return;
+    if (!canSeeEkos) return;
     let cancelled = false;
     (async () => {
       try {
@@ -526,7 +529,7 @@ export default function Sidebar({
     return () => {
       cancelled = true;
     };
-  }, [role, supabase]);
+  }, [canSeeEkos, supabase]);
 
   function showsNew(id: string) {
     if (NEW_SIDEBAR_IDS.includes(id) && !seenNew[id]) return true;
@@ -751,7 +754,10 @@ export default function Sidebar({
   const showAuditLog = can("audit_log");
   // Users and Ekos Sync are admins-only (same rule Users always had); Audit
   // Log follows its own "audit_log" section grant.
-  const visibleAdmin = ADMIN_LINKS.filter((link) => (link.section ? can(link.section) : role === "admin"));
+  // Every Admin page has its own section since 2026-10-29 (per Chad:
+  // "managers should not see anything in admin period, only admins, or if
+  // an admin grants them access") — see ADMIN_PAGE_SECTIONS.
+  const visibleAdmin = ADMIN_LINKS.filter((link) => (link.section ? can(link.section) : role === "admin" && !!isSuperAdmin));
   // Admin's rows in order, with the Twilio sub-category slotted in right
   // under Audit Log (then Email Studio, then Ekos Sync); if this person
   // can't see Audit Log, before Email Studio / Ekos Sync, else at the end.
@@ -1347,7 +1353,7 @@ export default function Sidebar({
           )}
         </nav>
 
-        {role === "admin" && ekosStatus && (
+        {canSeeEkos && ekosStatus && (
           <Link
             href="/admin/ekos-sync"
             className="mt-auto flex flex-col gap-1.5 rounded-[18px] border p-3.5"

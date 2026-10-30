@@ -92,12 +92,13 @@ export const TWILIO_LINKS: AppLink[] = [
   { href: "/twilio/how-it-works", label: "How It Works", section: "twilio", about: "Plain-English explanation of FCB new-item texts from the customer's point of view: signing up (text JOIN to (559) 478-0269 or the web form), what texts they get, replies going to their sales rep, STOP to opt out, where setup stands, and cost." },
 ];
 
-// Users and Ekos Sync have no section: admins only.
+// Every Admin page has its own section (2026-10-29): Administrators always
+// have them; Managers and Employees only if an Administrator grants them.
 export const ADMIN_LINKS: AppLink<SectionKey | undefined>[] = [
-  { href: "/admin/users", label: "Users", section: undefined, about: "App users and what each can access." },
+  { href: "/admin/users", label: "Users", section: "admin_users", about: "App users and what each can access." },
   { href: "/admin/audit", label: "Audit Log", section: "audit_log", about: "Every change made in the app: who, when, old and new value." },
   { href: "/admin/email", label: "Email Studio", section: "email_studio", about: "Email Studio: FCB's drag-and-drop email designer (saved email designs with subject, preview, send a test) and the Creative Library of images, GIFs, PSDs and other files used in emails." },
-  { href: "/admin/ekos-sync", label: "Ekos Sync", section: undefined, about: "Automatic Ekos sync: sources, last runs, errors." },
+  { href: "/admin/ekos-sync", label: "Ekos Sync", section: "ekos_sync", about: "Automatic Ekos sync: sources, last runs, errors." },
 ];
 
 // Ernie AI sub-links (drawn under "Ernie AI" in Main).

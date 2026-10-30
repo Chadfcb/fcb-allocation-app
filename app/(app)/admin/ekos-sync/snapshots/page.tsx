@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getProfile } from "@/lib/getProfile";
+import { hasSection } from "@/lib/permissions";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 // Admin → Ekos Sync → Snapshots (added 2026-10-03). Shows every step one
@@ -19,7 +20,8 @@ interface SnapRow {
 
 export default async function SnapshotsPage({ searchParams }: { searchParams: Promise<{ group?: string }> }) {
   const profile = await getProfile();
-  if (!profile || profile.role !== "admin") redirect("/");
+  // Same access as Ekos Sync itself (2026-10-29).
+  if (!profile || profile.role !== "admin" || !hasSection(profile.role, profile.sections, "ekos_sync", profile.is_super_admin)) redirect("/");
   const { group } = await searchParams;
   const admin = createAdminClient();
 

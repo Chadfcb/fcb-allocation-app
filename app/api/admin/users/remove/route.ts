@@ -28,6 +28,16 @@ export async function POST(req: NextRequest) {
 
     const { data: me } = await supabase.from("profiles").select("role, is_super_admin").eq("id", user.id).single();
     if (me?.role !== "admin") return NextResponse.json({ error: "Only admins can remove users." }, { status: 403 });
+    // 2026-10-29: Users page access — Administrators, or a Manager granted it.
+    if (!me.is_super_admin) {
+      const { data: grant } = await supabase
+        .from("user_section_access")
+        .select("section_key")
+        .eq("user_id", user.id)
+        .eq("section_key", "admin_users")
+        .maybeSingle();
+      if (!grant) return NextResponse.json({ error: "You don't have access to Users." }, { status: 403 });
+    }
 
     const { action, userId } = ((await req.json().catch(() => ({}))) ?? {}) as { action?: string; userId?: string };
     if (action !== "remove" && action !== "restore") {

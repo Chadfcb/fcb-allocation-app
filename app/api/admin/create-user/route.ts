@@ -5,6 +5,7 @@ import {
   ALL_SECTION_KEYS,
   ERNIE_SECTION,
   ADMIN_RESTRICTED_SECTIONS,
+  MANAGER_ONLY_ADMIN_SECTIONS,
   type AnySectionKey,
 } from "@/lib/permissions";
 
@@ -48,6 +49,18 @@ export async function POST(req: NextRequest) {
         { status: 403 },
       );
     }
+    // 2026-10-29: Users page access — Administrators, or a Manager granted it.
+    if (!profile.is_super_admin) {
+      const { data: grant } = await supabase
+        .from("user_section_access")
+        .select("section_key")
+        .eq("user_id", user.id)
+        .eq("section_key", "admin_users")
+        .maybeSingle();
+      if (!grant) {
+        return NextResponse.json({ error: "You don't have access to Users." }, { status: 403 });
+      }
+    }
     const requesterIsSuperAdmin = profile.is_super_admin === true;
 
     const { email, password, role, is_super_admin, sections } = (await req.json()) as {
@@ -87,9 +100,11 @@ export async function POST(req: NextRequest) {
     const requestedSections = (sections ?? []).filter((s): s is AnySectionKey =>
       VALID_SECTIONS.has(s as AnySectionKey),
     );
-    const allowedSections = requesterIsSuperAdmin
-      ? requestedSections
-      : requestedSections.filter((s) => !ADMIN_RESTRICTED_SECTIONS.includes(s));
+    const allowedSections = (
+      requesterIsSuperAdmin ? requestedSections : requestedSections.filter((s) => !ADMIN_RESTRICTED_SECTIONS.includes(s))
+    )
+      // Users / Ekos Sync can only be given to a Manager (2026-10-29).
+      .filter((s) => effectiveRole === "admin" || !(MANAGER_ONLY_ADMIN_SECTIONS as AnySectionKey[]).includes(s));
 
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
       // This is the most likely real-world cause of this route failing —

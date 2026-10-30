@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getProfile } from "@/lib/getProfile";
+import { hasSection } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { runAutoSyncs, SYNC_SOURCES } from "@/lib/syncs/autoSyncs";
 
@@ -11,8 +12,9 @@ export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
   const profile = await getProfile();
-  if (!profile || profile.role !== "admin") {
-    return NextResponse.json({ error: "Admins only" }, { status: 403 });
+  // 2026-10-29: Administrators, or a Manager granted Ekos Sync.
+  if (!profile || profile.role !== "admin" || !hasSection(profile.role, profile.sections, "ekos_sync", profile.is_super_admin)) {
+    return NextResponse.json({ error: "No access to Ekos Sync" }, { status: 403 });
   }
 
   const body = ((await req.json().catch(() => ({}))) ?? {}) as {
