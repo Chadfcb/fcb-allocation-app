@@ -853,11 +853,31 @@ export default function InventoryPage() {
       }
       const qty = allocations[`${row.item.id}:${d.id}`]?.quantity ?? 0;
       if (qty <= 0) continue;
-      lines.push({ brand, product: row.item.name, quantity: qty, price: Number(distributorPrices[`${row.item.id}:${d.id}`]?.price ?? 0) });
+      lines.push({ brand, product: row.item.name, onHand: null, par: null, quantity: qty, price: Number(distributorPrices[`${row.item.id}:${d.id}`]?.price ?? 0) });
     }
     if (!lines.length) return;
     setDownloadingOrder(d.id);
     try {
+      // On Hand + Par Level (2026-11-02, per Chad) — the same numbers as Build
+      // Orders: the distributor's Ekos count for this week (last week's if this
+      // week has none yet) and their par level.
+      const [parRes, invRes, prevRes] = await Promise.all([
+        supabase.from("distributor_par_levels").select("product_id, par_level").eq("distributor_id", d.id),
+        supabase.from("distributor_inventory").select("product_id, on_hand_qty").eq("distributor_id", d.id).eq("week_id", week.id),
+        week.previous_week_id
+          ? supabase.from("distributor_inventory").select("product_id, on_hand_qty").eq("distributor_id", d.id).eq("week_id", week.previous_week_id)
+          : Promise.resolve({ data: [] as { product_id: string; on_hand_qty: number }[] }),
+      ]);
+      const pars = new Map(((parRes.data ?? []) as { product_id: string; par_level: number }[]).map((r) => [r.product_id, Number(r.par_level)]));
+      const thisWeek = (invRes.data ?? []) as { product_id: string; on_hand_qty: number }[];
+      const inv = thisWeek.length ? thisWeek : ((prevRes.data ?? []) as { product_id: string; on_hand_qty: number }[]);
+      const onHand = new Map(inv.map((r) => [r.product_id, Number(r.on_hand_qty)]));
+      const idByName = new Map(products.map((p) => [p.name, p.id]));
+      for (const l of lines) {
+        const id = idByName.get(l.product);
+        l.onHand = id && onHand.has(id) ? onHand.get(id)! : inv.length ? 0 : null;
+        l.par = id && pars.has(id) ? pars.get(id)! : null;
+      }
       downloadOrder(await buildOrderWorkbook(d.name, week.label, lines), orderFileName(d.name, week.label));
     } finally {
       setDownloadingOrder(null);

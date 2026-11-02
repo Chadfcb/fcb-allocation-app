@@ -16,6 +16,8 @@ import { derivePackaging } from "@/lib/packaging";
 export interface OrderLine {
   brand: string | null; // the brand divider above the product
   product: string;
+  onHand: number | null; // distributor's Ekos count (Distributor Inventory); null = none on file
+  par: number | null; // Par Level (Build Orders); null = none set
   quantity: number;
   price: number; // 0 = no price set
 }
@@ -41,7 +43,7 @@ export function orderFileName(distributor: string, weekLabel: string): string {
   return safe(`Full Circle Brewing - ${distributor} order - ${weekLabel}.xlsx`);
 }
 
-export async function buildOrderWorkbook(distributor: string, weekLabel: string, lines: OrderLine[]): Promise<ArrayBuffer> {
+export async function buildOrderWorkbook(distributor: string, weekLabel: string, lines: OrderLine[], onHandNote?: string): Promise<ArrayBuffer> {
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Order", { pageSetup: { orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
@@ -52,7 +54,9 @@ export async function buildOrderWorkbook(distributor: string, weekLabel: string,
     italic: o.italic ?? false,
     color: { argb: o.color ?? "FF1F1F1F" },
   });
-  ws.columns = [{ width: 52 }, { width: 28 }, { width: 10 }, { width: 13 }, { width: 15 }];
+  // A Product · B Package · C On Hand · D Par Level · E Quantity · F Price · G Line Total
+  const N = 7;
+  ws.columns = [{ width: 50 }, { width: 27 }, { width: 10 }, { width: 10 }, { width: 10 }, { width: 12 }, { width: 14 }];
 
   ws.addRow(["Full Circle Brewing Co."]).font = font({ bold: true, size: 16, color: GREEN });
   ws.addRow(["620 F St., Fresno, CA 93706"]).font = font({ color: "FF595959" });
@@ -66,15 +70,15 @@ export async function buildOrderWorkbook(distributor: string, weekLabel: string,
     const r = ws.addRow([k, v]);
     r.getCell(1).font = font({ bold: true });
     r.getCell(2).font = font();
-    ws.mergeCells(r.number, 2, r.number, 5);
+    ws.mergeCells(r.number, 2, r.number, N);
   }
   ws.addRow([]);
 
-  const head = ws.addRow(["Product", "Package", "Quantity", "Price", "Line Total"]);
+  const head = ws.addRow(["Product", "Package", "On Hand", "Par Level", "Quantity", "Price", "Line Total"]);
   head.eachCell((c, i) => {
     c.font = font({ bold: true, color: "FFFFFFFF" });
     c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GREEN } };
-    c.alignment = { horizontal: i === 1 || i === 2 ? "left" : "center", vertical: "middle" };
+    c.alignment = { horizontal: i === 1 || i === 2 ? "left" : "center", vertical: "middle", wrapText: true };
   });
   head.height = 20;
   const first = head.number + 1;
@@ -88,18 +92,20 @@ export async function buildOrderWorkbook(distributor: string, weekLabel: string,
       const b = ws.addRow([l.brand]);
       b.getCell(1).font = font({ bold: true, color: GREEN });
       b.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: LIGHT } };
-      ws.mergeCells(b.number, 1, b.number, 5);
+      ws.mergeCells(b.number, 1, b.number, N);
     }
     lastBrand = l.brand;
-    const r = ws.addRow([l.product, packageOf(l.product), l.quantity, l.price || null, null]);
-    r.getCell(5).value = { formula: `C${r.number}*D${r.number}`, result: l.quantity * l.price };
+    const r = ws.addRow([l.product, packageOf(l.product), l.onHand, l.par, l.quantity, l.price || null, null]);
+    r.getCell(7).value = { formula: `E${r.number}*F${r.number}`, result: l.quantity * l.price };
     r.eachCell({ includeEmpty: true }, (c, i) => {
-      c.font = font({ bold: i === 3 });
+      c.font = font({ bold: i === 5, color: i === 3 || i === 4 ? "FF595959" : undefined });
       c.border = { bottom: { style: "thin", color: { argb: "FFD9D9D9" } } };
       if (i >= 3) c.alignment = { horizontal: "center" };
     });
-    r.getCell(4).numFmt = CUR;
-    r.getCell(5).numFmt = CUR;
+    r.getCell(3).numFmt = "0";
+    r.getCell(4).numFmt = "0";
+    r.getCell(6).numFmt = CUR;
+    r.getCell(7).numFmt = CUR;
     const kind = derivePackaging(l.product).kind;
     if (kind === "keg") kegs += l.quantity;
     else if (kind === "can") cases += l.quantity;
@@ -109,19 +115,20 @@ export async function buildOrderWorkbook(distributor: string, weekLabel: string,
   const total = lines.reduce((s, x) => s + x.quantity * x.price, 0);
   ws.addRow([]);
   const sum = (label: string, value: string | number | { formula: string; result: number }, fmt?: string) => {
-    const r = ws.addRow([label, null, null, null, value]);
+    const r = ws.addRow([label, null, null, null, null, null, value]);
     r.getCell(1).font = font({ bold: true, color: GREEN });
-    r.getCell(5).font = font({ bold: true, color: GREEN });
-    r.getCell(5).alignment = { horizontal: "center" };
-    if (fmt) r.getCell(5).numFmt = fmt;
-    for (let i = 1; i <= 5; i++) r.getCell(i).fill = { type: "pattern", pattern: "solid", fgColor: { argb: LIGHT } };
+    r.getCell(N).font = font({ bold: true, color: GREEN });
+    r.getCell(N).alignment = { horizontal: "center" };
+    if (fmt) r.getCell(N).numFmt = fmt;
+    for (let i = 1; i <= N; i++) r.getCell(i).fill = { type: "pattern", pattern: "solid", fgColor: { argb: LIGHT } };
   };
   sum("Total cases", cases);
   sum("Total kegs", kegs);
   sum("Total barrels (bbl)", Math.round(bbl * 100) / 100, "0.00");
-  sum("Order total", { formula: `SUM(E${first}:E${last})`, result: total }, CUR);
+  sum("Order total", { formula: `SUM(G${first}:G${last})`, result: total }, CUR);
+  ws.addRow([]);
+  ws.addRow([onHandNote ?? "On Hand = your current inventory on file with us. Par Level = the stock level we aim to keep you at."]).font = font({ italic: true, size: 9, color: "FF595959" });
   if (lines.some((x) => !x.price)) {
-    ws.addRow([]);
     ws.addRow(["Lines with no price show – (no price set in FCB-Data Distributor Pricing)."]).font = font({ italic: true, size: 9, color: "FF595959" });
   }
   ws.addRow([]);
