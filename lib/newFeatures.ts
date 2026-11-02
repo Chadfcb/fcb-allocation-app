@@ -133,6 +133,14 @@ export const NEW_FEATURES: NewFeature[] = [
     label: `${d.name} page: All Chain Mandates / Chain Authorizations buttons (stores, buying vs missing, export)`,
     added: "2026-10-22",
   })),
+  // Removed accounts button, far right of each distributor page's header
+  // (2026-11-02). Not on Coast / Superior — no accounts, button not shown.
+  ...DISTRIBUTOR_PAGES.filter((d) => d.slug !== "coast" && d.slug !== "superior").map((d) => ({
+    id: `feature:dist-removed-accounts-${d.slug}`,
+    page: distributorHref(d.slug),
+    label: `${d.name} page: Removed accounts button — accounts taken off the lists, why, who and when, put back`,
+    added: "2026-11-02",
+  })),
   // Not on Coast or Superior (Chad, 2026-10-29): they have no accounts, so
   // there's nothing to pick in the search box and the badge could never clear.
   ...DISTRIBUTOR_PAGES.filter((d) => d.slug !== "coast" && d.slug !== "superior").map((d) => ({

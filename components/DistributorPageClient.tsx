@@ -27,6 +27,7 @@ import NewBadge from "@/components/NewBadge";
 import JamesEffectiveness from "@/components/JamesEffectiveness";
 import JamesDirection from "@/components/JamesDirection";
 import RemoveFromLists from "@/components/RemoveFromLists";
+import RemovedAccountsButton from "@/components/RemovedAccountsButton";
 import { useActionItems, type ActionRow } from "@/components/SalesActionItems";
 import {
   CARD,
@@ -51,7 +52,7 @@ import {
   wbRows,
 } from "@/components/SalesDashboardHome";
 import { REP_BY_DISTRIBUTOR } from "@/lib/salesAccounts";
-import { FILE_INVENTORY_DISTRIBUTORS, NO_INVENTORY_DISTRIBUTORS } from "@/lib/distributorPages";
+import { DISTRIBUTOR_PAGES, FILE_INVENTORY_DISTRIBUTORS, NO_INVENTORY_DISTRIBUTORS } from "@/lib/distributorPages";
 import { CARRIED_DAYS, buildStoreReports, resolveLists, splitKey, statusFor, type DashOverview, type GapStore } from "@/lib/salesDashboard";
 import { loadGapStores } from "@/lib/salesGapMany";
 import { addDaysIso, brands, distColor, fmtDay, fmtN, kpis, pctChange, periodRange, winbacksIn, type DateRange, type HomeData, type Period } from "@/lib/salesDashHome";
@@ -395,6 +396,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
   const actions = useActionItems(supabase, ov, resolved, version, dist);
 
   const rep = REP_BY_DISTRIBUTOR[dist] ?? null;
+  const pageSlug = DISTRIBUTOR_PAGES.find((p) => p.name === dist)?.slug ?? null;
   const hello = viewerName?.split(/\s+/)[0] ?? null;
   const gaps = (actions.rows ?? []).filter((r) => r.store.distributor === dist).sort((a, b) => b.impact - a.impact);
   const attention = (home?.attention ?? []).filter((a) => a.dist === dist);
@@ -667,6 +669,11 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
             </button>
           )}
         </div>
+        {/* Removed accounts (2026-11-02, per Chad — far right of the header, the
+            spot marked on his screenshot). Not on Coast / Superior (no accounts). */}
+        {pageSlug && pageSlug !== "coast" && pageSlug !== "superior" && (
+          <RemovedAccountsButton supabase={supabase} dist={dist} slug={pageSlug} version={version} onOpen={(id) => setOpenId(id)} onChanged={load} />
+        )}
       </div>
 
       {err && <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{err}</p>}
