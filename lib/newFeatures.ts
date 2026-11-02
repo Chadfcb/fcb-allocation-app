@@ -229,6 +229,20 @@ export function isFlaggedFeature(id: string): boolean {
   return NEW_FEATURES.some((f) => f.id === id);
 }
 
+// Distributors section only (2026-11-02, per Chad): "usually when we add
+// something in this sub category, its happening to all of them" — the same
+// new thing on every distributor page ("feature:dist-<name>-<slug>") clears
+// on ALL distributor pages the first time it's clicked on any one of them.
+// Returns every flagged id in the same group (just [id] for anything else).
+export function featureGroup(id: string): string[] {
+  if (!id.startsWith("feature:dist-")) return [id];
+  const d = DISTRIBUTOR_PAGES.find((p) => id.endsWith(`-${p.slug}`));
+  if (!d) return [id];
+  const base = id.slice(0, id.length - d.slug.length);
+  const group = DISTRIBUTOR_PAGES.map((p) => base + p.slug).filter(isFlaggedFeature);
+  return group.length ? group : [id];
+}
+
 // For a button on a page: is it still new for this person, and a dismiss()
 // to call from the button's onClick.
 export function useNewFeature(id: string): { isNew: boolean; dismiss: () => void } {
@@ -246,16 +260,18 @@ export function useNewFeature(id: string): { isNew: boolean; dismiss: () => void
         data: { user },
       } = await supabase.auth.getUser();
       if (!user) return;
+      // Seen on any distributor page = seen on all of them (featureGroup).
       const { data } = await supabase
         .from("sidebar_new_seen")
         .select("item_id")
         .eq("user_id", user.id)
-        .eq("item_id", id)
-        .maybeSingle();
-      if (!cancelled) setSeen(!!data);
+        .in("item_id", featureGroup(id))
+        .limit(1);
+      if (!cancelled) setSeen(!!data?.length);
     })().catch(() => {});
+    const group = featureGroup(id);
     const onSeen = (e: Event) => {
-      if ((e as CustomEvent<string>).detail === id) setSeen(true);
+      if (group.includes((e as CustomEvent<string>).detail)) setSeen(true);
     };
     window.addEventListener(NEW_SEEN_EVENT, onSeen);
     return () => {
@@ -267,7 +283,8 @@ export function useNewFeature(id: string): { isNew: boolean; dismiss: () => void
   function dismiss() {
     if (!flagged || seen) return;
     setSeen(true);
-    window.dispatchEvent(new CustomEvent(NEW_SEEN_EVENT, { detail: id }));
+    const group = featureGroup(id);
+    for (const g of group) window.dispatchEvent(new CustomEvent(NEW_SEEN_EVENT, { detail: g }));
     (async () => {
       const {
         data: { user },
@@ -275,7 +292,10 @@ export function useNewFeature(id: string): { isNew: boolean; dismiss: () => void
       if (!user) return;
       await supabase
         .from("sidebar_new_seen")
-        .upsert({ user_id: user.id, item_id: id }, { onConflict: "user_id,item_id", ignoreDuplicates: true });
+        .upsert(
+          group.map((g) => ({ user_id: user.id, item_id: g })),
+          { onConflict: "user_id,item_id", ignoreDuplicates: true },
+        );
     })().catch(() => {});
   }
 

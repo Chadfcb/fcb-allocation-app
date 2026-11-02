@@ -47,7 +47,7 @@ import type { Role } from "@/lib/types/db";
 import { hasSection, ERNIE_SECTION, type AnySectionKey, type SectionKey } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/client";
 import NewBadge from "@/components/NewBadge";
-import { NEW_FEATURES, NEW_SEEN_EVENT, featureIdsOnPage } from "@/lib/newFeatures";
+import { NEW_FEATURES, NEW_SEEN_EVENT, featureGroup, featureIdsOnPage } from "@/lib/newFeatures";
 // The page list itself lives in lib/appPages.ts — shared with Ernie (2026-10-16).
 import {
   FINANCE_LINKS,
@@ -460,7 +460,9 @@ export default function Sidebar({
       const { data } = await supabase.from("sidebar_new_seen").select("item_id").eq("user_id", user.id);
       if (cancelled || !data) return;
       const next: Record<string, true> = {};
-      for (const row of data) next[row.item_id] = true;
+      // Distributors: a new thing clicked on one distributor page counts for
+      // all of them (featureGroup, 2026-11-02) — also clears ones half-cleared before.
+      for (const row of data) for (const g of featureGroup(row.item_id)) next[g] = true;
       setSeenNew(next);
     })();
     return () => {
