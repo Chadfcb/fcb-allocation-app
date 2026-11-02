@@ -14,9 +14,16 @@ function load(version: number): Promise<JeData> {
   let p = cache.get(version);
   if (!p) {
     p = (async () => {
-      const { data, error } = await createClient().rpc("james_effectiveness");
-      if (error) throw new Error(error.message);
-      return data as JeData;
+      const supabase = createClient();
+      const [je, rm] = await Promise.all([supabase.rpc("james_effectiveness"), supabase.rpc("sales_removed_accounts", { p_outlet: null })]);
+      if (je.error) throw new Error(je.error.message);
+      const data = je.data as JeData;
+      // Remove from lists (2026-11-02): accounts taken off the lists (e.g. Plank,
+      // closed) drop out of James's targets and every Direction list. Their
+      // past check-ins and sales still count in the Effectiveness history.
+      const removed = rm.error ? [] : ((rm.data ?? []) as { outlet_id: string }[]).map((r) => r.outlet_id);
+      const off = new Set(removed);
+      return { ...data, targets: data.targets.filter((t) => !t.outlet_id || !off.has(t.outlet_id)), removed };
     })();
     p.catch(() => cache.delete(version));
     cache.set(version, p);

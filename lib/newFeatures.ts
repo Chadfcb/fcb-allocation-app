@@ -32,6 +32,15 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    // In the account pop-up, which opens from many pages (every distributor
+    // page, Account Finder, Distributor Inventory) — no single sidebar page,
+    // so no sidebar trail; the badge is on the button only.
+    id: "feature:remove-from-lists",
+    page: "popup",
+    label: "Account pop-up: Remove from lists — anyone with access takes a closed / won't-carry / duplicate account off every list (put back any time; comes back on its own if it orders again)",
+    added: "2026-11-02",
+  },
+  {
     id: "feature:build-orders-beer-total",
     page: "/build-orders",
     label: "Build Orders: Beer Total column — every package of the same beer (cans and kegs) added up in barrels",

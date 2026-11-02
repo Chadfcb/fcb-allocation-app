@@ -22,7 +22,13 @@ export default function JamesDirection({ version, onOpen }: { version: number; o
   const isNew = useNewFeature("feature:james-direction");
   const unvisitedNew = useNewFeature("feature:james-unvisited-buyers");
   const { data, err } = useJamesData(version);
-  const dir = useMemo(() => (data ? directionFor(computeJe(data, todayPacific()), data) : null), [data]);
+  const dir = useMemo(() => {
+    if (!data) return null;
+    const d = directionFor(computeJe(data, todayPacific()), data);
+    // Removed accounts (Remove from lists, 2026-11-02) never show in a Direction list.
+    const off = new Set(data.removed ?? []);
+    return off.size ? { ...d, lists: d.lists.map((l) => ({ ...l, rows: l.rows.filter((r) => !r.outlet_id || !off.has(r.outlet_id)) })) } : d;
+  }, [data]);
   const [tab, setTab] = useState<string>("chase");
   const [busy, setBusy] = useState(false);
 

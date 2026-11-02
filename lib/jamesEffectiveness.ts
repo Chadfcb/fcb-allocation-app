@@ -73,6 +73,7 @@ export interface JeData {
   lapsed?: JeLapsed[];
   unvisited_buyers?: JeUnvisited[];
   popular?: { premise: "On" | "Off"; item: string; accounts: number }[];
+  removed?: string[]; // outlet ids taken off the lists (Remove from lists, 2026-11-02)
 }
 
 export const JE_START = "2026-05-31";

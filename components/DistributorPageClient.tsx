@@ -26,6 +26,7 @@ import { useNewFeature } from "@/lib/newFeatures";
 import NewBadge from "@/components/NewBadge";
 import JamesEffectiveness from "@/components/JamesEffectiveness";
 import JamesDirection from "@/components/JamesDirection";
+import RemoveFromLists from "@/components/RemoveFromLists";
 import { useActionItems, type ActionRow } from "@/components/SalesActionItems";
 import {
   CARD,
@@ -1031,7 +1032,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
           <div className="flex flex-col gap-3">{stockContent}</div>
         </Modal>
       )}
-      {openId && <AccountPopup supabase={supabase} outletId={openId} onClose={() => setOpenId(null)} />}
+      {openId && <AccountPopup supabase={supabase} outletId={openId} onClose={() => setOpenId(null)} onChanged={load} />}
     </div>
   );
 }
@@ -1366,7 +1367,7 @@ interface SearchRow {
   is_off: boolean;
 }
 
-export function AccountPopup({ supabase, outletId, onClose }: { supabase: ReturnType<typeof createClient>; outletId: string; onClose: () => void }) {
+export function AccountPopup({ supabase, outletId, onClose, onChanged }: { supabase: ReturnType<typeof createClient>; outletId: string; onClose: () => void; onChanged?: () => void }) {
   const [d, setD] = useState<AccountDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
@@ -1415,6 +1416,8 @@ export function AccountPopup({ supabase, outletId, onClose }: { supabase: Return
               </div>
             )}
           </div>
+          {/* Remove from lists (2026-11-02, per Chad) — reps can take a closed account off every list. */}
+          <RemoveFromLists supabase={supabase} outletId={outletId} name={a.name ?? "this account"} onChanged={onChanged} />
           {/* Contacts (2026-10-22, per Chad) — same list as Sales → Accounts. */}
           <div>
             <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">Contacts</h3>

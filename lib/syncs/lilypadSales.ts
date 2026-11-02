@@ -327,6 +327,10 @@ export async function syncLilypadSales(admin: SupabaseClient): Promise<SalesSync
   const newAsOf = maxDate > asOf ? maxDate : asOf;
   const { error: refreshError } = await admin.rpc("sales_accounts_refresh", { p_as_of: newAsOf });
   if (refreshError) issues.push(`Account summaries didn't refresh: ${refreshError.message}`);
+  // Remove from lists (2026-11-02): an account a rep took off the lists that
+  // orders again goes back on by itself (sql/account_remove.sql).
+  const { data: putBack, error: putBackError } = await admin.rpc("sales_account_off_autorestore");
+  if (putBackError) issues.push(`Couldn't check removed accounts for new orders: ${putBackError.message}`);
   const { error: metaError } = await admin.from("sales_data_meta").upsert({
     id: 1,
     as_of: newAsOf,
@@ -347,6 +351,7 @@ export async function syncLilypadSales(admin: SupabaseClient): Promise<SalesSync
       `${all.length} invoice lines → ${rows.length} account-month rows for ${months[0]?.slice(0, 7)}–${months[months.length - 1]?.slice(0, 7)}; data now through ${newAsOf}` +
       (zeroLines ? `; ${zeroLines} zero-quantity lines left out` : "") +
       (skipped ? `; ${skipped} lines with no account/date/brand left out` : "") +
-      (renamed.length ? `; names matched: ${renamed.join(", ")}` : ""),
+      (renamed.length ? `; names matched: ${renamed.join(", ")}` : "") +
+      (Number(putBack) > 0 ? `; ${putBack} removed account${Number(putBack) === 1 ? "" : "s"} ordered again and went back on the lists` : ""),
   };
 }

@@ -1356,6 +1356,23 @@ interface OffRow {
   turned_off_at: string;
   turned_off_by: string | null;
 }
+// Remove from lists (2026-11-02): reason / note per removed account, and the
+// last 60 days of removals and put-backs.
+interface RemovedInfo {
+  outlet_id: string;
+  reason: string | null;
+  note: string | null;
+}
+interface OffLog {
+  outlet_id: string;
+  name: string | null;
+  distributor: string | null;
+  action: "removed" | "restored" | "auto_restored";
+  reason: string | null;
+  note: string | null;
+  done_at: string;
+  done_by: string | null;
+}
 interface SearchRow {
   outlet_id: string;
   name: string;
@@ -1367,15 +1384,23 @@ interface SearchRow {
 
 function TurnedOff({ supabase, userId, version, onChanged }: { supabase: Supa; userId: string | null; version: number; onChanged: () => void }) {
   const [rows, setRows] = useState<OffRow[] | null>(null);
+  const [why, setWhy] = useState<Record<string, RemovedInfo>>({});
+  const [log, setLog] = useState<OffLog[]>([]);
   const [q, setQ] = useState("");
   const [found, setFound] = useState<SearchRow[]>([]);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
-      const { data, error } = await supabase.rpc("sales_dash_off_list");
+      const [{ data, error }, rm, lg] = await Promise.all([
+        supabase.rpc("sales_dash_off_list"),
+        supabase.rpc("sales_removed_accounts", { p_outlet: null }),
+        supabase.rpc("sales_account_off_recent_log"),
+      ]);
       if (error) setErr(error.message);
       else setRows((data ?? []) as OffRow[]);
+      setWhy(Object.fromEntries(((rm.data ?? []) as RemovedInfo[]).map((r) => [r.outlet_id, r])));
+      setLog(((lg.data ?? []) as OffLog[]).filter((l) => l.action !== "removed"));
     })();
   }, [supabase, version]);
 
@@ -1390,7 +1415,8 @@ function TurnedOff({ supabase, userId, version, onChanged }: { supabase: Supa; u
   }, [supabase, q, version]);
 
   async function turnOn(r: OffRow) {
-    const { error } = await supabase.from("sales_account_off").delete().eq("id", r.id);
+    // Through the function so the put-back is logged (2026-11-02).
+    const { error } = await supabase.rpc("sales_account_restore", { p_outlet: r.outlet_id });
     if (error) return setErr(error.message);
     await audit(supabase, userId, "sales_account_off", r.id, "account", r.name, "turned back on");
     onChanged();
@@ -1438,12 +1464,31 @@ function TurnedOff({ supabase, userId, version, onChanged }: { supabase: Supa; u
               <div className="truncate text-xs text-neutral-500">
                 {[r.city, r.distributor, `Outlet ${r.outlet_id}`, `off ${fdate(r.turned_off_at)}${r.turned_off_by ? ` by ${r.turned_off_by}` : ""}`].filter(Boolean).join(" · ")}
               </div>
+              {why[r.outlet_id]?.reason && (
+                <div className="truncate text-xs text-amber-200/90">
+                  {why[r.outlet_id].reason}
+                  {why[r.outlet_id].note ? ` · “${why[r.outlet_id].note}”` : ""}
+                </div>
+              )}
             </div>
             <button type="button" onClick={() => turnOn(r)} className="rounded border border-[#6abc46]/60 px-2 py-0.5 text-xs text-[#9be07a] hover:bg-[#6abc46]/15">
               Turn back on
             </button>
           </div>
         ))}
+        {log.length > 0 && (
+          <>
+            <h3 className="mb-1 mt-4 text-xs font-semibold uppercase tracking-wide text-neutral-500">Put back on lists · last 60 days</h3>
+            {log.map((l, i) => (
+              <div key={`${l.outlet_id}-${i}`} className="border-t border-neutral-800 py-1.5 text-sm">
+                <div className="truncate text-neutral-200">{l.name ?? l.outlet_id}</div>
+                <div className="truncate text-xs text-neutral-500">
+                  {[l.distributor, fdate(l.done_at), l.action === "auto_restored" ? l.note : `by ${l.done_by ?? "someone"}`].filter(Boolean).join(" · ")}
+                </div>
+              </div>
+            ))}
+          </>
+        )}
       </div>
     </div>
   );
