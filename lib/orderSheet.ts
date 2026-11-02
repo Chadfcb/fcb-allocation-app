@@ -6,11 +6,10 @@
 // Builds one distributor's order for the week shown on Inventory & Allocation
 // as an Excel file: header (FCB, distributor, delivery week, date), every
 // product with a quantity grouped under its brand divider, that distributor's
-// price (Distributor Pricing) and line total, then total cases / kegs / bbl /
-// $ and "Please reply to approve this order." Same price × quantity as the
+// price (Distributor Pricing) and line total, then total cases / kegs /
+// $ (no barrels — Chad 11/2: it goes to distributors) and "Please reply to approve this order." Same price × quantity as the
 // page's Order Value row.
 
-import { bblPerUnit } from "@/lib/brewPlanner";
 import { derivePackaging } from "@/lib/packaging";
 
 export interface OrderLine {
@@ -85,7 +84,6 @@ export async function buildOrderWorkbook(distributor: string, weekLabel: string,
 
   let cases = 0;
   let kegs = 0;
-  let bbl = 0;
   let lastBrand: string | null | undefined = undefined;
   for (const l of lines) {
     if (l.brand && l.brand !== lastBrand) {
@@ -109,7 +107,6 @@ export async function buildOrderWorkbook(distributor: string, weekLabel: string,
     const kind = derivePackaging(l.product).kind;
     if (kind === "keg") kegs += l.quantity;
     else if (kind === "can") cases += l.quantity;
-    bbl += bblPerUnit(l.product) * l.quantity;
   }
   const last = ws.lastRow?.number ?? first;
   const total = lines.reduce((s, x) => s + x.quantity * x.price, 0);
@@ -124,7 +121,6 @@ export async function buildOrderWorkbook(distributor: string, weekLabel: string,
   };
   sum("Total cases", cases);
   sum("Total kegs", kegs);
-  sum("Total barrels (bbl)", Math.round(bbl * 100) / 100, "0.00");
   sum("Order total", { formula: `SUM(G${first}:G${last})`, result: total }, CUR);
   ws.addRow([]);
   ws.addRow([onHandNote ?? "On Hand = your current inventory on file with us. Par Level = the stock level we aim to keep you at."]).font = font({ italic: true, size: 9, color: "FF595959" });
