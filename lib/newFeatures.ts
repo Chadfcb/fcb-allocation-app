@@ -32,6 +32,13 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    // One id for every distributor column's button, so clicking any one clears them all.
+    id: "feature:inventory-download-order",
+    page: "/inventory",
+    label: "Inventory & Allocation: Download order button by each distributor's name — that week's order as an Excel file to email for approval",
+    added: "2026-11-02",
+  },
+  {
     // In the account pop-up, which opens from many pages (every distributor
     // page, Account Finder, Distributor Inventory) — no single sidebar page,
     // so no sidebar trail; the badge is on the button only.

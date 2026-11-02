@@ -27,6 +27,9 @@ import { PACKAGING_ITEMS, derivePackaging, computeConsumption, computeOrdersNeed
 import InventoryRecordPanel from "@/components/InventoryRecordPanel";
 import { computePalletsForDistributor } from "@/lib/pallets";
 import { chipText, tone } from "@/lib/appearance";
+import { buildOrderWorkbook, downloadOrder, orderFileName, type OrderLine } from "@/lib/orderSheet";
+import { useNewFeature } from "@/lib/newFeatures";
+import NewBadge from "@/components/NewBadge";
 
 type InventoryEditableField = "on_hand" | "unlabeled" | "to_be_packaged";
 
@@ -831,6 +834,35 @@ export default function InventoryPage() {
   }
 
   const grandOrderValue = distributors.reduce((sum, d) => sum + orderValueFor(d.id), 0);
+
+  // Download order (2026-11-02, per Chad): one distributor's order for the
+  // week shown, as an Excel file to email for approval (lib/orderSheet.ts).
+  // Same rows/prices as this grid and its Order Value row.
+  const downloadOrderNew = useNewFeature("feature:inventory-download-order");
+  const [downloadingOrder, setDownloadingOrder] = useState<string | null>(null);
+  const hasOrder = (distributorId: string) => products.some((p) => (allocations[`${p.id}:${distributorId}`]?.quantity ?? 0) > 0);
+  async function handleDownloadOrder(d: Distributor) {
+    downloadOrderNew.dismiss();
+    if (!week) return;
+    const lines: OrderLine[] = [];
+    let brand: string | null = null;
+    for (const row of combined) {
+      if (row.kind === "divider") {
+        brand = row.item.label;
+        continue;
+      }
+      const qty = allocations[`${row.item.id}:${d.id}`]?.quantity ?? 0;
+      if (qty <= 0) continue;
+      lines.push({ brand, product: row.item.name, quantity: qty, price: Number(distributorPrices[`${row.item.id}:${d.id}`]?.price ?? 0) });
+    }
+    if (!lines.length) return;
+    setDownloadingOrder(d.id);
+    try {
+      downloadOrder(await buildOrderWorkbook(d.name, week.label, lines), orderFileName(d.name, week.label));
+    } finally {
+      setDownloadingOrder(null);
+    }
+  }
 
   // While one or more distributors are locked, every OTHER distributor's
   // column dims and stops accepting input — the point isn't to protect a
@@ -2826,6 +2858,20 @@ export default function InventoryPage() {
                         {d.allocations_locked ? "🔒" : "🔓"}
                       </button>
                       {d.name}
+                      <button
+                        onClick={() => handleDownloadOrder(d)}
+                        disabled={downloadingOrder === d.id || !hasOrder(d.id)}
+                        title={hasOrder(d.id) ? `Download ${d.name}'s order for this week (Excel) to email for approval` : `${d.name} has no order this week`}
+                        aria-label={`Download ${d.name} order`}
+                        className="leading-none opacity-80 hover:opacity-100 disabled:cursor-default disabled:opacity-25"
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <path d="M12 3v12" />
+                          <path d="m7 10 5 5 5-5" />
+                          <path d="M5 21h14" />
+                        </svg>
+                      </button>
+                      {downloadOrderNew.isNew && <NewBadge inline />}
                     </span>
                   </th>
                 )
