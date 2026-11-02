@@ -340,8 +340,9 @@ body {
   justify-content: space-between;
   padding: 0 12px;
   color: var(--color-neutral-500);
-  font-size: 11px;
-  font-weight: 600;
+  /* 11px → 14px bold (2026-11-02, Chad: MAIN / DEPARTMENTS / ADMIN "larger, so they stand out") */
+  font-size: 14px;
+  font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -352,7 +353,9 @@ body {
   gap: 12px;
   padding: 9px 12px;
   border-radius: 12px;
-  color: var(--color-neutral-400);
+  /* White (2026-11-02, Chad: category names "sort of grey … i want them to stand out").
+     neutral-50 = white on dark themes; Customize light themes flip it dark. */
+  color: var(--color-neutral-50);
   font-size: 14px;
   font-weight: 500;
   text-align: left;
@@ -385,7 +388,7 @@ body {
   padding: 7px 12px 7px 18px;
   border-left: 2px solid transparent;
   border-radius: 0 10px 10px 0;
-  color: var(--color-neutral-500);
+  color: var(--color-neutral-50); /* white, 2026-11-02 (was neutral-500) */
   font-size: 13px;
   text-align: left;
 }
@@ -393,7 +396,7 @@ body {
   color: var(--color-neutral-100);
 }
 .fcb-nav-sub.is-parent {
-  color: var(--color-neutral-400);
+  color: var(--color-neutral-50);
   font-weight: 600;
 }
 .fcb-nav-sub.is-active {
