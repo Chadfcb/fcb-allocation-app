@@ -339,7 +339,8 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 0 12px;
-  color: var(--color-neutral-500);
+  /* White too (2026-11-02, Chad: "those main categories need to be white as well") */
+  color: var(--color-neutral-50);
   /* 11px → 14px bold (2026-11-02, Chad: MAIN / DEPARTMENTS / ADMIN "larger, so they stand out") */
   font-size: 14px;
   font-weight: 700;
