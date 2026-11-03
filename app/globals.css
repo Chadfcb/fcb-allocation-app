@@ -338,7 +338,10 @@ body {
   width: 100%;
   align-items: center;
   justify-content: space-between;
-  padding: 0 12px;
+  /* Left padding 12px → 2px (2026-11-03, Chad: shift MAIN / DEPARTMENTS / ADMIN
+     "left of their sub categories a bit, so they stand out"). Right side stays
+     12px so the arrows still line up. */
+  padding: 0 12px 0 2px;
   /* White too (2026-11-02, Chad: "those main categories need to be white as well") */
   color: var(--color-neutral-50);
   /* 11px → 14px bold (2026-11-02, Chad: MAIN / DEPARTMENTS / ADMIN "larger, so they stand out") */
