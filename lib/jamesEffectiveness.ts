@@ -153,6 +153,11 @@ export interface JeResult {
     delivered: number;
     conversion: number | null;
     ce: number;
+    // All time (2026-11-03, Chad: "we dont want to just focus on 30 days, we
+    // want all time" + "we want all time CE's from his results as well"):
+    // bought any time on/after committing, through the latest sales date.
+    boughtEver: number;
+    ceEver: number; // CEs bought by committed accounts since their first commitment (each sales row once)
     rebuys: number;
     targets: number;
     targetsHit: number;
@@ -168,7 +173,9 @@ export interface Commitment {
   premise: "On" | "Off" | null;
   date: string;
   items: string[];
-  delivered: boolean;
+  delivered: boolean; // bought within 30 days
+  boughtEver: boolean; // bought any time on/after the commitment (all time)
+  firstBuy: string | null; // first buy day on/after the commitment
   ce: number;
   fill: string; // all | some | unlisted | none | pending
   ce12: number;
@@ -259,6 +266,7 @@ export function computeJe(data: JeData, today: string): JeResult {
     const winEnd = addDays(cm.date, WINDOW_DAYS);
     const rows = (salesBy.get(cm.c.outlet_id) ?? []).filter((s) => buyDays(s).some((d) => d >= cm.date && d <= winEnd));
     const delivered = rows.length > 0;
+    const firstBuy = (salesBy.get(cm.c.outlet_id) ?? []).flatMap(buyDays).filter((d) => d >= cm.date).sort()[0] ?? null;
     let ce = 0;
     const bought = new Set<string>();
     for (const s of rows) {
@@ -306,7 +314,7 @@ export function computeJe(data: JeData, today: string): JeResult {
       fill = "pending";
       pending[w]++;
     } else fillNone[w]++;
-    commitOut.push({ outlet_id: cm.c.outlet_id, name: cm.c.name, city: cm.c.city, premise: premOf(cm.c), date: cm.date, items, delivered, ce, fill, ce12: Number(cm.c.ce_12mo) || 0 });
+    commitOut.push({ outlet_id: cm.c.outlet_id, name: cm.c.name, city: cm.c.city, premise: premOf(cm.c), date: cm.date, items, delivered, boughtEver: !!firstBuy, firstBuy, ce, fill, ce12: Number(cm.c.ce_12mo) || 0 });
   }
 
   // Rebuys
@@ -456,10 +464,21 @@ export function computeJe(data: JeData, today: string): JeResult {
     recent: { after: rAfter, lastYear: rLy, from: rFrom, to: salesThrough2 },
   };
 
+  // All-time bought / CEs (see totals). An account's sales count from its
+  // first commitment; a monthly sales row counts if either buy day is on/after it.
+  const firstCommit = new Map<string, string>();
+  for (const cm of commits) if (!firstCommit.has(cm.c.outlet_id)) firstCommit.set(cm.c.outlet_id, cm.date);
+  let ceEver = 0;
+  firstCommit.forEach((d0, outlet) => {
+    for (const s of salesBy.get(outlet) ?? []) if (buyDays(s).some((d) => d >= d0)) ceEver += Number(s.ce) || 0;
+  });
+
   return {
     weeks,
     rows,
     totals: {
+      boughtEver: commitOut.filter((c) => c.boughtEver).length,
+      ceEver,
       checkins: sum(total),
       committed: totCommitted,
       delivered: totDelivered,

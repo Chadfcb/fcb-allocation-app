@@ -84,8 +84,10 @@ export default function JamesEffectiveness({ version, onOpen }: { version: numbe
             { header: "Store", key: "name", width: 34 },
             { header: "City", key: "city", width: 16 },
             { header: "Committed to", key: "items", width: 48 },
-            { header: "Bought?", key: "bought", width: 9 },
-            { header: "CEs bought", key: "ce", width: 11 },
+            { header: "Bought within 30 days?", key: "bought", width: 12 },
+            { header: "Bought since (all time)?", key: "ever", width: 12 },
+            { header: "First order after committing", key: "first", width: 14 },
+            { header: "CEs bought (30 days)", key: "ce", width: 12 },
             { header: "Result", key: "fill", width: 30 },
           ],
           rows: res.commitments.map((c) => ({
@@ -94,6 +96,8 @@ export default function JamesEffectiveness({ version, onOpen }: { version: numbe
             city: c.city ?? "",
             items: c.items.join("; "),
             bought: c.delivered ? "Yes" : "No",
+            ever: c.boughtEver ? "Yes" : "No",
+            first: c.firstBuy ?? "",
             ce: Math.round(c.ce * 100) / 100,
             fill: FILL[c.fill] ?? c.fill,
           })),
@@ -119,8 +123,9 @@ export default function JamesEffectiveness({ version, onOpen }: { version: numbe
     ? [
         ["Check-ins", t.checkins.toLocaleString()],
         ["Committed accounts", t.committed.toLocaleString()],
-        ["Actually bought", t.delivered.toLocaleString(), t.conversion !== null ? `${Math.round(t.conversion * 100)}% of committed` : undefined],
-        ["CEs bought", t.ce.toFixed(1), "within 30 days of committing"],
+        // All time since committing (2026-11-03, Chad); the 30-day figure stays as the second line.
+        ["Actually bought", t.boughtEver.toLocaleString(), `${t.committed ? Math.round((t.boughtEver / t.committed) * 100) : 0}% of committed · ${t.delivered} within 30 days`],
+        ["CEs bought", t.ceEver.toFixed(1), `since committing · ${t.ce.toFixed(1)} within 30 days`],
         ["Rebuy accounts", t.rebuys.toLocaleString(), "bought 2+ times after his visit"],
         ["Targets hit", `${t.targetsHit} / ${t.targets}`],
       ]

@@ -74,7 +74,7 @@ export const NEW_FEATURES: NewFeature[] = [
   {
     id: "feature:james-not-bought",
     page: "/distributors/markstein",
-    label: "Distributors → Markstein: Effectiveness → Didn't buy button — the commitments that didn't turn into an order (didn't buy within 30 days / too soon to tell), click an account, Export",
+    label: "Distributors → Markstein: Effectiveness — Actually bought and CEs bought are now all time since committing (30-day figure underneath), plus a Didn't buy button: commitments with no order since, click an account, Export",
     added: "2026-11-03",
   },
   {
