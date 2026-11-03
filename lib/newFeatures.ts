@@ -72,6 +72,12 @@ export const NEW_FEATURES: NewFeature[] = [
     added: "2026-10-29",
   },
   {
+    id: "feature:james-not-bought",
+    page: "/distributors/markstein",
+    label: "Distributors → Markstein: Effectiveness → Didn't buy button — the commitments that didn't turn into an order (didn't buy within 30 days / too soon to tell), click an account, Export",
+    added: "2026-11-03",
+  },
+  {
     id: "feature:james-effectiveness",
     page: "/distributors/markstein",
     label: "Distributors → Markstein: Effectiveness block — one-line verdict, James's (CMC) visits and commitments checked against actual sales, week by week, targets, before & after his first visit",

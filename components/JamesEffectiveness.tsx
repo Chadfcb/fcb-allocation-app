@@ -14,6 +14,7 @@ import NewBadge from "@/components/NewBadge";
 import { CARD, MUTED, ExportButton, Pill, exportSheets, type Col } from "@/components/SalesDashboardHome";
 import { computeJe, verdictFor, type WeekRow } from "@/lib/jamesEffectiveness";
 import { useJamesData } from "@/components/useJamesData";
+import JamesNotBought from "@/components/JamesNotBought";
 
 type Tab = "summary" | "weeks" | "impact";
 
@@ -37,7 +38,7 @@ const GRADE = {
   "Needs work": { box: "border-[#fb923c]/50 bg-[#fb923c]/10", text: "text-[#fb923c]" },
 } as const;
 
-export default function JamesEffectiveness({ version }: { version: number }) {
+export default function JamesEffectiveness({ version, onOpen }: { version: number; onOpen?: (outletId: string) => void }) {
   const isNew = useNewFeature("feature:james-effectiveness");
   const { data, err } = useJamesData(version);
   const [tab, setTab] = useState<Tab>("summary");
@@ -170,6 +171,8 @@ export default function JamesEffectiveness({ version }: { version: number }) {
                 <div className="text-[11.5px] text-neutral-400">{label}</div>
                 <div className="font-mono text-lg font-semibold text-neutral-100">{value}</div>
                 {sub && <div className="text-[11px] text-neutral-500">{sub}</div>}
+                {/* 2026-11-03, Chad: see the committed accounts that didn't buy, with Export. */}
+                {label === "Actually bought" && data && <JamesNotBought commitments={res.commitments} data={data} today={todayPacific()} onOpen={onOpen} />}
               </div>
             ))}
           </div>

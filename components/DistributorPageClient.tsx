@@ -736,7 +736,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
                 next to Today's priorities; the stock list moved to the "Markstein On
                 Hand Inventory" button up top (pop-up with Export). */}
             {dist === "Markstein" ? (
-              <JamesEffectiveness version={version} />
+              <JamesEffectiveness version={version} onOpen={(id) => setOpenId(id)} />
             ) : (
               <section className={`${CARD} flex min-w-0 flex-[1_1_420px] flex-col gap-3`}>
                 <div className="flex flex-wrap items-center justify-between gap-3">
