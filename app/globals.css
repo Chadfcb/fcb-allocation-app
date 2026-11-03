@@ -335,15 +335,19 @@ body {
 }
 .fcb-nav-label {
   display: flex;
-  width: 100%;
   align-items: center;
   justify-content: space-between;
-  /* Left padding 12px → 2px (2026-11-03, Chad: shift MAIN / DEPARTMENTS / ADMIN
-     "left of their sub categories a bit, so they stand out"). Right side stays
-     12px so the arrows still line up. */
-  padding: 0 12px 0 2px;
-  /* White too (2026-11-02, Chad: "those main categories need to be white as well") */
-  color: var(--color-neutral-50);
+  /* Shifted left of the category rows (2026-11-03, Chad: shift MAIN / DEPARTMENTS /
+     ADMIN "left of their sub categories a bit, so they stand out"; then "lets
+     double it"). 20px left of the icons: no left padding, pulled out 8px, and
+     8px wider so the arrows on the right still line up. */
+  width: calc(100% + 8px);
+  margin-left: -8px;
+  padding: 0 12px 0 0;
+  /* Green accent (2026-11-03, Chad: "make the main category names stand out
+     somehow"). Uses the app accent, so it follows the Customize color.
+     (Was white, 2026-11-02.) */
+  color: var(--fcb-accent);
   /* 11px → 14px bold (2026-11-02, Chad: MAIN / DEPARTMENTS / ADMIN "larger, so they stand out") */
   font-size: 14px;
   font-weight: 700;
