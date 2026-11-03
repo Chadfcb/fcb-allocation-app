@@ -1003,41 +1003,7 @@ export default function Sidebar({
               </button>
               {departmentsOpen && (
                 <>
-                  {visibleFinance.length > 0 && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          toggleFinance();
-                          dismissNew("section:finance");
-                        }}
-                        className={parentClass(financeExpanded)}
-                      >
-                        <IconChart />
-                        Finance
-                        {parentRight(
-                          sectionShowsNew("section:finance", visibleFinance.map((link) => link.href)),
-                          financeExpanded,
-                        )}
-                      </button>
-                      {financeExpanded && (
-                        <div className="fcb-nav-sub-group">
-                          {visibleFinance.map((link) => (
-                            <Link
-                              key={link.href}
-                              href={link.href}
-                              className={linkClass(link.href)}
-                              onClick={() => dismissNew(link.href)}
-                            >
-                              {link.label}
-                              {showsNew(link.href) && <NewBadge />}
-                            </Link>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  )}
-
+                  {/* Order: Operations, Sales, Finance, Calendars (2026-11-03, per Chad). */}
                   {(visibleOperations.length > 0 || showPosTree) && (
                     <>
                       <button
@@ -1232,6 +1198,41 @@ export default function Sidebar({
                             </div>
                           )}
 
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {visibleFinance.length > 0 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          toggleFinance();
+                          dismissNew("section:finance");
+                        }}
+                        className={parentClass(financeExpanded)}
+                      >
+                        <IconChart />
+                        Finance
+                        {parentRight(
+                          sectionShowsNew("section:finance", visibleFinance.map((link) => link.href)),
+                          financeExpanded,
+                        )}
+                      </button>
+                      {financeExpanded && (
+                        <div className="fcb-nav-sub-group">
+                          {visibleFinance.map((link) => (
+                            <Link
+                              key={link.href}
+                              href={link.href}
+                              className={linkClass(link.href)}
+                              onClick={() => dismissNew(link.href)}
+                            >
+                              {link.label}
+                              {showsNew(link.href) && <NewBadge />}
+                            </Link>
+                          ))}
                         </div>
                       )}
                     </>
