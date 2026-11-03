@@ -59,6 +59,7 @@ import {
   ERNIE_LINKS,
   POS_LINKS,
   TWILIO_LINKS,
+  DATA_LINKS,
   POS_LABEL_BRANDS,
   UPC_BRANDS,
 } from "@/lib/appPages";
@@ -180,6 +181,10 @@ const ERNIE_STORAGE_KEY = "fcb-sidebar-ernie-expanded";
 // only access, lets move it to the admin section"). This key remembers
 // whether its sub-list is open.
 const TWILIO_STORAGE_KEY = "fcb-sidebar-twilio-expanded";
+// Data (2026-11-03, per Chad) — Margin Analysis, Cost Per Case and Contribution
+// Margin, moved out of Sales into a sub-category at the top of Admin. This key
+// remembers whether its sub-list is open.
+const DATA_STORAGE_KEY = "fcb-sidebar-data-expanded";
 
 // Ernie AI — split into two sub-links, added 2026-09-10 per Chad ("we need
 // to separate them, instead of having them together, its too convoluted the
@@ -231,6 +236,7 @@ function topLevelCategoryForPath(pathname: string): TopLevelCategory | null {
   }
   if (CALENDARS_LINKS.some((l) => l.href === pathname)) return "calendars";
   if (pathname.startsWith("/twilio")) return "admin"; // Twilio lives inside Admin
+  if (DATA_LINKS.some((l) => l.href === pathname)) return "admin"; // Data lives inside Admin (2026-11-03)
   if (ADMIN_LINKS.some((l) => l.href === pathname) || pathname.startsWith("/admin/email")) return "admin";
   return null;
 }
@@ -339,6 +345,7 @@ export default function Sidebar({
   const [salesExpanded, setSalesExpanded] = useState(true);
   const [calendarsExpanded, setCalendarsExpanded] = useState(true);
   const [twilioExpanded, setTwilioExpanded] = useState(true);
+  const [dataExpanded, setDataExpanded] = useState(true);
   const [adminExpanded, setAdminExpanded] = useState(true);
   const [posTreeExpanded, setPosTreeExpanded] = useState<
     Record<string, boolean>
@@ -386,6 +393,10 @@ export default function Sidebar({
     const storedTwilio = localStorage.getItem(TWILIO_STORAGE_KEY);
     if (storedTwilio !== null) {
       setTwilioExpanded(storedTwilio === "true");
+    }
+    const storedData = localStorage.getItem(DATA_STORAGE_KEY);
+    if (storedData !== null) {
+      setDataExpanded(storedData === "true");
     }
     const storedPosTree = localStorage.getItem(POS_TREE_STORAGE_KEY);
     if (storedPosTree) {
@@ -444,6 +455,11 @@ export default function Sidebar({
     if (pathname.startsWith("/twilio")) {
       setTwilioExpanded(true);
       localStorage.setItem(TWILIO_STORAGE_KEY, "true");
+    }
+    // Landing on a Data page opens Admin's Data sub-list too.
+    if (DATA_LINKS.some((l) => l.href === pathname)) {
+      setDataExpanded(true);
+      localStorage.setItem(DATA_STORAGE_KEY, "true");
     }
   }, [pathname]);
 
@@ -674,6 +690,14 @@ export default function Sidebar({
     });
   }
 
+  function toggleData() {
+    setDataExpanded((prev) => {
+      const next = !prev;
+      localStorage.setItem(DATA_STORAGE_KEY, String(next));
+      return next;
+    });
+  }
+
   function togglePosTree(key: string) {
     setPosTreeExpanded((prev) => {
       let next = { ...prev, [key]: !prev[key] };
@@ -751,6 +775,8 @@ export default function Sidebar({
   const visibleCalendars = CALENDARS_LINKS.filter((link) => can(link.section));
   const visiblePos = POS_LINKS.filter((link) => can(link.section));
   const visibleTwilio = TWILIO_LINKS.filter((link) => can(link.section));
+  // Data (2026-11-03): same access checkboxes as when these lived in Sales.
+  const visibleData = DATA_LINKS.filter((link) => can(link.section));
   // Sales holds its own links plus Distributors, POS and UPC's (2026-10-28).
   const showSalesSection = visibleSales.length > 0 || visibleDistributors.length > 0 || visiblePos.length > 0 || showUpcTree;
   const showErnie = can(ERNIE_SECTION);
@@ -765,12 +791,14 @@ export default function Sidebar({
   // Admin's rows in order, with the Twilio sub-category slotted in right
   // under Audit Log (then Email Studio, then Ekos Sync); if this person
   // can't see Audit Log, before Email Studio / Ekos Sync, else at the end.
-  const adminRows: Array<(typeof visibleAdmin)[number] | "twilio"> = [...visibleAdmin];
+  const adminRows: Array<(typeof visibleAdmin)[number] | "twilio" | "data"> = [...visibleAdmin];
   if (visibleTwilio.length > 0) {
     const auditIndex = visibleAdmin.findIndex((link) => link.href === "/admin/audit");
     const nextIndex = visibleAdmin.findIndex((link) => link.href === "/admin/email" || link.href === "/admin/ekos-sync");
     adminRows.splice(auditIndex !== -1 ? auditIndex + 1 : nextIndex !== -1 ? nextIndex : adminRows.length, 0, "twilio");
   }
+  // Data sits at the very top of Admin (2026-11-03).
+  if (visibleData.length > 0) adminRows.unshift("data");
 
   const nothingVisible =
     role !== "admin" &&
@@ -788,6 +816,7 @@ export default function Sidebar({
     !showUpcTree &&
     visibleCalendars.length === 0 &&
     visibleTwilio.length === 0 &&
+    visibleData.length === 0 &&
     visibleAdmin.length === 0 &&
     visiblePos.length === 0;
 
@@ -1089,18 +1118,7 @@ export default function Sidebar({
                       </button>
                       {salesExpanded && (
                         <div className="fcb-nav-sub-group">
-                          {visibleSales.map((link) => (
-                            <Link
-                              key={link.href}
-                              href={link.href}
-                              className={linkClass(link.href)}
-                              onClick={() => dismissNew(link.href)}
-                            >
-                              {link.label}
-                              {showsNew(link.href) && <NewBadge />}
-                            </Link>
-                          ))}
-
+                          {/* Distributors first in Sales (2026-11-03, per Chad). */}
                           {/* Distributors, POS and UPC's — sub-categories of Sales
                               (2026-10-28, per Chad: "move distributors, into the
                               sales section as a sub category … POS … UPC's").
@@ -1139,6 +1157,18 @@ export default function Sidebar({
                               )}
                             </div>
                           )}
+
+                          {visibleSales.map((link) => (
+                            <Link
+                              key={link.href}
+                              href={link.href}
+                              className={linkClass(link.href)}
+                              onClick={() => dismissNew(link.href)}
+                            >
+                              {link.label}
+                              {showsNew(link.href) && <NewBadge />}
+                            </Link>
+                          ))}
 
                           {visiblePos.length > 0 && (
                             <div className="flex flex-col">
@@ -1279,7 +1309,7 @@ export default function Sidebar({
 
           {/* Admin — added 2026-10-03, per Chad (Users, Audit Log, Ekos
               Sync). The section label is its open/close switch. */}
-          {(visibleAdmin.length > 0 || visibleTwilio.length > 0) && (
+          {(visibleAdmin.length > 0 || visibleTwilio.length > 0 || visibleData.length > 0) && (
             <div className="flex flex-col gap-1.5">
               <button
                 type="button"
@@ -1294,13 +1324,49 @@ export default function Sidebar({
                   {sectionShowsNew("section:admin", [
                     ...visibleAdmin.map((link) => link.href),
                     ...(visibleTwilio.length ? ["section:twilio", ...visibleTwilio.map((link) => link.href)] : []),
+                    ...(visibleData.length ? ["section:data", ...visibleData.map((link) => link.href)] : []),
                   ]) && <NewBadge inline />}
                   <IconChevron open={adminExpanded} small />
                 </span>
               </button>
               {adminExpanded &&
                 adminRows.map((row) =>
-                  row === "twilio" ? (
+                  row === "data" ? (
+                    // Data (2026-11-03, per Chad) — Margin Analysis, Cost Per
+                    // Case, Contribution Margin, moved here from Sales.
+                    <div key="data" className="flex flex-col">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          toggleData();
+                          dismissNew("section:data");
+                        }}
+                        className={parentClass(dataExpanded)}
+                      >
+                        <IconChart />
+                        Data
+                        {parentRight(
+                          sectionShowsNew("section:data", visibleData.map((link) => link.href)),
+                          dataExpanded,
+                        )}
+                      </button>
+                      {dataExpanded && (
+                        <div className="fcb-nav-sub-group">
+                          {visibleData.map((link) => (
+                            <Link
+                              key={link.href}
+                              href={link.href}
+                              className={linkClass(link.href)}
+                              onClick={() => dismissNew(link.href)}
+                            >
+                              {link.label}
+                              {showsNew(link.href) && <NewBadge />}
+                            </Link>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : row === "twilio" ? (
                     // Twilio (2026-10-29, per Chad) — sub-category between
                     // Audit Log and Ekos Sync.
                     <div key="twilio" className="flex flex-col">

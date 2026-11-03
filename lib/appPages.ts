@@ -58,9 +58,6 @@ export const OPERATIONS_LINKS: AppLink[] = [
 export const SALES_LINKS: AppLink[] = [
   { href: "/sales/accounts", label: "Accounts", section: "accounts", about: "Every retail account (bar / store) by distributor: stage, last buy, purchase history by product and month, contacts, rep check-ins, classification. The Product Lookup tab answers \"how much of product X did distributor Y sell, to which accounts, in which months\"." },
   { href: "/sales/pricing", label: "Price List", section: "price_list", about: "What FCB charges per brand per package." },
-  { href: "/sales/margin-analysis", label: "Margin Analysis", section: "margin_analysis", about: "Margin per brand and package from batch cost and yield." },
-  { href: "/sales/cost-per-case", label: "Cost Per Case", section: "cost_per_case", about: "Full cost to make one case / keg of each brand: ingredients, packaging, labor." },
-  { href: "/sales/contribution-margin", label: "Contribution Margin", section: "contribution_margin", about: "Contribution margin per brand and package (revenue per case-equivalent minus cost)." },
   { href: "/sales/chain-authorizations", label: "Chain Authorizations", section: "chain_authorizations", about: "Which items each grocery / retail chain has authorized." },
   { href: "/sales/chain-mandates", label: "Chain Mandates", section: "chain_mandates", about: "Products chains have mandated, and which stores each applies to." },
 ];
@@ -82,6 +79,17 @@ export const CALENDARS_LINKS: AppLink[] = [
 
 export const POS_LINKS: AppLink[] = [
   { href: "/pos/football", label: "Football POS", section: "football_pos", about: "Football-season POS artwork library." },
+];
+
+// Data (2026-11-03, per Chad: "pull margin analysis, cost per case, contribution
+// margin out of sales, and add it under the ADMIN section, in a new sub category
+// called data"). Same pages, addresses (/sales/...) and access checkboxes as
+// before — only where they show in the sidebar changed. Drawn as a sub-category
+// at the top of Admin.
+export const DATA_LINKS: AppLink[] = [
+  { href: "/sales/margin-analysis", label: "Margin Analysis", section: "margin_analysis", about: "Margin per brand and package from batch cost and yield." },
+  { href: "/sales/cost-per-case", label: "Cost Per Case", section: "cost_per_case", about: "Full cost to make one case / keg of each brand: ingredients, packaging, labor." },
+  { href: "/sales/contribution-margin", label: "Contribution Margin", section: "contribution_margin", about: "Contribution margin per brand and package (revenue per case-equivalent minus cost)." },
 ];
 
 // Twilio (2026-10-29) — texting accounts about new items. Drawn as a
@@ -235,6 +243,7 @@ export function pagesForErnie(role: Role | undefined, sections: AnySectionKey[],
   for (const l of DISTRIBUTOR_LINKS) if (can(l.section)) out.push(line("Sales > Distributors > ", l));
   for (const l of CALENDARS_LINKS) if (can(l.section)) out.push(line("Calendars > ", l));
   for (const l of POS_LINKS) if (can(l.section)) out.push(line("Sales > POS > ", l));
+  for (const l of DATA_LINKS) if (can(l.section)) out.push(line("Admin > Data > ", l));
   for (const l of TWILIO_LINKS) if (can(l.section)) out.push(line("Admin > Twilio > ", l));
   for (const l of ADMIN_LINKS) {
     if (l.section ? can(l.section) : role === "admin") out.push(line("Admin > ", l));

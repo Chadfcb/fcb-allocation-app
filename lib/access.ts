@@ -10,6 +10,7 @@ import {
   CALENDARS_LINKS,
   POS_LINKS,
   TWILIO_LINKS,
+  DATA_LINKS,
   ADMIN_LINKS,
   POS_LABEL_BRANDS,
   UPC_BRANDS,
@@ -55,7 +56,8 @@ export function homeFor(profile: ProfileWithSections | null): string {
   // Distributor-only reps (e.g. Steve → Matagrano) land on their page.
   for (const l of DISTRIBUTOR_LINKS) if (can(l.section)) return l.href;
   for (const l of MAIN_LINKS) if (l.section !== null && can(l.section)) return l.href;
-  for (const l of [...FINANCE_LINKS, ...OPERATIONS_LINKS, ...SALES_LINKS, ...CALENDARS_LINKS, ...POS_LINKS, ...TWILIO_LINKS]) {
+  for (const l of [...FINANCE_LINKS, ...OPERATIONS_LINKS, ...SALES_LINKS, ...CALENDARS_LINKS, ...POS_LINKS, ...DATA_LINKS, ...TWILIO_LINKS]) {
+    // DATA_LINKS (2026-11-03): Margin Analysis / Cost Per Case / Contribution Margin, moved from Sales to Admin > Data.
     if (can(l.section)) return l.href;
   }
   if (can("pos_labels") && POS_LABEL_BRANDS[0]?.sizes[0]) return POS_LABEL_BRANDS[0].sizes[0].href;
