@@ -43,9 +43,13 @@ create table if not exists public.beer_finder_beers (
   public_name text,                    -- null = show the product name
   show boolean not null default true,
   label_path text,                     -- pos-label-files path of the label preview
+  label_front numeric check (label_front >= 0 and label_front < 1), -- front of the label (0–1), added 2026-11-04
   updated_at timestamptz not null default now(),
   updated_by uuid references auth.users(id) on delete set null
 );
+
+-- 2026-11-04 (3D cans): for databases made before label_front existed.
+alter table public.beer_finder_beers add column if not exists label_front numeric check (label_front >= 0 and label_front < 1);
 
 create table if not exists public.beer_finder_distributors (
   distributor text primary key,
@@ -148,7 +152,7 @@ begin
       'as_of', a,
       'settings', (select row_to_json(st) from (select days, public_on from public.beer_finder_settings where id = 1) st),
       'beers', (select coalesce(json_agg(b order by b.product), '[]'::json) from (
-          select p.product, bb.public_name, coalesce(bb.show, true) as show, bb.label_path
+          select p.product, bb.public_name, coalesce(bb.show, true) as show, bb.label_path, bb.label_front
           from (select distinct i.product from items i
                 union select x.product from public.beer_finder_beers x) p
           left join public.beer_finder_beers bb on bb.product = p.product) b),

@@ -39,6 +39,7 @@ export interface BfBeer {
   public_name: string | null;
   show: boolean;
   label_path: string | null;
+  label_front: number | null; // where the label's front is across the wrap (0–1); null = usual spot
 }
 export interface BfData {
   as_of: string;

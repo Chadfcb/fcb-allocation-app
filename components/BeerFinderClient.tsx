@@ -23,6 +23,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Map as LMap, LayerGroup } from "leaflet";
 import { createClient } from "@/lib/supabase/client";
 import { REP_BY_DISTRIBUTOR } from "@/lib/salesAccounts";
+import { canImage, defaultFront } from "@/lib/beerCan3d";
 import {
   type BfBeer,
   type BfData,
@@ -83,22 +84,41 @@ function Switch({ on, onClick, label }: { on: boolean; onClick: () => void; labe
   );
 }
 
-// A can with the beer's real label (POS → Labels preview); kegs for beers
-// with no label in the app yet.
-function Can({ url, title, w = 40, h = 60 }: { url: string | null | undefined; title: string; w?: number; h?: number }) {
+// A real 3D can with the beer's label printed on it (lib/beerCan3d.ts) — the
+// same tall can for every beer, front of the label facing you. Kegs for beers
+// with no label in POS → Labels yet.
+function Can({ url, path, front, title, w = 40, h = 60 }: { url: string | null | undefined; path?: string | null; front?: number | null; title: string; w?: number; h?: number }) {
+  const [img, setImg] = useState<{ key: string; src: string } | null>(null);
+  const f = front ?? defaultFront(path);
+  const key = `${path ?? url ?? ""}@${f}`;
+  useEffect(() => {
+    if (!url) return;
+    let live = true;
+    canImage(path ?? url, url, f)
+      .then((src) => live && setImg({ key, src }))
+      .catch(() => live && setImg(null));
+    return () => {
+      live = false;
+    };
+  }, [url, path, f, key]);
   if (!url)
     return (
-      <span title={`${title} (no label in POS → Labels yet)`} className="relative block shrink-0 rounded-md" style={{ width: w, height: h, background: "linear-gradient(90deg,#7b827e,#d3d8d4 45%,#7b827e)" }}>
-        <span className="absolute inset-x-0 top-[30%] h-[3px] bg-neutral-600" />
-        <span className="absolute inset-x-0 top-[62%] h-[3px] bg-neutral-600" />
+      <span title={`${title} (no label in POS → Labels yet)`} className="relative block shrink-0" style={{ width: w, height: h }}>
+        <span className="absolute inset-x-[8%] inset-y-[6%] rounded-md" style={{ background: "linear-gradient(90deg,#5d635f,#e6eae7 35%,#9aa09c 70%,#4f5551)" }}>
+          <span className="absolute inset-x-0 top-[24%] h-[3px] bg-neutral-600/80" />
+          <span className="absolute inset-x-0 top-[70%] h-[3px] bg-neutral-600/80" />
+        </span>
       </span>
     );
   return (
-    <span
-      title={title}
-      className="relative block shrink-0 overflow-hidden rounded-[6px]"
-      style={{ width: w, height: h, backgroundImage: `url(${url})`, backgroundSize: "auto 100%", backgroundPosition: "50% 50%", boxShadow: "inset -7px 0 6px -2px rgba(0,0,0,.45), inset 6px 0 5px -3px rgba(255,255,255,.35)" }}
-    />
+    <span title={title} className="relative block shrink-0" style={{ width: w, height: h }}>
+      {img?.key === key ? (
+        // eslint-disable-next-line @next/next/no-img-element -- a generated picture (data URL), not a page image
+        <img src={img.src} alt={title} className="h-full w-full object-contain" draggable={false} />
+      ) : (
+        <span className="absolute inset-x-[22%] inset-y-[4%] animate-pulse rounded-md bg-neutral-700/60" />
+      )}
+    </span>
   );
 }
 
@@ -273,7 +293,7 @@ function MapTab({ data, labelUrl }: { data: BfData; labelUrl: Map<string, string
           onClick={() => setBeer("all")}
           className={`flex w-[96px] shrink-0 flex-col items-center gap-1.5 rounded-xl border px-1.5 py-2 text-center text-[12px] font-semibold leading-tight ${beer === "all" ? "border-[#6abc46] bg-[#6abc46]/10 text-neutral-50" : "border-neutral-800 bg-neutral-950 text-neutral-300"}`}
         >
-          <span className="block h-[60px] w-[40px] rounded-[6px]" style={{ background: "conic-gradient(#6abc46 0 25%,#f0b44c 0 50%,#e06a5a 0 75%,#5aa9f0 0)" }} />
+          <span className="mt-1 block h-[66px] w-[36px] rounded-[6px]" style={{ background: "conic-gradient(#6abc46 0 25%,#f0b44c 0 50%,#e06a5a 0 75%,#5aa9f0 0)" }} />
           All our beers
         </button>
         {beers.map(({ product, b }) => (
@@ -283,7 +303,7 @@ function MapTab({ data, labelUrl }: { data: BfData; labelUrl: Map<string, string
             onClick={() => setBeer(product)}
             className={`flex w-[96px] shrink-0 flex-col items-center gap-1.5 rounded-xl border px-1.5 py-2 text-center text-[12px] font-semibold leading-tight ${beer === product ? "border-[#6abc46] bg-[#6abc46]/10 text-neutral-50" : "border-neutral-800 bg-neutral-950 text-neutral-300"}`}
           >
-            <Can url={b?.label_path ? labelUrl.get(b.label_path) : null} title={beerName(b, product)} />
+            <Can url={b?.label_path ? labelUrl.get(b.label_path) : null} path={b?.label_path} front={b?.label_front} title={beerName(b, product)} w={46} h={74} />
             <span className="line-clamp-2">{beerName(b, product)}</span>
           </button>
         ))}
@@ -565,9 +585,14 @@ function ControlTab({
   const saveBeer = async (product: string, patch: Partial<BfBeer>) => {
     const cur = ctx.beers.get(product);
     await run(
-      supabase.from("beer_finder_beers").upsert({ product, public_name: cur?.public_name ?? null, show: cur?.show ?? true, label_path: cur?.label_path ?? null, ...patch, updated_at: new Date().toISOString(), updated_by: await by() }),
+      supabase.from("beer_finder_beers").upsert({ product, public_name: cur?.public_name ?? null, show: cur?.show ?? true, label_path: cur?.label_path ?? null, label_front: cur?.label_front ?? null, ...patch, updated_at: new Date().toISOString(), updated_by: await by() }),
       "Saved",
     );
+  };
+  // Turn the can so the front of the label faces you (◀ ▶ next to each can).
+  const turnCan = (b: BfBeer, step: number) => {
+    const cur = b.label_front ?? defaultFront(b.label_path);
+    saveBeer(b.product, { label_front: Math.round((((cur + step) % 1) + 1) % 1 * 1000) / 1000 });
   };
   const saveOverride = async (l: BfLocation, patch: Partial<{ mode: string; display_name: string | null; lat: number | null; lng: number | null }>) => {
     await run(
@@ -663,7 +688,7 @@ function ControlTab({
             <thead>
               <tr className="text-left text-[11.5px] text-neutral-500">
                 <th className="px-2 py-1.5">Show</th>
-                <th className="px-2 py-1.5">Label</th>
+                <th className="px-2 py-1.5">Can · ◀ ▶ to turn</th>
                 <th className="px-2 py-1.5">Name customers see</th>
                 <th className="px-2 py-1.5">Label from POS → Labels</th>
                 <th className="px-2 py-1.5 text-right">Places</th>
@@ -676,7 +701,19 @@ function ControlTab({
                     <Switch on={b.show} label={`Show ${b.product}`} onClick={() => saveBeer(b.product, { show: !b.show })} />
                   </td>
                   <td className="px-2 py-1.5">
-                    <Can url={b.label_path ? labelUrl.get(b.label_path) : null} title={beerName(b, b.product)} w={26} h={38} />
+                    <div className="flex items-center gap-1">
+                      <Can url={b.label_path ? labelUrl.get(b.label_path) : null} path={b.label_path} front={b.label_front} title={beerName(b, b.product)} w={36} h={58} />
+                      {b.label_path && (
+                        <div className="flex flex-col gap-0.5">
+                          <button type="button" title="Turn the can left" aria-label={`Turn the ${b.product} can left`} className="rounded border border-neutral-700 px-1 text-[11px] text-neutral-300 hover:text-white" onClick={() => turnCan(b, -0.02)}>
+                            ◀
+                          </button>
+                          <button type="button" title="Turn the can right" aria-label={`Turn the ${b.product} can right`} className="rounded border border-neutral-700 px-1 text-[11px] text-neutral-300 hover:text-white" onClick={() => turnCan(b, 0.02)}>
+                            ▶
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </td>
                   <td className="px-2 py-1.5">
                     <input
@@ -692,7 +729,7 @@ function ControlTab({
                     {b.public_name && <div className="mt-0.5 text-[11px] text-neutral-500">Sales data: {b.product}</div>}
                   </td>
                   <td className="px-2 py-1.5">
-                    <select value={b.label_path ?? ""} onChange={(e) => saveBeer(b.product, { label_path: e.target.value || null })} aria-label={`Label for ${b.product}`} className={`${INPUT} w-full min-w-[200px]`}>
+                    <select value={b.label_path ?? ""} onChange={(e) => saveBeer(b.product, { label_path: e.target.value || null, label_front: null })} aria-label={`Label for ${b.product}`} className={`${INPUT} w-full min-w-[200px]`}>
                       <option value="">No label (keg picture)</option>
                       {sortedLabels.map((x) => (
                         <option key={x.path} value={x.path}>
