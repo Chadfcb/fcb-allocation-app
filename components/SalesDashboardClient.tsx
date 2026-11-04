@@ -32,6 +32,7 @@ import SalesDashboardHome from "@/components/SalesDashboardHome";
 import SalesQuickLinks from "@/components/SalesQuickLinks";
 import SalesDistInventory from "@/components/SalesDistInventory";
 import SalesAccountFinder from "@/components/SalesAccountFinder";
+import SalesChainClass from "@/components/SalesChainClass";
 import NewBadge from "@/components/NewBadge";
 import { useNewFeature } from "@/lib/newFeatures";
 import { isFormerDistributor } from "@/lib/salesAccounts";
@@ -246,7 +247,7 @@ export default function SalesDashboardClient({ canUpcs = false, canPos = false }
   const [ov, setOv] = useState<DashOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
-  const [tab, setTab] = useState<"home" | "actions" | "gap" | "setup" | "off" | "inv">("home");
+  const [tab, setTab] = useState<"home" | "actions" | "gap" | "setup" | "off" | "inv" | "class">("home");
   // Account Finder pop-up (quick links, 2026-10-28).
   const [finder, setFinder] = useState(false);
   // Clicking a store on Action Items opens it in the Gap Report.
@@ -301,6 +302,7 @@ export default function SalesDashboardClient({ canUpcs = false, canPos = false }
     ["setup", "Chain setup"],
     ["off", "Turned off accounts"],
     ["inv", "Distributor Inventory"],
+    ["class", "Chain Classification"],
   ] as const;
 
   return (
@@ -308,7 +310,7 @@ export default function SalesDashboardClient({ canUpcs = false, canPos = false }
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-neutral-100">Sales Dashboard</h1>
-          {tab !== "home" && tab !== "inv" && (
+          {tab !== "home" && tab !== "inv" && tab !== "class" && (
             <p className="text-sm text-neutral-500">
               {ov?.as_of ? `Sales data as of ${fdate(ov.as_of)} · a store "carries" an item if it bought it in the last ${CARRIED_DAYS} days` : "Loading…"}
             </p>
@@ -331,6 +333,10 @@ export default function SalesDashboardClient({ canUpcs = false, canPos = false }
           setTab("gap");
         }}
         onFinder={() => setFinder(true)}
+        onClass={() => {
+          setJump(null);
+          setTab("class");
+        }}
       />
       {tab !== "home" && (
       <div className="flex gap-1 border-b border-neutral-800">
@@ -387,8 +393,8 @@ export default function SalesDashboardClient({ canUpcs = false, canPos = false }
           {/* Tools row (the old tabs) */}
           <div className="flex flex-wrap items-center gap-2 border-t border-neutral-800 pt-4">
             <span className="mr-1 text-xs font-semibold uppercase tracking-wider text-neutral-500">Tools</span>
-            {/* Chain Gap Report and Distributor Inventory moved to the quick links at the top (2026-10-28). */}
-            {TABS.filter(([k]) => k !== "home" && k !== "gap" && k !== "inv").map(([k, label]) => (
+            {/* Chain Gap Report and Distributor Inventory moved to the quick links at the top (2026-10-28); Chain Classification lives there too (2026-11-04). */}
+            {TABS.filter(([k]) => k !== "home" && k !== "gap" && k !== "inv" && k !== "class").map(([k, label]) => (
               <button
                 key={k}
                 id={`dash-tool-${k}`}
@@ -438,6 +444,7 @@ export default function SalesDashboardClient({ canUpcs = false, canPos = false }
       )}
       {ov && tab === "off" && <TurnedOff supabase={supabase} userId={userId} version={version} onChanged={loadOverview} />}
       {tab === "inv" && <SalesDistInventory supabase={supabase} />}
+      {tab === "class" && <SalesChainClass supabase={supabase} />}
       {finder && <SalesAccountFinder supabase={supabase} onClose={() => setFinder(false)} />}
     </div>
   );

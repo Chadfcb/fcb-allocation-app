@@ -102,6 +102,12 @@ export const NEW_FEATURES: NewFeature[] = [
     added: "2026-10-28",
   },
   {
+    id: "feature:sales-chain-class",
+    page: "/sales-dashboard",
+    label: "Sales Dashboard: Chain Classification (quick link) — chains by tier T1–T4 with touch-base schedule and their buyers' contacts, editable, Export",
+    added: "2026-11-04",
+  },
+  {
     id: "feature:brew-planner-how-it-works",
     page: "/brew-planner",
     label: "Brew Planner: How this works button — plain-English guide to the whole page, with examples from today's numbers",

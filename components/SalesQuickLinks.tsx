@@ -10,6 +10,8 @@
 //                           people with UPC's access
 //   POS                   → Football POS; only for people with POS access
 //   Account Finder        → search every distributor's accounts (SalesAccountFinder)
+//   Chain Classification  → chains by tier T1–T4 with their buyers (SalesChainClass,
+//                           added 2026-11-04)
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
@@ -35,6 +37,7 @@ const ICONS = {
   upc: "M4 5v14M7 5v14M10 5v14M14 5v14M16 5v14M20 5v14",
   pos: "M4 4h16v12H4zM8 20h8M12 16v4",
   find: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-3.5-3.5",
+  cls: "M12 3l9 5-9 5-9-5zM3 13l9 5 9-5",
 };
 
 export default function SalesQuickLinks({
@@ -44,6 +47,7 @@ export default function SalesQuickLinks({
   onInventory,
   onGap,
   onFinder,
+  onClass,
 }: {
   tab: string;
   canUpcs: boolean;
@@ -51,9 +55,11 @@ export default function SalesQuickLinks({
   onInventory: () => void;
   onGap: () => void;
   onFinder: () => void;
+  onClass: () => void;
 }) {
   const invNew = useNewFeature("feature:sales-dist-inventory");
   const finderNew = useNewFeature("feature:sales-account-finder");
+  const classNew = useNewFeature("feature:sales-chain-class");
   const [upcOpen, setUpcOpen] = useState(false);
   const upcRef = useRef<HTMLDivElement>(null);
 
@@ -134,6 +140,19 @@ export default function SalesQuickLinks({
         <Icon d={ICONS.find} />
         Account Finder
         {finderNew.isNew && <NewBadge inline />}
+      </button>
+      <button
+        id="sales-link-chain-class"
+        type="button"
+        onClick={() => {
+          classNew.dismiss();
+          onClass();
+        }}
+        className={`${BTN} ${tab === "class" ? ON : OFF}`}
+      >
+        <Icon d={ICONS.cls} />
+        Chain Classification
+        {classNew.isNew && <NewBadge inline />}
       </button>
     </div>
   );
