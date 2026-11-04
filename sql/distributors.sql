@@ -577,8 +577,10 @@ begin
     -- Cases per period × year × distributor
     'cases', (select coalesce(json_agg(c), '[]'::json) from (
         select p, yr, dist, round(sum(ce), 1) as ce from part group by p, yr, dist) c),
+    -- What's selling: per product AND package size (2026-11-04) — the app adds
+    -- sizes back together wherever it only needs the product.
     'brands', (select coalesce(json_agg(c), '[]'::json) from (
-        select p, yr, dist, product, round(sum(ce), 1) as ce from part group by p, yr, dist, product having sum(ce) > 0) c),
+        select p, yr, dist, product, size, round(sum(ce), 1) as ce from part group by p, yr, dist, product, size having sum(ce) > 0) c),
     'sizes', (select coalesce(json_agg(c), '[]'::json) from (
         select p, dist, size, round(sum(ce), 1) as ce from part where yr = 'ty' group by p, dist, size having sum(ce) > 0) c),
     'monthly', (select coalesce(json_agg(c order by c.month), '[]'::json) from (

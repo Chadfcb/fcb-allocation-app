@@ -433,7 +433,7 @@ export default function SalesDashboardHome({
       slip: att.filter((a) => a.stage === "plost"),
       lost: att.filter((a) => a.stage === "lost"),
       wins: winbacksIn(home, shown, dist),
-      brands: brands(home, shown, dist),
+      brands: brands(home, shown, dist, 8),
       sizes: sizes(home, shown, dist),
       reps: repActivity(home, shown, dist),
       range: periodRange(home, shown),
@@ -923,13 +923,16 @@ export default function SalesDashboardHome({
         <section className={`${CARD} flex min-w-0 flex-[1_1_380px] flex-col gap-3.5`}>
           <div>
             <h2 className="text-[15px] font-semibold text-neutral-100">What&apos;s selling</h2>
-            <p className={`text-[12.5px] ${MUTED}`}>CEs by brand · {pLabel} · vs same days last year</p>
+            <p className={`text-[12.5px] ${MUTED}`}>CEs by beer and package · {pLabel} · vs same days last year</p>
           </div>
           <div className="flex flex-col gap-3">
             {v.brands.map((b) => (
-              <div key={b.product} className="flex flex-col gap-1.5">
+              <div key={b.key} className="flex flex-col gap-1.5">
                 <div className="flex items-center justify-between gap-2.5 text-[13.5px]">
-                  <span className="min-w-0 truncate font-medium text-neutral-200">{b.product}</span>
+                  <span className="min-w-0 truncate font-medium text-neutral-200">
+                    {b.product}
+                    {b.pkg && <span className="ml-1.5 font-normal text-neutral-400">· {b.pkg}</span>}
+                  </span>
                   <span className="flex items-center gap-2">
                     <span className="font-mono">{fmtN(b.ce)}</span>
                     <Change value={b.chg} />

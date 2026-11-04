@@ -988,14 +988,17 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
             <section className={`${CARD} flex min-w-0 flex-[1_1_360px] flex-col gap-3`}>
               <div>
                 <h2 className="text-[15px] font-semibold text-neutral-100">What&apos;s selling</h2>
-                <p className={`text-[12.5px] ${MUTED}`}>CEs by brand · {wsLabel} · vs same days last year</p>
+                <p className={`text-[12.5px] ${MUTED}`}>CEs by beer and package · {wsLabel} · vs same days last year</p>
               </div>
               <PeriodPicker value={wsP} onChange={setWsP} asOf={home.as_of ?? null} salesNote />
               <div className="flex max-h-[380px] flex-col gap-3 overflow-y-auto pr-1">
               {topBrands.map((b) => (
-                <div key={b.product} className="flex flex-col gap-1.5">
+                <div key={b.key} className="flex flex-col gap-1.5">
                   <div className="flex items-center justify-between gap-2.5 text-[13.5px]">
-                    <span className="min-w-0 truncate font-medium text-neutral-200">{b.product}</span>
+                    <span className="min-w-0 truncate font-medium text-neutral-200">
+                    {b.product}
+                    {b.pkg && <span className="ml-1.5 font-normal text-neutral-400">· {b.pkg}</span>}
+                  </span>
                     <span className="flex items-center gap-2">
                       <span className="font-mono">{fmtN(b.ce)}</span>
                       <Change value={b.chg} />

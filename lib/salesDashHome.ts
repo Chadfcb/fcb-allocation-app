@@ -80,7 +80,9 @@ export interface HomeData {
   has_accounts: boolean;
   periods: { p: Period; yr: Yr; from: string; to: string }[];
   cases: { p: Period; yr: Yr; dist: string; ce: number }[];
-  brands: { p: Period; yr: Yr; dist: string; product: string; ce: number }[];
+  // size: package (16oz, 12oz, 19.2oz, 1/6 bbl, 1/2 bbl …) — added 2026-11-04;
+  // missing until sql/whats_selling_packages.sql is run.
+  brands: { p: Period; yr: Yr; dist: string; product: string; size?: string | null; ce: number }[];
   sizes: { p: Period; dist: string; size: string; ce: number }[];
   monthly: { month: string; dist: string; ce: number }[];
   stages: { dist: string; stage: keyof typeof STAGE_COLORS; n: number; ce12: number }[];
@@ -236,18 +238,33 @@ export function trend(h: HomeData, dist: string): Trend {
 }
 
 // ---- Brands and package sizes ----
+// What's selling (2026-11-04, per Chad: "it makes no sense unless we can see
+// what package type it is"): one line per beer AND package, e.g.
+// "Big Daddy IPA · 12oz cans", biggest first, each vs the same package last year.
+export function packageLabel(size: string | null | undefined): string {
+  const s = (size ?? "").trim();
+  if (!s) return "";
+  if (/oz$/i.test(s)) return `${s} cans`;
+  if (/bbl$/i.test(s)) return `${s} keg`;
+  return s;
+}
 export function brands(h: HomeData, p: Period, dist: string, top = 6) {
-  const ty = new Map<string, number>();
+  const ty = new Map<string, { product: string; size: string; ce: number }>();
   const ly = new Map<string, number>();
   for (const b of h.brands) {
     if (b.p !== p || (dist && b.dist !== dist)) continue;
-    const m = b.yr === "ty" ? ty : ly;
-    m.set(b.product, (m.get(b.product) ?? 0) + num(b.ce));
+    const size = (b.size ?? "").trim();
+    const k = `${b.product}\u0000${size}`;
+    if (b.yr === "ty") {
+      const cur = ty.get(k) ?? { product: b.product, size, ce: 0 };
+      cur.ce += num(b.ce);
+      ty.set(k, cur);
+    } else ly.set(k, (ly.get(k) ?? 0) + num(b.ce));
   }
   return [...ty.entries()]
-    .sort((a, b) => b[1] - a[1])
+    .sort((a, b) => b[1].ce - a[1].ce)
     .slice(0, top)
-    .map(([product, ce]) => ({ product, ce, chg: pctChange(ce, ly.get(product) ?? 0) }));
+    .map(([k, r]) => ({ key: k, product: r.product, size: r.size, pkg: packageLabel(r.size), ce: r.ce, chg: pctChange(r.ce, ly.get(k) ?? 0) }));
 }
 export function sizes(h: HomeData, p: Period, dist: string) {
   const m = new Map<string, number>();
