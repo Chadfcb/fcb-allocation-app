@@ -336,8 +336,8 @@ export async function syncLilypadSales(admin: SupabaseClient): Promise<SalesSync
   // (free US Census geocoder; only new / changed addresses). Never fails the sync.
   let pins = "";
   try {
-    const g = await geocodeBeerFinder(admin, 1000);
-    if (g.asked) pins = `; ${geocodeSummary(g)}`;
+    const g = await geocodeBeerFinder(admin, 2000, 45_000);
+    if (g.asked || g.retried) pins = `; ${geocodeSummary(g)}`;
     if (g.error && !g.placed) issues.push(geocodeSummary(g));
   } catch (e) {
     issues.push(`Beer Finder map pins: ${e instanceof Error ? e.message : String(e)}`);

@@ -736,12 +736,12 @@ function ControlTab({
             Couldn&apos;t place on the map <span className={`font-normal ${MUTED}`}>· {noPin.length} on the finder without a pin</span>
           </div>
           <button type="button" className={GREEN_BTN} onClick={placePins} disabled={placing}>
-            {placing ? "Placing pins… (can take a few minutes)" : "Place pins now"}
+            {placing ? "Placing pins… (up to 4 minutes)" : "Place pins now"}
           </button>
         </div>
         <p className={`text-xs ${MUTED}`}>
-          Pins come from the free US Census Bureau address lookup. New accounts are placed automatically after the weekday LilyPad sync; press Place pins now to do it right away.
-          {noPin.length ? " Use Fix pin below on any address it couldn't match." : ""}
+          Pins come from the free US Census Bureau address lookup; anything it misses is retried automatically without the suite number and then with OpenStreetMap&apos;s free lookup (about one a second).
+          New accounts are placed after the weekday LilyPad sync; Place pins now does it right away and keeps going for up to 4 minutes. Fix pin is only for a pin in the wrong spot.
         </p>
         {noPin.length > 0 && (
           <div className="mt-2 flex flex-col divide-y divide-neutral-900">
