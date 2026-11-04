@@ -238,33 +238,55 @@ export function trend(h: HomeData, dist: string): Trend {
 }
 
 // ---- Brands and package sizes ----
-// What's selling (2026-11-04, per Chad: "it makes no sense unless we can see
-// what package type it is"): one line per beer AND package, e.g.
-// "Big Daddy IPA · 12oz cans", biggest first, each vs the same package last year.
+// What's selling (2026-11-04, per Chad): one group per beer — the beer's total,
+// then each package under it ("12oz cans", "1/2 bbl keg" …), biggest first,
+// each vs the same days last year. Sales with no package recorded (older VIP
+// history) show as "Package not recorded".
 export function packageLabel(size: string | null | undefined): string {
   const s = (size ?? "").trim();
-  if (!s) return "";
+  if (!s) return "Package not recorded";
   if (/oz$/i.test(s)) return `${s} cans`;
   if (/bbl$/i.test(s)) return `${s} keg`;
   return s;
 }
-export function brands(h: HomeData, p: Period, dist: string, top = 6) {
-  const ty = new Map<string, { product: string; size: string; ce: number }>();
-  const ly = new Map<string, number>();
+export interface BeerPackage {
+  size: string;
+  pkg: string;
+  ce: number;
+  ly: number;
+  chg: number | null;
+}
+export interface BeerGroup {
+  product: string;
+  ce: number;
+  ly: number;
+  chg: number | null;
+  pkgs: BeerPackage[];
+}
+export function brands(h: HomeData, p: Period, dist: string, top = 6): BeerGroup[] {
+  const by = new Map<string, Map<string, { ty: number; ly: number }>>();
   for (const b of h.brands) {
     if (b.p !== p || (dist && b.dist !== dist)) continue;
     const size = (b.size ?? "").trim();
-    const k = `${b.product}\u0000${size}`;
-    if (b.yr === "ty") {
-      const cur = ty.get(k) ?? { product: b.product, size, ce: 0 };
-      cur.ce += num(b.ce);
-      ty.set(k, cur);
-    } else ly.set(k, (ly.get(k) ?? 0) + num(b.ce));
+    const m = by.get(b.product) ?? new Map<string, { ty: number; ly: number }>();
+    const cur = m.get(size) ?? { ty: 0, ly: 0 };
+    if (b.yr === "ty") cur.ty += num(b.ce);
+    else cur.ly += num(b.ce);
+    m.set(size, cur);
+    by.set(b.product, m);
   }
-  return [...ty.entries()]
-    .sort((a, b) => b[1].ce - a[1].ce)
-    .slice(0, top)
-    .map(([k, r]) => ({ key: k, product: r.product, size: r.size, pkg: packageLabel(r.size), ce: r.ce, chg: pctChange(r.ce, ly.get(k) ?? 0) }));
+  const out: BeerGroup[] = [];
+  for (const [product, m] of by) {
+    const pkgs = [...m.entries()]
+      .filter(([, v]) => v.ty > 0)
+      .map(([size, v]) => ({ size, pkg: packageLabel(size), ce: v.ty, ly: v.ly, chg: pctChange(v.ty, v.ly) }))
+      .sort((x, y) => y.ce - x.ce);
+    if (!pkgs.length) continue;
+    const ce = pkgs.reduce((t, x) => t + x.ce, 0);
+    const ly = [...m.values()].reduce((t, x) => t + x.ly, 0);
+    out.push({ product, ce, ly, chg: pctChange(ce, ly), pkgs });
+  }
+  return out.sort((x, y) => y.ce - x.ce).slice(0, top);
 }
 export function sizes(h: HomeData, p: Period, dist: string) {
   const m = new Map<string, number>();

@@ -42,6 +42,7 @@ import {
   loadArgs,
   monthLabel,
   pctChange,
+  type BeerGroup,
   periodRange,
   repActivity,
   repName,
@@ -116,6 +117,69 @@ export function ExportButton({ onClick, label = "Export", busy }: { onClick: () 
       {busy ? "Exporting…" : label}
     </button>
   );
+}
+
+// What's selling list (2026-11-04, per Chad: "its hard to see whats going on
+// here" + "we need an export button too"): one group per beer — full name
+// (wraps, never cut off), total CEs + change + bar — with each package under it.
+// Used on the Sales Dashboard home and every distributor page.
+export function WhatsSellingList({ groups }: { groups: BeerGroup[] }) {
+  const max = groups[0]?.ce || 1;
+  return (
+    <>
+      {groups.map((g) => (
+        <div key={g.product} className="flex flex-col gap-1.5">
+          <div className="flex items-start justify-between gap-2.5 text-[13.5px]">
+            <span className="min-w-0 break-words font-semibold leading-snug text-neutral-100">{g.product}</span>
+            <span className="flex shrink-0 items-center gap-2">
+              <span className="font-mono">{fmtN(g.ce)}</span>
+              <Change value={g.chg} />
+            </span>
+          </div>
+          <div className="h-2 overflow-hidden rounded-full bg-neutral-800/70">
+            <div className="h-full rounded-full bg-gradient-to-r from-[#4f9a33] to-[#8fd16f]" style={{ width: `${(g.ce / max) * 100}%` }} />
+          </div>
+          <div className="flex flex-col gap-0.5 pl-3">
+            {g.pkgs.map((k) => (
+              <div key={k.size} className="flex items-center justify-between gap-2 text-[12.5px]">
+                <span className={k.size ? "text-neutral-300" : "italic text-neutral-500"}>{k.pkg}</span>
+                <span className="flex shrink-0 items-center gap-2">
+                  <span className="font-mono text-neutral-300">{fmtN(k.ce)}</span>
+                  <Change value={k.chg} />
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+// Export for What's selling: one row per beer + package, then the beer's total.
+export async function exportWhatsSelling(groups: BeerGroup[], scope: string, label: string) {
+  const r1 = (n: number) => Math.round(n * 10) / 10;
+  const pct = (c: number | null) => (c == null ? "" : `${c > 0 ? "+" : ""}${c.toFixed(1)}%`); // pctChange is already a percent
+  const rows: Record<string, unknown>[] = [];
+  for (const g of groups) {
+    for (const k of g.pkgs) rows.push({ beer: g.product, pkg: k.pkg, ce: r1(k.ce), ly: r1(k.ly), chg: pct(k.chg) });
+    rows.push({ beer: `${g.product} total`, pkg: "All packages", ce: r1(g.ce), ly: r1(g.ly), chg: pct(g.chg) });
+  }
+  const safe = label.replace(/[\\/:*?"<>|]/g, "-");
+  await exportSheets(`${scope} - What's selling - ${safe}.xlsx`, [
+    {
+      name: "What's selling",
+      title: `What's selling · ${scope} · ${label} · vs same days last year`,
+      cols: [
+        { header: "Beer", key: "beer", width: 34 },
+        { header: "Package", key: "pkg", width: 22 },
+        { header: "CEs", key: "ce", width: 10 },
+        { header: "CEs same days last year", key: "ly", width: 14 },
+        { header: "Change", key: "chg", width: 10 },
+      ],
+      rows,
+    },
+  ]);
 }
 
 export function Modal({ title, sub, onClose, actions, children }: { title: string; sub?: string; onClose: () => void; actions?: React.ReactNode; children: React.ReactNode }) {
@@ -433,7 +497,7 @@ export default function SalesDashboardHome({
       slip: att.filter((a) => a.stage === "plost"),
       lost: att.filter((a) => a.stage === "lost"),
       wins: winbacksIn(home, shown, dist),
-      brands: brands(home, shown, dist, 8),
+      brands: brands(home, shown, dist, 6),
       sizes: sizes(home, shown, dist),
       reps: repActivity(home, shown, dist),
       range: periodRange(home, shown),
@@ -921,28 +985,15 @@ export default function SalesDashboardHome({
       {/* What's selling · Chain coverage · Rep activity */}
       <div className="flex flex-wrap gap-4">
         <section className={`${CARD} flex min-w-0 flex-[1_1_380px] flex-col gap-3.5`}>
-          <div>
-            <h2 className="text-[15px] font-semibold text-neutral-100">What&apos;s selling</h2>
-            <p className={`text-[12.5px] ${MUTED}`}>CEs by beer and package · {pLabel} · vs same days last year</p>
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <h2 className="text-[15px] font-semibold text-neutral-100">What&apos;s selling</h2>
+              <p className={`text-[12.5px] ${MUTED}`}>CEs by beer, then package · {pLabel} · vs same days last year</p>
+            </div>
+            {v.brands.length > 0 && <ExportButton onClick={() => exportWhatsSelling(brands(home!, shown, dist, 999), scope, pLabel)} />}
           </div>
-          <div className="flex flex-col gap-3">
-            {v.brands.map((b) => (
-              <div key={b.key} className="flex flex-col gap-1.5">
-                <div className="flex items-center justify-between gap-2.5 text-[13.5px]">
-                  <span className="min-w-0 truncate font-medium text-neutral-200">
-                    {b.product}
-                    {b.pkg && <span className="ml-1.5 font-normal text-neutral-400">· {b.pkg}</span>}
-                  </span>
-                  <span className="flex items-center gap-2">
-                    <span className="font-mono">{fmtN(b.ce)}</span>
-                    <Change value={b.chg} />
-                  </span>
-                </div>
-                <div className="h-2 overflow-hidden rounded-full bg-neutral-800/70">
-                  <div className="h-full rounded-full bg-gradient-to-r from-[#4f9a33] to-[#8fd16f]" style={{ width: `${(b.ce / (v.brands[0]?.ce || 1)) * 100}%` }} />
-                </div>
-              </div>
-            ))}
+          <div className="flex flex-col gap-3.5">
+            <WhatsSellingList groups={v.brands} />
             {!v.brands.length && <p className={`text-sm ${MUTED}`}>No sales in this period.</p>}
           </div>
           {v.sizes.length > 0 && (

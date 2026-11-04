@@ -44,8 +44,10 @@ import {
   Row,
   Stat,
   Tag,
+  WhatsSellingList,
   accountRows,
   exportSheets,
+  exportWhatsSelling,
   fmtChecked,
   fmtWeekdayDay,
   gapRows,
@@ -986,29 +988,16 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
           <div className="flex flex-wrap gap-4">
             <CasesByMonth home={home} dist={dist} scope={dist} />
             <section className={`${CARD} flex min-w-0 flex-[1_1_360px] flex-col gap-3`}>
-              <div>
-                <h2 className="text-[15px] font-semibold text-neutral-100">What&apos;s selling</h2>
-                <p className={`text-[12.5px] ${MUTED}`}>CEs by beer and package · {wsLabel} · vs same days last year</p>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <h2 className="text-[15px] font-semibold text-neutral-100">What&apos;s selling</h2>
+                  <p className={`text-[12.5px] ${MUTED}`}>CEs by beer, then package · {wsLabel} · vs same days last year</p>
+                </div>
+                {topBrands.length > 0 && <ExportButton onClick={() => exportWhatsSelling(topBrands, dist, wsLabel)} />}
               </div>
               <PeriodPicker value={wsP} onChange={setWsP} asOf={home.as_of ?? null} salesNote />
-              <div className="flex max-h-[380px] flex-col gap-3 overflow-y-auto pr-1">
-              {topBrands.map((b) => (
-                <div key={b.key} className="flex flex-col gap-1.5">
-                  <div className="flex items-center justify-between gap-2.5 text-[13.5px]">
-                    <span className="min-w-0 truncate font-medium text-neutral-200">
-                    {b.product}
-                    {b.pkg && <span className="ml-1.5 font-normal text-neutral-400">· {b.pkg}</span>}
-                  </span>
-                    <span className="flex items-center gap-2">
-                      <span className="font-mono">{fmtN(b.ce)}</span>
-                      <Change value={b.chg} />
-                    </span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-neutral-800/70">
-                    <div className="h-full rounded-full bg-gradient-to-r from-[#4f9a33] to-[#8fd16f]" style={{ width: `${(b.ce / (topBrands[0]?.ce || 1)) * 100}%` }} />
-                  </div>
-                </div>
-              ))}
+              <div className="flex max-h-[420px] flex-col gap-3.5 overflow-y-auto pr-1">
+                <WhatsSellingList groups={topBrands} />
               </div>
               {!wsHome ? (
                 <p className={`text-sm ${MUTED}`}>Loading these dates…</p>
