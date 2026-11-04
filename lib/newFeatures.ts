@@ -152,6 +152,14 @@ export const NEW_FEATURES: NewFeature[] = [
     label: `${d.name} page: All Chain Mandates / Chain Authorizations buttons (stores, buying vs missing, export)`,
     added: "2026-10-22",
   })),
+  // Buying accounts (60 days) button on every distributor page (2026-11-04).
+  // Not on Coast / Superior — no accounts, button not shown.
+  ...DISTRIBUTOR_PAGES.filter((d) => d.slug !== "coast" && d.slug !== "superior").map((d) => ({
+    id: `feature:dist-buying-accounts-${d.slug}`,
+    page: distributorHref(d.slug),
+    label: `${d.name} page: Buying accounts (60 days) button — every account that ordered in the last 60 days and what it bought (also opens from at a glance), export`,
+    added: "2026-11-04",
+  })),
   // Removed accounts button, far right of each distributor page's header
   // (2026-11-02). Not on Coast / Superior — no accounts, button not shown.
   ...DISTRIBUTOR_PAGES.filter((d) => d.slug !== "coast" && d.slug !== "superior").map((d) => ({

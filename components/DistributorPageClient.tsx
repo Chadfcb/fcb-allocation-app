@@ -18,7 +18,8 @@
 // LilyPad sync finishes (sales_data_meta). Data: sales_dash_home (same as the
 // Sales Dashboard home, one distributor), sales_territory_stock,
 // sales_territory_checkins, sales_territory_account, and the Action Items gap
-// check — sql/distributors.sql.
+// check — sql/distributors.sql. Buying accounts (60 days) pop-up:
+// sales_territory_buying — sql/distributor_buying_accounts.sql.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -325,6 +326,10 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
   // Chain list pop-ups (2026-10-22, per Chad): All Chain Mandates / Chain Authorizations.
   const [chainList, setChainList] = useState<"mandate" | "flex" | null>(null);
   const chainListsNew = useNewFeature(`feature:dist-chain-lists-${dist.toLowerCase().trim().replace(/\s+/g, "-")}`);
+  // Buying accounts (60 days) pop-up (2026-11-04, per Chad): every account that
+  // ordered in the last 60 days and what it bought.
+  const [buyingOpen, setBuyingOpen] = useState(false);
+  const buyingNew = useNewFeature(`feature:dist-buying-accounts-${dist.toLowerCase().trim().replace(/\s+/g, "-")}`);
   // Markstein On Hand Inventory pop-up (2026-10-29).
   const [stockOpen, setStockOpen] = useState(false);
   const stockBtnNew = useNewFeature("feature:markstein-on-hand-inventory");
@@ -657,6 +662,21 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
               {k === "mandate" && chainListsNew.isNew && <NewBadge inline />}
             </button>
           ))}
+          {/* Buying accounts (60 days) — 2026-11-04, per Chad. Not on Coast /
+              Superior (no accounts in LilyPad). */}
+          {pageSlug && pageSlug !== "coast" && pageSlug !== "superior" && (
+            <button
+              type="button"
+              onClick={() => {
+                setBuyingOpen(true);
+                buyingNew.dismiss();
+              }}
+              className="flex items-center gap-1.5 rounded-lg border border-[#6abc46]/40 bg-[#6abc46]/10 px-3.5 py-2 text-sm font-semibold text-neutral-100 hover:bg-[#6abc46]/20"
+            >
+              Buying accounts (60 days)
+              {buyingNew.isNew && <NewBadge inline />}
+            </button>
+          )}
           {dist === "Markstein" && (
             <button
               type="button"
@@ -963,12 +983,23 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
                       CEs sold <Change value={pctChange(k.cases, k.casesLy)} />
                     </span>
                   </div>
-                  <div className="flex flex-col gap-1">
+                  {/* Click → the Buying accounts (60 days) list (2026-11-04) — same
+                      rule as this number, so they always match. */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBuyingOpen(true);
+                      buyingNew.dismiss();
+                    }}
+                    title="See every buying account and what they buy"
+                    className="-m-1.5 flex flex-col gap-1 rounded-lg p-1.5 text-left hover:bg-neutral-800/60"
+                  >
                     <span className="font-mono text-[28px] font-light leading-tight text-neutral-50">{fmtN(k.buying)}</span>
                     <span className="flex items-center gap-2 text-xs text-neutral-500">
                       Buying accounts <Change value={pctChange(k.buying, k.buyingLy)} />
                     </span>
-                  </div>
+                    <span className="text-[11px] text-[#9edc7f]">ordered in the last 60 days · see list ›</span>
+                  </button>
                   <Stat value={fmtN(k.newA)} label="New accounts" color="#5aa9f0" />
                   <Stat value={fmtN(k.won)} label="Won back" color="#7fe0cd" />
                   <Stat value={fmtN(k.atRisk)} label={`At risk · ${fmtN(k.atRiskCe)} CEs a year`} color="#f7c27a" />
@@ -1021,6 +1052,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
           onClose={() => setChainList(null)}
         />
       )}
+      {buyingOpen && <BuyingAccountsPopup supabase={supabase} dist={dist} onOpen={(id) => setOpenId(id)} onClose={() => setBuyingOpen(false)} />}
       {stockOpen && (
         <Modal
           title={`${dist} On Hand Inventory`}
@@ -1228,6 +1260,253 @@ function ChainListPopup({
               );
             })}
           </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// Buying accounts (60 days) — 2026-11-04, per Chad: "shows all active
+// accounts, and what they are buying, everything less then 60". Every account
+// that ordered in the last 60 days (same rule as "Buying accounts" in at a
+// glance, so the list and the number match) and what each bought in those
+// days, per product + package. On / Off-premise filter, search, sort; click →
+// the account pop-up; Export (Accounts + Items sheets). Data:
+// sales_territory_buying (sql/distributor_buying_accounts.sql). Plan:
+// claude/buying-accounts-60-plan.md.
+interface BuyingItem {
+  product: string;
+  size: string;
+  ce: number;
+  last_buy: string | null;
+}
+interface BuyingAccount {
+  outlet_id: string;
+  name: string;
+  city: string | null;
+  address: string | null;
+  premise: string | null;
+  last_buy: string | null;
+  ce: number;
+  items: BuyingItem[];
+}
+interface BuyingData {
+  as_of: string | null;
+  from: string | null;
+  days: number;
+  accounts: BuyingAccount[];
+}
+
+// CEs: one decimal under 10 (0.8, 2.5), whole numbers above.
+const fmtCe = (n: number) => {
+  const v = Number(n) || 0;
+  return Math.abs(v) < 10 && v % 1 !== 0 ? v.toFixed(1) : fmtN(v);
+};
+const premLabel = (p: string | null) => (p === "On" ? "On-premise" : p === "Off" ? "Off-premise" : "");
+
+function BuyingAccountsPopup({
+  supabase,
+  dist,
+  onOpen,
+  onClose,
+}: {
+  supabase: ReturnType<typeof createClient>;
+  dist: string;
+  onOpen: (outletId: string) => void;
+  onClose: () => void;
+}) {
+  const [data, setData] = useState<BuyingData | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [prem, setPrem] = useState<"all" | "On" | "Off">("all");
+  const [q, setQ] = useState("");
+  const [sort, setSort] = useState<"ce" | "last" | "name">("ce");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    supabase.rpc("sales_territory_buying", { p_dist: dist, p_days: 60 }).then(({ data: d, error }) => {
+      if (cancelled) return;
+      if (error) setErr(error.message);
+      else setData(d as BuyingData);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, dist]);
+
+  const all = useMemo(() => data?.accounts ?? [], [data]);
+  const rows = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    const out = all.filter(
+      (a) =>
+        (prem === "all" || a.premise === prem) &&
+        (!t || [a.name, a.city, a.address, a.outlet_id].some((v) => (v ?? "").toLowerCase().includes(t))),
+    );
+    out.sort((a, b) =>
+      sort === "name"
+        ? a.name.localeCompare(b.name)
+        : sort === "last"
+          ? (b.last_buy ?? "").localeCompare(a.last_buy ?? "") || a.name.localeCompare(b.name)
+          : b.ce - a.ce || a.name.localeCompare(b.name),
+    );
+    return out;
+  }, [all, prem, q, sort]);
+
+  const onN = all.filter((a) => a.premise === "On").length;
+  const offN = all.filter((a) => a.premise === "Off").length;
+  const totalCe = rows.reduce((t, a) => t + (Number(a.ce) || 0), 0);
+  const range = data?.from && data.as_of ? `${fmtDay(data.from)} – ${fmtDay(data.as_of)}` : "";
+
+  const doExport = async () => {
+    if (!rows.length) return;
+    setBusy(true);
+    try {
+      const head = `${dist} — buying accounts, last ${data?.days ?? 60} days${range ? ` (${range}, sales through ${data?.as_of})` : ""}${prem !== "all" ? ` · ${premLabel(prem)} only` : ""}${q.trim() ? ` · search "${q.trim()}"` : ""}`;
+      await exportSheets(`${dist} - buying accounts 60 days - ${data?.as_of ?? ""}.xlsx`, [
+        {
+          name: "Accounts",
+          title: head,
+          cols: [
+            { header: "Account", key: "name", width: 32 },
+            { header: "Outlet ID", key: "outlet_id", width: 12 },
+            { header: "Address", key: "address", width: 28 },
+            { header: "City", key: "city", width: 16 },
+            { header: "Premise", key: "premise", width: 12 },
+            { header: "Last order", key: "last_buy", width: 12 },
+            { header: "CEs last 60 days", key: "ce" },
+            { header: "Items bought", key: "n" },
+          ],
+          rows: rows.map((a) => ({
+            name: a.name,
+            outlet_id: a.outlet_id,
+            address: a.address ?? "",
+            city: a.city ?? "",
+            premise: premLabel(a.premise),
+            last_buy: a.last_buy ?? "",
+            ce: Number(a.ce) || 0,
+            n: a.items.length,
+          })),
+        },
+        {
+          name: "Items",
+          title: `${head} — one row per account per item`,
+          cols: [
+            { header: "Account", key: "name", width: 32 },
+            { header: "City", key: "city", width: 16 },
+            { header: "Premise", key: "premise", width: 12 },
+            { header: "Beer", key: "product", width: 30 },
+            { header: "Package", key: "size", width: 14 },
+            { header: "CEs last 60 days", key: "ce" },
+            { header: "Last buy", key: "last_buy", width: 12 },
+          ],
+          rows: rows.flatMap((a) =>
+            a.items.map((i) => ({
+              name: a.name,
+              city: a.city ?? "",
+              premise: premLabel(a.premise),
+              product: i.product,
+              size: i.size,
+              ce: Number(i.ce) || 0,
+              last_buy: i.last_buy ?? "",
+            })),
+          ),
+        },
+      ]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={`Buying accounts · ${dist}`}
+      sub={`Every ${dist} account that ordered in the last 60 days${range ? ` (${range})` : ""}, and what they bought. Click an account for its details.`}
+      onClose={onClose}
+      actions={rows.length > 0 ? <ExportButton onClick={doExport} busy={busy} /> : undefined}
+    >
+      {err ? (
+        <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{err}</p>
+      ) : !data ? (
+        <p className={`py-4 text-sm ${MUTED}`}>Loading buying accounts…</p>
+      ) : !all.length ? (
+        <p className={`py-4 text-sm ${MUTED}`}>No {dist} accounts ordered in the last 60 days.</p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <p className="text-[13px] text-neutral-300">
+            {all.length} {all.length === 1 ? "account" : "accounts"} · {onN} on-premise · {offN} off-premise ·{" "}
+            {fmtN(all.reduce((t, a) => t + (Number(a.ce) || 0), 0))} CEs in the last 60 days
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            {(
+              [
+                ["all", `All ${all.length}`],
+                ["On", `On-premise ${onN}`],
+                ["Off", `Off-premise ${offN}`],
+              ] as const
+            ).map(([key, label]) => (
+              <Pill key={key} on={prem === key} onClick={() => setPrem(key)}>
+                {label}
+              </Pill>
+            ))}
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search name, city, #store"
+              className="min-h-9 min-w-[180px] flex-1 rounded-full border border-neutral-700 bg-transparent px-3.5 text-[13px] text-neutral-100 placeholder:text-neutral-500 focus:border-[#6abc46]/60 focus:outline-none"
+            />
+            <label className={`flex items-center gap-1.5 text-[12px] ${MUTED}`}>
+              Sort
+              <select
+                value={sort}
+                onChange={(e) => setSort(e.target.value as "ce" | "last" | "name")}
+                className="min-h-9 rounded-full border border-neutral-700 bg-neutral-950 px-2.5 text-[13px] text-neutral-100"
+              >
+                <option value="ce">Most CEs</option>
+                <option value="last">Last order</option>
+                <option value="name">Name</option>
+              </select>
+            </label>
+          </div>
+          {!rows.length ? (
+            <p className={`py-4 text-sm ${MUTED}`}>No accounts match.</p>
+          ) : (
+            <>
+              {(prem !== "all" || q.trim()) && (
+                <p className={`text-[12px] ${MUTED}`}>
+                  Showing {rows.length} · {fmtN(totalCe)} CEs
+                </p>
+              )}
+              <div className="flex max-h-[60vh] flex-col divide-y divide-neutral-900 overflow-y-auto rounded-lg border border-neutral-800">
+                {rows.map((a) => (
+                  <button
+                    key={a.outlet_id}
+                    type="button"
+                    onClick={() => onOpen(a.outlet_id)}
+                    className="flex w-full items-start justify-between gap-3 px-3 py-2.5 text-left hover:bg-neutral-900"
+                  >
+                    <span className="flex min-w-0 flex-col gap-0.5">
+                      <span className="text-sm text-neutral-100">
+                        {a.name}
+                        {a.city ? <span className={MUTED}> · {a.city}</span> : null}
+                      </span>
+                      <span className={`text-[12px] ${MUTED}`}>
+                        {[premLabel(a.premise), `last order ${fmtDay(a.last_buy)}`].filter(Boolean).join(" · ")}
+                      </span>
+                      <span className="text-[12px] text-neutral-300">
+                        {a.items.length
+                          ? a.items.map((i) => `${i.product} ${i.size}`.trim() + ` · ${fmtCe(i.ce)}`).join("  |  ")
+                          : "No item detail for these days"}
+                      </span>
+                    </span>
+                    <span className="flex shrink-0 flex-col items-end">
+                      <span className="font-mono text-sm font-semibold text-neutral-100">{fmtCe(a.ce)}</span>
+                      <span className={`text-[11px] ${MUTED}`}>CEs</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
     </Modal>
