@@ -35,6 +35,7 @@ export const MAIN_LINKS: AppLink<SectionKey | typeof ERNIE_SECTION | null>[] = [
   { href: "/ernie", label: "My Ernie AI", section: ERNIE_SECTION, about: "This chat." },
   { href: "/ernie/projects", label: "Projects", section: ERNIE_SECTION, about: "Ernie Projects: shared rooms with their own file library." },
   { href: "/tasks", label: "Tasks", section: "tasks", about: "Company task tracker: tasks by category with status, due dates, assignees and comments." },
+  { href: "/beer-finder", label: "Beer Finder", section: "beer_finder", about: "Where customers can find our beer: a street map of every store and bar that bought a Full Circle / Speakeasy beer recently (default last 60 days, from LilyPad sales), with the beer, its can label and package, plus distributor, rep, last buy and CEs on each place; filters by beer, cans / draft, stores / bars & restaurants, city or zip, distance. Control tab: the days setting, which beers show and the name + POS label customers see, which distributors are included, each place's name / hide / always show / map pin, and addresses that couldn't be placed on the map. Updates itself after the weekday LilyPad sync. No taproom (FCB has none). The public website version comes later." },
 ];
 
 export const FINANCE_LINKS: AppLink[] = [

@@ -81,6 +81,8 @@ const NEW_SIDEBAR_IDS: string[] = [
   // anywhere in the tree, not just Operations.
   "/chain-calendar",
   "/social-media-calendar",
+  // Beer Finder (2026-11-04) — Main, below Tasks.
+  "/beer-finder",
   // Twilio (2026-10-29) — sub-category of Admin.
   "/twilio/setup",
   "/twilio/sign-ups",
@@ -804,6 +806,7 @@ export default function Sidebar({
     role !== "admin" &&
     !showErnie &&
     !showTasks &&
+    !can("beer_finder") &&
     !showAuditLog &&
     !can("tanks") &&
     !can("brew_planner") &&
@@ -835,7 +838,7 @@ export default function Sidebar({
   ];
 
   const showMainGroup =
-    role === "admin" || showTasks || can("tanks") || can("brew_planner") || can("sales_dashboard");
+    role === "admin" || showTasks || can("beer_finder") || can("tanks") || can("brew_planner") || can("sales_dashboard");
   const showDepartments =
     visibleFinance.length > 0 ||
     visibleOperations.length > 0 ||
@@ -1017,6 +1020,17 @@ export default function Sidebar({
                       <IconCheck />
                       Tasks
                       {showsNew("/tasks") && <NewBadge />}
+                    </Link>
+                  )}
+
+                  {/* Beer Finder (2026-11-04, per Chad: "lets add this below
+                      Tasks") — the "find our beer" map + its Control tab. Its
+                      own "Beer Finder" access (Admin → Users). */}
+                  {can("beer_finder") && (
+                    <Link href="/beer-finder" className={topLinkClass("/beer-finder")} onClick={() => dismissNew("/beer-finder")}>
+                      <IconPin />
+                      Beer Finder
+                      {showsNew("/beer-finder") && <NewBadge />}
                     </Link>
                   )}
                 </>
@@ -1497,6 +1511,14 @@ function IconCheck() {
     <NavIcon>
       <rect x="4" y="4" width="16" height="16" rx="4" />
       <path d="M8.5 12l2.5 2.5 4.5-5" />
+    </NavIcon>
+  );
+}
+function IconPin() {
+  return (
+    <NavIcon>
+      <path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z" />
+      <circle cx="12" cy="10" r="2.4" />
     </NavIcon>
   );
 }

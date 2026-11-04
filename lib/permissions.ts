@@ -41,6 +41,8 @@ export type SectionKey =
   | "tanks"
   | "brew_planner"
   | "sales_dashboard"
+  // Beer Finder (2026-11-04) — the "find our beer" map + its Control tab.
+  | "beer_finder"
   // Twilio (2026-10-29) — texting accounts: setup/compliance + text sign-ups.
   | "twilio"
   // Email Studio (2026-10-29) — Eddie's email designer + Creative Library.
@@ -105,6 +107,7 @@ export type GroupKey =
   | "sales_dashboard"
   | "distributors"
   | "tasks"
+  | "beer_finder"
   | "admin";
 
 export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[] }[] = [
@@ -242,6 +245,16 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
     key: "tasks",
     label: "Tasks",
     items: [{ key: "tasks", label: "Tasks" }],
+  },
+  {
+    // Beer Finder (Main, below Tasks) — added 2026-11-04 per Chad: the
+    // "find our beer" map (internal, with sales detail) and the Control tab
+    // that decides what the public website finder shows. Admins always have
+    // it. RLS + functions: has_section(..., 'beer_finder') in
+    // sql/beer_finder.sql.
+    key: "beer_finder",
+    label: "Beer Finder",
+    items: [{ key: "beer_finder", label: "Beer Finder" }],
   },
   {
     // Admin — one category for every page in the sidebar's Admin section,

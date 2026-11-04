@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { runLilypadExport, pacificDayEndUnix, pacificDayStartUnix, todayPacific } from "@/lib/syncs/lilypadReader";
 import { isoDate, num, pick, readSheets, text, type Row } from "@/lib/syncs/lilypadFiles";
+import { geocodeBeerFinder, geocodeSummary } from "@/lib/beerFinderGeocode";
 
 // LilyPad → Sales > Accounts purchase history (added 2026-10-16 —
 // claude/lilypad-sync-plan.md). Daily, automatic; replaces Chad's hand-run
@@ -331,6 +332,16 @@ export async function syncLilypadSales(admin: SupabaseClient): Promise<SalesSync
   // orders again goes back on by itself (sql/account_remove.sql).
   const { data: putBack, error: putBackError } = await admin.rpc("sales_account_off_autorestore");
   if (putBackError) issues.push(`Couldn't check removed accounts for new orders: ${putBackError.message}`);
+  // Beer Finder (2026-11-04): put any account that now needs one on the map
+  // (free US Census geocoder; only new / changed addresses). Never fails the sync.
+  let pins = "";
+  try {
+    const g = await geocodeBeerFinder(admin, 1000);
+    if (g.asked) pins = `; ${geocodeSummary(g)}`;
+    if (g.error && !g.placed) issues.push(geocodeSummary(g));
+  } catch (e) {
+    issues.push(`Beer Finder map pins: ${e instanceof Error ? e.message : String(e)}`);
+  }
   const { error: metaError } = await admin.from("sales_data_meta").upsert({
     id: 1,
     as_of: newAsOf,
@@ -352,6 +363,7 @@ export async function syncLilypadSales(admin: SupabaseClient): Promise<SalesSync
       (zeroLines ? `; ${zeroLines} zero-quantity lines left out` : "") +
       (skipped ? `; ${skipped} lines with no account/date/brand left out` : "") +
       (renamed.length ? `; names matched: ${renamed.join(", ")}` : "") +
-      (Number(putBack) > 0 ? `; ${putBack} removed account${Number(putBack) === 1 ? "" : "s"} ordered again and went back on the lists` : ""),
+      (Number(putBack) > 0 ? `; ${putBack} removed account${Number(putBack) === 1 ? "" : "s"} ordered again and went back on the lists` : "") +
+      pins,
   };
 }
