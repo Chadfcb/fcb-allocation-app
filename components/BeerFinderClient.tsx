@@ -16,7 +16,14 @@
 //
 // It updates itself: the weekday LilyPad sync refreshes the sales and then
 // places any new accounts on the map (lib/beerFinderGeocode.ts). No taproom —
-// FCB doesn't have one. The public website page is step 2.
+// FCB doesn't have one.
+//
+// Step 2 (added 2026-11-04): the PUBLIC website finder is
+// www.fcb-data.com/beer-finder (components/BeerFinderPublic.tsx); this page
+// moved to /beer-finder/manage. The website can't read the private POS →
+// Labels files, so this page draws each beer's can and saves the finished
+// picture for the website on its own (/api/beer-finder/can-image) whenever a
+// label or its front changes.
 
 import "leaflet/dist/leaflet.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -32,6 +39,7 @@ import {
   type Ctx,
   type Status,
   beerName,
+  canKey,
   daysBetween,
   directionsUrl,
   isDraft,
@@ -57,6 +65,9 @@ const GREEN_BTN =
   "inline-flex min-h-9 items-center whitespace-nowrap rounded-full border border-[#6abc46] bg-[#6abc46] px-4 text-sm font-bold text-neutral-950 hover:brightness-110 disabled:opacity-50";
 const STORE = "#5aa9f0";
 const BAR = "#f0a63c";
+// What goes in an Embed HTML box on fullcirclebrewing.com / fcbbrands.com (Wix).
+const EMBED_CODE =
+  '<iframe src="https://www.fcb-data.com/beer-finder" style="width:100%;height:1000px;border:0" title="Find Full Circle beer near you" loading="lazy" allow="geolocation"></iframe>';
 const fmtDay = (d: string | null) => (d ? new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" }) : "—");
 
 function Seg<T extends string>({ value, options, onChange }: { value: T; options: [T, string][]; onChange: (v: T) => void }) {
@@ -146,6 +157,39 @@ export default function BeerFinderClient() {
   }, [load]);
 
   const labelUrl = useMemo(() => new Map(labels.map((l) => [l.path, l.url])), [labels]);
+
+  // Keep the website's can pictures up to date: any beer whose label or front
+  // changed since its picture was saved gets redrawn and saved (one at a time,
+  // in the background). A beer whose label was removed gets its picture cleared.
+  const syncing = useRef(false);
+  useEffect(() => {
+    if (!data || !labels.length || syncing.current) return;
+    const todo = data.beers.filter((b) =>
+      b.label_path ? !!labelUrl.get(b.label_path) && b.can_key !== canKey(b.label_path, b.label_front ?? defaultFront(b.label_path)) : !!b.can_key,
+    );
+    if (!todo.length) return;
+    syncing.current = true;
+    (async () => {
+      let changed = false;
+      for (const b of todo) {
+        try {
+          let body: { product: string; key: string | null; png?: string };
+          if (!b.label_path) body = { product: b.product, key: null };
+          else {
+            const front = b.label_front ?? defaultFront(b.label_path);
+            const png = await canImage(b.label_path, labelUrl.get(b.label_path)!, front);
+            body = { product: b.product, key: canKey(b.label_path, front), png };
+          }
+          const r = await fetch("/api/beer-finder/can-image", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+          if (r.ok) changed = true;
+        } catch {
+          // try again next time the page opens
+        }
+      }
+      syncing.current = false;
+      if (changed) await load();
+    })();
+  }, [data, labels, labelUrl, load]);
 
   return (
     <div className="flex flex-col gap-4 p-6">
@@ -347,7 +391,7 @@ function MapTab({ data, labelUrl }: { data: BfData; labelUrl: Map<string, string
         </div>
       </div>
       <p className={`text-xs ${MUTED}`}>
-        Customers will see: name, address, distance, which of our beers and packages, Directions — and a note that it&apos;s based on recent deliveries, so call ahead.
+        Customers see (www.fcb-data.com/beer-finder): name, address, phone, distance, which of our beers and packages, Directions — and a note that it&apos;s based on recent deliveries, so call ahead. Places not on the map yet don&apos;t show there.
         Distributor, rep, last buy and CEs are only shown here. Map © OpenStreetMap contributors.
       </p>
     </div>
@@ -654,7 +698,36 @@ function ControlTab({
             />
             <span className="text-sm text-neutral-200">{data.settings?.public_on ? "On" : "Off (shows \"Coming soon\")"}</span>
           </div>
-          <div className={`mt-1 text-xs ${MUTED}`}>The public page comes in step 2 — this switch will control it.</div>
+          <div className={`mt-1 text-xs ${MUTED}`}>
+            Live at{" "}
+            <a href="/beer-finder" target="_blank" rel="noopener noreferrer" className="font-semibold text-[#9edc7f] underline">
+              www.fcb-data.com/beer-finder
+            </a>{" "}
+            — changes here show there within 5 minutes.
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <a href="/beer-finder" target="_blank" rel="noopener noreferrer" className={SMALL_BTN}>
+              Preview public page
+            </a>
+            <button
+              type="button"
+              className={SMALL_BTN}
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(EMBED_CODE);
+                  flash("Embed code copied — paste it into an Embed HTML box on the website");
+                } catch {
+                  setErr("Couldn't copy — select the code below and copy it.");
+                }
+              }}
+            >
+              Copy embed code
+            </button>
+          </div>
+          <details className="mt-1.5">
+            <summary className={`cursor-pointer text-xs ${MUTED}`}>Show embed code (for Eddie / Wix)</summary>
+            <code className="mt-1 block break-all rounded-md border border-neutral-800 bg-neutral-900 p-2 text-[11px] text-neutral-300">{EMBED_CODE}</code>
+          </details>
         </div>
       </div>
 

@@ -40,6 +40,8 @@ export interface BfBeer {
   show: boolean;
   label_path: string | null;
   label_front: number | null; // where the label's front is across the wrap (0–1); null = usual spot
+  can_image?: string | null; // public link to the finished can picture (public website finder)
+  can_key?: string | null; // label_path@front it was drawn from
 }
 export interface BfData {
   as_of: string;
@@ -130,6 +132,32 @@ export function milesBetween(a: [number, number], b: [number, number]): number {
   const h = Math.sin(dLa / 2) ** 2 + Math.cos(t(a[0])) * Math.cos(t(b[0])) * Math.sin(dLo / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(h));
 }
+
+// The public website finder (www.fcb-data.com/beer-finder, step 2 — added
+// 2026-11-04). Data: beer_finder_public() in sql/beer_finder_public.sql —
+// public info only, places already filtered by the Control tab.
+export interface PubPlace {
+  id: string;
+  name: string;
+  custom: boolean;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  phone: string | null;
+  bar: boolean;
+  lat: number;
+  lng: number;
+  items: { p: string; s: string }[];
+}
+export interface PubData {
+  public_on: boolean;
+  as_of?: string;
+  beers?: { product: string; name: string; can: string | null }[];
+  places?: PubPlace[];
+}
+// Which label + front a can picture was drawn from (to know when to redraw).
+export const canKey = (path: string, front: number) => `${path}@${front.toFixed(3)}`;
 
 export const directionsUrl = (l: BfLocation) =>
   `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent([shownName(l), l.address, l.city, l.state || "CA", l.zip].filter(Boolean).join(" "))}`;

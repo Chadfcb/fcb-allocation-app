@@ -8,6 +8,8 @@ import BeerFinderClient from "@/components/BeerFinderClient";
 // tab that decides what the public website finder will show. Its own "Beer
 // Finder" access (Admin → Users; admins always have it). SQL:
 // sql/beer_finder.sql. Plan: claude/beer-finder-plan.md in the project.
+// Moved to /beer-finder/manage on 2026-11-04 (per Chad) so the PUBLIC website
+// finder can be www.fcb-data.com/beer-finder (app/beer-finder/page.tsx).
 export const dynamic = "force-dynamic";
 
 export default async function BeerFinderPage() {

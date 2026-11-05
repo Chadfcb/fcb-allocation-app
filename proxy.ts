@@ -48,11 +48,16 @@ export async function proxy(request: NextRequest) {
 // data). Its default images live in /public/age-check (already exempt as
 // image files).
 //
+// Same for the PUBLIC Beer Finder (added 2026-11-04): /beer-finder (exactly —
+// /beer-finder/manage, the internal page, still needs a login) is shown inside
+// our websites to anyone. It only shows public info (beer_finder_public()).
+// Its can pictures load from Supabase's public storage, not through here.
+//
 // Any other route under /api/cron/* or /api/slack/* added later gets the
 // same exemption; every other route (pages and the rest of /api/*) is
 // untouched and still requires a real login exactly as before.
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/cron|api/slack|api/google-calendar/hook|api/twilio|api/sms-signup|api/email-studio/worker|api/email/|email/unsubscribe|api/age-check|privacy$|privacy/|terms$|terms/|sms-signup$|sms-signup/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/cron|api/slack|api/google-calendar/hook|api/twilio|api/sms-signup|api/email-studio/worker|api/email/|email/unsubscribe|api/age-check|privacy$|privacy/|beer-finder$|terms$|terms/|sms-signup$|sms-signup/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

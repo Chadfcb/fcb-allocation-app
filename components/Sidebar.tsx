@@ -1027,7 +1027,7 @@ export default function Sidebar({
                       Tasks") — the "find our beer" map + its Control tab. Its
                       own "Beer Finder" access (Admin → Users). */}
                   {can("beer_finder") && (
-                    <Link href="/beer-finder" className={topLinkClass("/beer-finder")} onClick={() => dismissNew("/beer-finder")}>
+                    <Link href="/beer-finder/manage" className={topLinkClass("/beer-finder/manage")} onClick={() => dismissNew("/beer-finder")}>
                       <IconPin />
                       Beer Finder
                       {showsNew("/beer-finder") && <NewBadge />}
