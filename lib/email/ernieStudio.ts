@@ -16,6 +16,9 @@ type Admin = ReturnType<typeof createAdminClient>;
 
 export const MONTHLY_IMAGE_CAP = 100; // new + edited images together
 export const MONTHLY_ANIMATION_CAP = 10;
+// "Edit email" (added 2026-11-05): Ernie rewrites/fixes the email itself.
+// Text only (no pictures made), so it's cheap — its own cap.
+export const MONTHLY_EMAIL_EDIT_CAP = 300;
 
 // Estimates for the usage counter (Google's Gemini API price list, checked
 // 2026-10-30: $0.134 per 1K/2K image, $0.24 per 4K image). Veo animation
@@ -58,8 +61,10 @@ function monthStart(now = new Date()): string {
 export type Usage = {
   images: number;
   animations: number;
+  emailEdits: number;
   imageCap: number;
   animationCap: number;
+  emailEditCap: number;
   costEstimate: number;
 };
 
@@ -71,16 +76,26 @@ export async function monthlyUsage(admin: Admin): Promise<Usage> {
     .in("status", ["pending", "done"]);
   let images = 0;
   let animations = 0;
+  let emailEdits = 0;
   let cost = 0;
   for (const r of data ?? []) {
     if (r.kind === "animate") animations++;
+    else if (r.kind === "email") emailEdits++;
     else images++;
     cost += Number(r.cost_estimate) || 0;
   }
-  return { images, animations, imageCap: MONTHLY_IMAGE_CAP, animationCap: MONTHLY_ANIMATION_CAP, costEstimate: Math.round(cost * 100) / 100 };
+  return {
+    images,
+    animations,
+    emailEdits,
+    imageCap: MONTHLY_IMAGE_CAP,
+    animationCap: MONTHLY_ANIMATION_CAP,
+    emailEditCap: MONTHLY_EMAIL_EDIT_CAP,
+    costEstimate: Math.round(cost * 100) / 100,
+  };
 }
 
-async function loadSourceImage(admin: Admin, assetId: string): Promise<{ buffer: Buffer; mime: string; name: string; id: string }> {
+export async function loadSourceImage(admin: Admin, assetId: string): Promise<{ buffer: Buffer; mime: string; name: string; id: string }> {
   const { data: a } = await admin.from("creative_assets").select("id, name, storage_path, mime_type").eq("id", assetId).maybeSingle();
   if (!a) throw new Error("That image isn't in the Creative Library anymore.");
   const mime = a.mime_type || "";
@@ -195,8 +210,11 @@ async function callGeminiImage(parts: GeminiPart[], aspect: Aspect | null, high:
   return { buffer: Buffer.from(img.inlineData.data, "base64"), mime: img.inlineData.mimeType || "image/png" };
 }
 
-async function assertUnderCap(admin: Admin, kind: "image" | "animation") {
+export async function assertUnderCap(admin: Admin, kind: "image" | "animation" | "email") {
   const u = await monthlyUsage(admin);
+  if (kind === "email" && u.emailEdits >= u.emailEditCap) {
+    throw new Error(`This month's limit of ${u.emailEditCap} Ernie email edits is used up. It resets on the 1st.`);
+  }
   if (kind === "image" && u.images >= u.imageCap) {
     throw new Error(`This month's limit of ${u.imageCap} Ernie images is used up. It resets on the 1st.`);
   }

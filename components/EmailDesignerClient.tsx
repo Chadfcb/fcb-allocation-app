@@ -8,7 +8,10 @@ import { createClient } from "@/lib/supabase/client";
 import { isWebImage, uploadCreativeFiles, type CreativeAsset } from "@/lib/creativeAssets";
 import { buildEmailDocument } from "@/lib/email/studio";
 import EmailSendDialog from "@/components/EmailSendDialog";
-import ErnieStudioPanel from "@/components/ErnieStudioPanel";
+import ErnieStudioPanel, { type EmailContent, type EmailScope } from "@/components/ErnieStudioPanel";
+import { hasSwapPictures } from "@/lib/email/erniePlaceholder";
+import NewBadge from "@/components/NewBadge";
+import { useNewFeature } from "@/lib/newFeatures";
 import EmailStudioGuide from "@/components/EmailStudioGuide";
 
 // Email Studio's drag-and-drop email designer (added 2026-10-29, per Chad —
@@ -61,6 +64,8 @@ const STARTER_TEMPLATE = `
   </td></tr>
 </table>`;
 
+const SWAP_FIRST = "Swap the gray “Swap this picture” boxes for real pictures first (double-click each one).";
+
 function toAsset(a: CreativeAsset) {
   return { src: a.public_url, name: a.name, width: a.width ?? undefined, height: a.height ?? undefined };
 }
@@ -86,6 +91,11 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
   // "?" — the How to use guide beside the designer (added 2026-10-30).
   const [helpOpen, setHelpOpen] = useState(false);
   const [library, setLibrary] = useState<CreativeAsset[]>(assets);
+  // Ernie → Edit email (added 2026-11-05): what's selected in the canvas, and
+  // the email as it was just before Ernie's last change (for Undo).
+  const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
+  const editEmailNew = useNewFeature("feature:email-studio-ernie-edit-email");
+  const beforeErnieRef = useRef<ReturnType<Editor["getProjectData"]> | null>(null);
 
   // Start the designer once.
   useEffect(() => {
@@ -139,6 +149,12 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
 
       editorRef.current = editor;
       setReady(true);
+      const showSelected = () => {
+        const sel = editor?.getSelected();
+        setSelectedLabel(sel && sel !== editor?.getWrapper() ? sel.getName() || "Selected" : null);
+      };
+      editor.on("component:toggled", showSelected);
+      editor.on("component:remove", showSelected);
       // Anything changed in the canvas after loading = unsaved changes.
       setTimeout(() => {
         editor?.on("update", () => setDirty(true));
@@ -216,6 +232,100 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
     [insertBlock],
   );
 
+  // Ernie → Edit email: what to send Ernie for each choice.
+  const getEmailContent = useCallback((scope: EmailScope): EmailContent | null => {
+    const editor = editorRef.current;
+    if (!editor) return null;
+    const full = editor.runCommand("gjs-get-inlined-html");
+    const fullHtml = typeof full === "string" ? full : editor.getHtml();
+    if (scope === "email") return { html: fullHtml };
+    if (scope === "add") return { html: "", fullEmailHtml: fullHtml };
+    const sel = editor.getSelected();
+    if (!sel || sel === editor.getWrapper()) return null;
+    return {
+      html: editor.getHtml({ component: sel }),
+      css: editor.getCss({ component: sel, onlyMatched: true }) ?? null,
+      fullEmailHtml: fullHtml,
+    };
+  }, []);
+
+  // Puts Ernie's change into the email, keeping a copy of the email from
+  // just before so "Undo Ernie's change" can put it back.
+  const applyErnieEmail = useCallback((html: string, scope: EmailScope): boolean => {
+    const editor = editorRef.current;
+    if (!editor || !html.trim()) return false;
+    const before = editor.getProjectData();
+    try {
+      const sel = editor.getSelected();
+      const hasSel = !!sel && sel !== editor.getWrapper();
+      if (scope === "email") {
+        editor.setComponents(html);
+      } else if (scope === "selection") {
+        if (!sel || !hasSel) return false;
+        // Keep the email's tables valid: a table cell must be replaced by a
+        // cell and a row by a row, whatever Ernie sent back.
+        const tag = String(sel.get("tagName") || "").toLowerCase();
+        const starts = (t: string) => new RegExp(`^\\s*<${t}[\\s>]`, "i").test(html);
+        let fixed = html;
+        if ((tag === "td" || tag === "th") && !starts("td") && !starts("th")) fixed = `<td style="padding:0;">${html}</td>`;
+        else if (tag === "tr" && !starts("tr")) fixed = `<tr><td style="padding:0;">${html}</td></tr>`;
+        const added = sel.replaceWith(fixed);
+        if (added[0]) editor.select(added[0]);
+      } else {
+        // New section: as a new row right after the row the selected part is
+        // in (so the email's tables stay valid), after the selected part if
+        // it isn't in a table, or at the very end, centered.
+        let row = hasSel ? sel : null;
+        while (row && String(row.get("tagName") || "").toLowerCase() !== "tr") row = row.parent() ?? null;
+        let added;
+        if (row && row.parent()) {
+          added = row.parent()!.append(`<tr><td style="padding:0;" align="center">${html}</td></tr>`, { at: row.index() + 1 });
+        } else if (sel && hasSel && sel.parent()) {
+          added = sel.parent()!.append(html, { at: sel.index() + 1 });
+        } else {
+          added =
+            editor
+              .getWrapper()
+              ?.append(
+                `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" style="padding:0 12px;">${html}</td></tr></table>`,
+              ) ?? [];
+        }
+        if (added[0]) {
+          editor.select(added[0]);
+          added[0].view?.el?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }
+    } catch {
+      editor.loadProjectData(before);
+      return false;
+    }
+    beforeErnieRef.current = before;
+    setDirty(true);
+    setMsg({ text: "Ernie changed the email — look it over, then Save." });
+    return true;
+  }, []);
+
+  const undoErnieEmail = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor || !beforeErnieRef.current) return;
+    editor.loadProjectData(beforeErnieRef.current);
+    beforeErnieRef.current = null;
+    setSelectedLabel(null);
+    setDirty(true);
+    setMsg({ text: "Undid Ernie's change." });
+  }, []);
+
+  // Upload from inside the Ernie panel → Creative Library (+ image picker).
+  const uploadFromErnie = useCallback(
+    async (file: File): Promise<CreativeAsset[]> => {
+      const { rows, note } = await uploadCreativeFiles(supabase, file);
+      for (const row of rows) addToLibrary(row);
+      if (note) setMsg({ text: note, bad: true });
+      return rows;
+    },
+    [supabase, addToLibrary],
+  );
+
   const inlinedHtml = useCallback((): string => {
     const editor = editorRef.current;
     if (!editor) return "";
@@ -271,6 +381,10 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
   async function sendTest() {
     if (!subject.trim()) {
       setMsg({ text: "Add a subject line first.", bad: true });
+      return;
+    }
+    if (hasSwapPictures(inlinedHtml())) {
+      setMsg({ text: SWAP_FIRST, bad: true });
       return;
     }
     // Always send what's on screen — save first.
@@ -366,6 +480,7 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
             }}
           >
             ✨ Ernie
+            {editEmailNew.isNew && <NewBadge inline />}
           </button>
           <button type="button" className={btn} disabled={!ready} onClick={openPreview}>
             Preview email
@@ -380,6 +495,10 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
             onClick={() => {
               if (!subject.trim()) {
                 setMsg({ text: "Add a subject line first.", bad: true });
+                return;
+              }
+              if (hasSwapPictures(inlinedHtml())) {
+                setMsg({ text: SWAP_FIRST, bad: true });
                 return;
               }
               setSendOpen(true);
@@ -463,6 +582,11 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
           onNewAsset={addToLibrary}
           onInsertImage={insertImage}
           onInsertVideo={insertVideo}
+          selectedLabel={selectedLabel}
+          getEmailContent={getEmailContent}
+          onApplyEmail={applyErnieEmail}
+          onUndoEmail={undoErnieEmail}
+          onUpload={uploadFromErnie}
         />
       )}
 

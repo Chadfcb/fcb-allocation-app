@@ -3,6 +3,7 @@ import { hasSection } from "@/lib/permissions";
 import { createClient } from "@/lib/supabase/server";
 import { sendMail } from "@/lib/email/sendMail";
 import { buildEmailDocument, htmlToText } from "@/lib/email/studio";
+import { hasSwapPictures } from "@/lib/email/erniePlaceholder";
 
 // Email Studio → "Send a test" (added 2026-10-29). Sends the SAVED version of
 // a design to the signed-in person's own email address only (never to
@@ -32,6 +33,9 @@ export async function POST(request: Request) {
     .maybeSingle();
   if (error || !design) return Response.json({ error: "Design not found" }, { status: 404 });
   if (!design.html) return Response.json({ error: "Save the email first." }, { status: 400 });
+  if (hasSwapPictures(design.html)) {
+    return Response.json({ error: "This email still has gray “Swap this picture” boxes. Double-click each one and pick a picture first." }, { status: 400 });
+  }
 
   const subject = `[TEST] ${design.subject?.trim() || design.name}`;
   const html = buildEmailDocument({

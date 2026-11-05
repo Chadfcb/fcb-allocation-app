@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { emailStudioProfile } from "@/lib/email/studioAccess";
 import { ASPECTS, checkAnimation, ernieImage, monthlyUsage, startAnimation, type Aspect } from "@/lib/email/ernieStudio";
+import { ernieEditEmail } from "@/lib/email/ernieEmailEdit";
 
 // Ernie inside Email Studio (added 2026-10-30, per Chad). Email Studio access
 // only. Results go into the Creative Library. The monthly cap is enforced in
@@ -9,8 +10,11 @@ import { ASPECTS, checkAnimation, ernieImage, monthlyUsage, startAnimation, type
 //   POST { action: "create" | "edit", prompt, sourceAssetId?, aspect?, high? } → new Creative Library image
 //   POST { action: "animate", prompt, sourceAssetId, seconds, tall } → { jobId }
 //   POST { action: "check", jobId } → pending / done (with the video) / error
+//   POST { action: "email", prompt, scope: "email"|"selection"|"add", html, css?, fullEmailHtml?, sourceAssetId? }
+//        → { html, note, swaps } — Ernie edits the email itself (added 2026-11-05)
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+// Rewriting a whole email can take a couple of minutes.
+export const maxDuration = 300;
 
 export async function GET() {
   if (!(await emailStudioProfile())) return Response.json({ error: "No access" }, { status: 403 });
@@ -42,6 +46,10 @@ export async function POST(request: Request) {
     seconds?: number;
     tall?: boolean;
     jobId?: string;
+    scope?: string;
+    html?: string;
+    css?: string | null;
+    fullEmailHtml?: string | null;
   };
   try {
     body = await request.json();
@@ -71,6 +79,17 @@ export async function POST(request: Request) {
         tall: !!body.tall,
       });
       return Response.json({ jobId, usage: await monthlyUsage(admin) });
+    }
+    if (body.action === "email") {
+      const out = await ernieEditEmail(admin, profile.id, {
+        prompt: body.prompt ?? "",
+        scope: body.scope === "selection" || body.scope === "add" ? body.scope : "email",
+        html: typeof body.html === "string" ? body.html : "",
+        css: typeof body.css === "string" ? body.css : null,
+        fullEmailHtml: typeof body.fullEmailHtml === "string" ? body.fullEmailHtml : null,
+        sourceAssetId: body.sourceAssetId || null,
+      });
+      return Response.json({ ...out, usage: await monthlyUsage(admin) });
     }
     if (body.action === "check") {
       if (!body.jobId) return Response.json({ error: "Bad request" }, { status: 400 });

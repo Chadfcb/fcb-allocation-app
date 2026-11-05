@@ -32,6 +32,14 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    // Shows on the ✨ Ernie button in the email designer and on the panel's
+    // "Edit email" tab; clicking the tab clears it.
+    id: "feature:email-studio-ernie-edit-email",
+    page: "/admin/email",
+    label: "Email Studio designer: Ernie → Edit email (Ernie rewrites/fixes the email itself, or rebuilds a picture as an editable email)",
+    added: "2026-11-05",
+  },
+  {
     // One id for every distributor column's button, so clicking any one clears them all.
     id: "feature:inventory-download-order",
     page: "/inventory",

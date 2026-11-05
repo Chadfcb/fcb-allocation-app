@@ -4,6 +4,7 @@ import { resolveAudience, type Audience } from "@/lib/email/audience";
 import { buildEmailDocument, EMAIL_FROM_NAME } from "@/lib/email/studio";
 import { gmailConfigured, UNSUB_PLACEHOLDER } from "@/lib/email/gmailSend";
 import { estimateDays, inSendingHours, processEmailQueue } from "@/lib/email/queue";
+import { hasSwapPictures } from "@/lib/email/erniePlaceholder";
 
 // Email Studio → Send (added 2026-10-30; reworked the same day to send from
 // ernie@ Gmail instead of SendGrid, per Chad: no separate paid service,
@@ -54,6 +55,9 @@ export async function POST(request: Request) {
     .maybeSingle();
   if (!design) return Response.json({ error: "Email not found" }, { status: 404 });
   if (!design.html) return Response.json({ error: "Save the email first." }, { status: 400 });
+  if (hasSwapPictures(design.html)) {
+    return Response.json({ error: "This email still has gray “Swap this picture” boxes. Double-click each one and pick a picture first." }, { status: 400 });
+  }
   if (!design.subject?.trim()) return Response.json({ error: "Add a subject line first." }, { status: 400 });
 
   const { recipients } = await resolveAudience(admin, body.audience);

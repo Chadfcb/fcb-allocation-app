@@ -162,21 +162,46 @@ export const GUIDE_SECTIONS: Section[] = [
   },
   {
     id: "ernie",
-    title: "Using Ernie to create, edit and animate images",
+    title: "Using Ernie — change the email, make pictures and animations",
     who: "create",
     body: (
       <>
         <p>
-          In the email designer, click <K>✨ Ernie</K> (top right). A panel opens with three tabs. Everything Ernie makes is saved to the
-          Creative Library automatically.
+          In the email designer, click <K>✨ Ernie</K> (top right). A panel opens with four tabs. Pictures and animations Ernie makes are
+          saved to the Creative Library automatically.
         </p>
+        <p className="font-semibold text-neutral-100">Edit email — Ernie works on the email itself</p>
+        <Bullets>
+          <li>
+            Pick what Ernie works on: <K>The whole email</K>, <K>Just the selected part</K> (click a headline, section or button in the
+            email first), or <K>Add a new section</K> (goes below what&apos;s selected, or at the end).
+          </li>
+          <li>
+            Say what you want like you&apos;d tell a person: &ldquo;fix any typos&rdquo;, &ldquo;make this headline punchier&rdquo;,
+            &ldquo;add a Find Our Beer button under the photo&rdquo;, &ldquo;make the background dark green&rdquo;. Then click{" "}
+            <K>Ask Ernie</K> — usually 20 seconds to 2 minutes.
+          </li>
+          <li>
+            <K>Copy a picture:</K> have a flyer or mockup (from Photoshop, Canva, anywhere)? Pick it from the Creative Library or{" "}
+            <K>Upload a picture</K>, and Ernie rebuilds it as a real email — text you can edit, real buttons and colors. It&apos;s close, not
+            pixel-perfect.
+          </li>
+          <li>
+            Ernie can&apos;t cut photos out of a picture, so each photo spot becomes a gray <K>Swap this picture</K> box. Double-click each
+            one and pick a picture (or make one on the Create tab). The email can&apos;t be tested or sent until they&apos;re all swapped.
+          </li>
+          <li>
+            The change lands right in the email. Look it over, then <K>Save</K>. Not what you wanted? Click <K>Undo Ernie&apos;s change</K>.
+          </li>
+        </Bullets>
+        <p className="font-semibold text-neutral-100">Pictures and animations</p>
         <Bullets>
           <li>
             <K>Create:</K> describe the image, pick a <K>Shape</K> (wide banner, square, portrait…) and <K>Quality</K> (Standard is best for
             email), then click <K>Create image</K>. Takes about 15–40 seconds.
           </li>
           <li>
-            <K>Edit:</K> pick an image from the library and say what should change (&ldquo;make the background a sunset&rdquo;). The original
+            <K>Edit picture:</K> pick an image from the library and say what should change (&ldquo;make the background a sunset&rdquo;). The original
             stays; you get a new copy.
           </li>
           <li>
@@ -197,9 +222,12 @@ export const GUIDE_SECTIONS: Section[] = [
         </Bullets>
         <p className="font-semibold text-neutral-100">Cost and limits</p>
         <Bullets>
-          <li>Each image costs about $0.13 (about $0.24 at the highest quality). An 8-second animation is roughly $3.</li>
           <li>
-            There&apos;s a monthly limit of <K>100 images</K> and <K>10 animations</K>. The top of the Ernie panel shows how many are used and
+            An email edit costs about 2–5¢. Each image costs about $0.13 (about $0.24 at the highest quality). An 8-second animation is
+            roughly $3.
+          </li>
+          <li>
+            There&apos;s a monthly limit of <K>300 email edits</K>, <K>100 images</K> and <K>10 animations</K>. The top of the Ernie panel shows how many are used and
             the cost so far. It resets on the 1st.
           </li>
           <li>Only ask for what you&apos;ll use — a few good tries beats a dozen variations.</li>
