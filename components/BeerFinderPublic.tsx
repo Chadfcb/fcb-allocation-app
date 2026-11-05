@@ -14,6 +14,16 @@
 // on the internal page's Control tab (www.fcb-data.com/beer-finder/manage).
 // Colors are plain hex on purpose (the app's gray scale follows each
 // person's theme; this page must always look the same).
+//
+// 21+ AGE CHECK (added 2026-11-04, per Chad — the texting carriers rejected
+// FCB once for missing age checks; they require one on every public page).
+// This page loads FCB's own Age Check (/api/age-check/script — the same
+// birth-date screen as our websites, design from Admin → Age Check, adults
+// remembered 30 days). It's skipped ONLY when the finder sits inside one of
+// our websites that already runs that check (GATED_SITES), so visitors aren't
+// asked twice. Opened directly, or inside fcbbrands.com (no age check there,
+// per Art), it shows. Browsers that can't say which site the finder is inside
+// (Firefox) always show it. The finder stays hidden until the check is on.
 
 import "leaflet/dist/leaflet.css";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -29,6 +39,43 @@ const STORE = "#2f7fd0";
 const BAR = "#d9861c";
 
 type Row = { p: PubPlace; items: PubPlace["items"]; d: number | null };
+
+// Our websites that already run FCB's Age Check on every page.
+const GATED_SITES = ["fullcirclebrewing.com", "goodbeer.com", "sonomaciderco.com"];
+
+function insideGatedSite(): boolean {
+  try {
+    if (window.top === window.self) return false; // opened directly
+    const anc = (window.location as Location & { ancestorOrigins?: DOMStringList }).ancestorOrigins;
+    if (!anc || !anc.length) return false; // can't tell (Firefox) → ask
+    for (let i = 0; i < anc.length; i++) {
+      const host = new URL(anc[i]).hostname.toLowerCase();
+      if (!GATED_SITES.some((g) => host === g || host.endsWith("." + g))) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// "checking" until we know; then the page shows (the check, if needed, is on top).
+function useAgeCheck(): boolean {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    if (insideGatedSite()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- decided once, in the browser
+      setReady(true);
+      return;
+    }
+    const sc = document.createElement("script");
+    sc.src = "/api/age-check/script";
+    sc.async = true;
+    sc.onload = () => setReady(true);
+    sc.onerror = () => setReady(true); // never leave the page blank
+    document.body.appendChild(sc);
+  }, []);
+  return ready;
+}
 
 const placeName = (p: PubPlace) => (p.custom ? p.name : tidyName(p.name));
 function phoneText(ph: string | null) {
@@ -72,6 +119,11 @@ function CanPic({ src, name }: { src: string | null; name: string }) {
 }
 
 export default function BeerFinderPublic({ data }: { data: PubData | null }) {
+  const ready = useAgeCheck();
+  return <div style={ready ? undefined : { visibility: "hidden" }}>{ready && <Content data={data} />}</div>;
+}
+
+function Content({ data }: { data: PubData | null }) {
   if (!data || !data.public_on || !data.places) {
     return (
       <div className="flex min-h-screen w-full items-center justify-center bg-white p-6 text-center" style={{ color: INK }}>
