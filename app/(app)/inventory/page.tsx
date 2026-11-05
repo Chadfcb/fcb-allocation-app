@@ -287,6 +287,29 @@ export default function InventoryPage() {
   const [inventory, setInventory] = useState<Record<string, InventoryWithRemaining>>({});
   const [allocations, setAllocations] = useState<Record<string, AllocationCell>>({}); // key: productId:distributorId
   const [pos, setPos] = useState<Record<string, DistributorPO>>({}); // key: distributorId
+  // PO # boxes (fixed 2026-11-05, Chad: "its going crazy, adding its own
+  // numbers, taking numbers away"). Root cause: every keystroke saved, and
+  // each save's reply put THAT keystroke's value back in the box — replies
+  // arriving late/out of order made the box jump. Now the box shows what's
+  // being typed (poDrafts) and saves once typing stops (~1 second), on
+  // click-away or Enter. A reply never changes the box while it's being typed.
+  const [poDrafts, setPoDrafts] = useState<Record<string, string>>({}); // key: distributorId
+  const poDraftsRef = useRef<Record<string, string>>({});
+  const poTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const poSavingRef = useRef<Record<string, boolean>>({});
+  const poAgainRef = useRef<Record<string, boolean>>({});
+  const posRef = useRef(pos);
+  useEffect(() => {
+    posRef.current = pos;
+  }, [pos]);
+  // A different week = different PO boxes; drop anything half-typed.
+  useEffect(() => {
+    for (const t of Object.values(poTimersRef.current)) clearTimeout(t);
+    poTimersRef.current = {};
+    poDraftsRef.current = {};
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setPoDrafts({});
+  }, [week?.id]);
   const [packaging, setPackaging] = useState<Record<string, PackagingInventoryRow>>({}); // key: item_key
   const [labelInventory, setLabelInventory] = useState<Record<string, LabelInventoryRow>>({}); // key: productId
   const [distributorPrices, setDistributorPrices] = useState<Record<string, DistributorPrice>>({}); // key: productId:distributorId
@@ -2021,27 +2044,44 @@ export default function InventoryPage() {
     setSavingKey(null);
   }
 
-  async function handlePoNumberChange(distributorId: string, value: string) {
+  // Typing in a PO # box: keep what's typed, save after a short pause.
+  function handlePoNumberChange(distributorId: string, value: string) {
+    poDraftsRef.current = { ...poDraftsRef.current, [distributorId]: value };
+    setPoDrafts(poDraftsRef.current);
+    clearTimeout(poTimersRef.current[distributorId]);
+    poTimersRef.current[distributorId] = setTimeout(() => void savePoNumber(distributorId), 1000);
+  }
+
+  // Saves what's in the PO # box now (also on click-away / Enter). Only the
+  // PO number is written — not the status — so typing a PO doesn't re-run
+  // the Delivered check in the inventory record. One save at a time per
+  // distributor; if more was typed meanwhile, it saves again after.
+  async function savePoNumber(distributorId: string) {
+    clearTimeout(poTimersRef.current[distributorId]);
     if (!week || !userId) return;
+    const value = poDraftsRef.current[distributorId];
+    if (value === undefined) return;
+    if (poSavingRef.current[distributorId]) {
+      poAgainRef.current[distributorId] = true;
+      return;
+    }
+    const existing = posRef.current[distributorId];
+    const oldValue = existing?.po_number ?? "";
+    const dropDraftIfSame = () => {
+      if (poDraftsRef.current[distributorId] !== value) return;
+      const next = { ...poDraftsRef.current };
+      delete next[distributorId];
+      poDraftsRef.current = next;
+      setPoDrafts(next);
+    };
+    if (value === oldValue) {
+      dropDraftIfSame();
+      return;
+    }
+
+    poSavingRef.current[distributorId] = true;
     const key = `po:${distributorId}`;
     setSavingKey(key);
-
-    const existing = pos[distributorId];
-    const oldValue = existing?.po_number ?? "";
-    setPos((prev) => ({
-      ...prev,
-      [distributorId]: {
-        id: existing?.id ?? "",
-        week_id: week.id,
-        distributor_id: distributorId,
-        po_number: value,
-        po_status: existing?.po_status ?? null,
-        delivery_date: existing?.delivery_date ?? null,
-        updated_by: userId,
-        updated_at: new Date().toISOString(),
-      },
-    }));
-
     const { data, error } = await supabase
       .from("distributor_pos")
       .upsert(
@@ -2049,8 +2089,6 @@ export default function InventoryPage() {
           week_id: week.id,
           distributor_id: distributorId,
           po_number: value,
-          po_status: existing?.po_status ?? null,
-          delivery_date: existing?.delivery_date ?? null,
           updated_by: userId,
           updated_at: new Date().toISOString(),
         },
@@ -2058,9 +2096,12 @@ export default function InventoryPage() {
       )
       .select()
       .single();
+    poSavingRef.current[distributorId] = false;
+    setSavingKey((k) => (k === key ? null : k));
 
     if (!error && data) {
       setPos((prev) => ({ ...prev, [distributorId]: data as DistributorPO }));
+      dropDraftIfSame();
       await logChange(supabase, {
         weekId: week.id,
         tableName: "distributor_pos",
@@ -2071,8 +2112,15 @@ export default function InventoryPage() {
         changedBy: userId,
       });
     }
-
-    setSavingKey(null);
+    // Typed more while that was saving (or it failed) → save the latest.
+    if (poAgainRef.current[distributorId] || error) {
+      poAgainRef.current[distributorId] = false;
+      if (error) {
+        poTimersRef.current[distributorId] = setTimeout(() => void savePoNumber(distributorId), 3000);
+      } else if (poDraftsRef.current[distributorId] !== undefined) {
+        void savePoNumber(distributorId);
+      }
+    }
   }
 
   async function handlePoStatusChange(distributorId: string, value: PoStatus) {
@@ -3003,9 +3051,13 @@ export default function InventoryPage() {
                     type="text"
                     placeholder="PO #"
                     className="w-28 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-right text-[11px] font-normal normal-case text-neutral-100 disabled:cursor-not-allowed"
-                    value={pos[d.id]?.po_number ?? ""}
+                    value={poDrafts[d.id] ?? pos[d.id]?.po_number ?? ""}
                     disabled={isDistributorDimmed(d)}
                     onChange={(e) => handlePoNumberChange(d.id, e.target.value)}
+                    onBlur={() => void savePoNumber(d.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                    }}
                   />
                 </th>
               ))}
