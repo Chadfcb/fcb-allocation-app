@@ -62,6 +62,7 @@ import {
   DATA_LINKS,
   POS_LABEL_BRANDS,
   UPC_BRANDS,
+  VIP_CODE_LINKS,
 } from "@/lib/appPages";
 
 // The single New! on the UPC's row for the barcode column (2026-10-28).
@@ -108,6 +109,11 @@ const NEW_SIDEBAR_IDS: string[] = [
   // click on every one ... is so much of a waste of time"). The old
   // 2026-09-05 per-brand / per-size UPC's entries were removed the same day.
   UPC_BARCODES_NEW_ID,
+  // VIP Item Codes (2026-11-06) — Sales → VIP Item Codes, below UPC's; one
+  // page per brand. The "VIP Item Codes" row lights up from these.
+  "/vip-item-codes/full-circle",
+  "/vip-item-codes/speakeasy",
+  "/vip-item-codes/sonoma-cider",
   // Chain Authorizations / Chain Mandates — new Sales sub-links, added
   // 2026-09-05, per Chad.
   "/sales/chain-authorizations",
@@ -232,7 +238,8 @@ function topLevelCategoryForPath(pathname: string): TopLevelCategory | null {
     SALES_LINKS.some((l) => l.href === pathname) ||
     pathname.startsWith("/distributors/") ||
     POS_LINKS.some((l) => l.href === pathname) ||
-    pathname.startsWith("/upcs")
+    pathname.startsWith("/upcs") ||
+    pathname.startsWith("/vip-item-codes")
   ) {
     return "sales";
   }
@@ -245,10 +252,11 @@ function topLevelCategoryForPath(pathname: string): TopLevelCategory | null {
 
 // Which Sales sub-category (Distributors / POS / UPC's) the current page sits
 // in, so it opens on its own when you land there (2026-10-28).
-function salesSubTreeForPath(pathname: string): "distributors" | "pos" | "upcs" | null {
+function salesSubTreeForPath(pathname: string): "distributors" | "pos" | "upcs" | "vip-codes" | null {
   if (pathname.startsWith("/distributors/")) return "distributors";
   if (POS_LINKS.some((l) => l.href === pathname)) return "pos";
   if (pathname.startsWith("/upcs")) return "upcs";
+  if (pathname.startsWith("/vip-item-codes")) return "vip-codes";
   return null;
 }
 
@@ -286,7 +294,7 @@ const POS_TREE_STORAGE_KEY = "fcb-sidebar-pos-tree-expanded";
 // into. Fixed 2026-09-05 per Chad, after brand-level expand state (which
 // used to get saved right alongside the top-level state) made "Labels"
 // look like it was opening everything at once.
-const PERSISTED_POS_TREE_KEYS = ["pos-labels", "upcs", "distributors", "pos"];
+const PERSISTED_POS_TREE_KEYS = ["pos-labels", "upcs", "distributors", "pos", "vip-codes"];
 
 // POS_LABEL_BRANDS — moved to lib/appPages.ts (2026-10-16) so Ernie reads the same page list.
 
@@ -351,7 +359,7 @@ export default function Sidebar({
   const [adminExpanded, setAdminExpanded] = useState(true);
   const [posTreeExpanded, setPosTreeExpanded] = useState<
     Record<string, boolean>
-  >({ "pos-labels": true, upcs: true, distributors: true, pos: true });
+  >({ "pos-labels": true, upcs: true, distributors: true, pos: true, "vip-codes": true });
   const [seenNew, setSeenNew] = useState<Record<string, true>>({});
   // Which "New!" badges this signed-in person has already dismissed —
   // stored server-side (sidebar_new_seen table) rather than in this
@@ -774,13 +782,16 @@ export default function Sidebar({
   const visibleDistributors = DISTRIBUTOR_LINKS.filter((link) => can(link.section));
   const showPosTree = can("pos_labels");
   const showUpcTree = can("upcs");
+  // VIP Item Codes (2026-11-06): only the brand pages this person has.
+  const visibleVipCodes = VIP_CODE_LINKS.filter((link) => can(link.section));
   const visibleCalendars = CALENDARS_LINKS.filter((link) => can(link.section));
   const visiblePos = POS_LINKS.filter((link) => can(link.section));
   const visibleTwilio = TWILIO_LINKS.filter((link) => can(link.section));
   // Data (2026-11-03): same access checkboxes as when these lived in Sales.
   const visibleData = DATA_LINKS.filter((link) => can(link.section));
   // Sales holds its own links plus Distributors, POS and UPC's (2026-10-28).
-  const showSalesSection = visibleSales.length > 0 || visibleDistributors.length > 0 || visiblePos.length > 0 || showUpcTree;
+  const showSalesSection =
+    visibleSales.length > 0 || visibleDistributors.length > 0 || visiblePos.length > 0 || showUpcTree || visibleVipCodes.length > 0;
   const showErnie = can(ERNIE_SECTION);
   const showTasks = can("tasks");
   const showAuditLog = can("audit_log");
@@ -817,6 +828,7 @@ export default function Sidebar({
     visibleDistributors.length === 0 &&
     !showPosTree &&
     !showUpcTree &&
+    visibleVipCodes.length === 0 &&
     visibleCalendars.length === 0 &&
     visibleTwilio.length === 0 &&
     visibleData.length === 0 &&
@@ -835,6 +847,7 @@ export default function Sidebar({
     ...(visibleDistributors.length ? ["section:distributors", ...visibleDistributors.map((link) => link.href)] : []),
     ...(visiblePos.length ? ["section:pos", ...visiblePos.map((link) => link.href)] : []),
     ...(showUpcTree ? ["section:upcs", UPC_BARCODES_NEW_ID, ...upcDescendantIds()] : []),
+    ...(visibleVipCodes.length ? ["section:vip-codes", ...visibleVipCodes.map((link) => link.href)] : []),
   ];
 
   const showMainGroup =
@@ -1239,6 +1252,42 @@ export default function Sidebar({
                                 )}
                               </button>
                               {posTreeExpanded["upcs"] && <div className="fcb-nav-sub-group">{brandTree(UPC_BRANDS)}</div>}
+                            </div>
+                          )}
+
+                          {/* VIP Item Codes — right below UPC's, one page per
+                              brand (2026-11-06, per Chad). */}
+                          {visibleVipCodes.length > 0 && (
+                            <div className="flex flex-col">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  togglePosTree("vip-codes");
+                                  dismissNew("section:vip-codes");
+                                }}
+                                className="fcb-nav-sub is-parent"
+                              >
+                                VIP Item Codes
+                                {parentRight(
+                                  sectionShowsNew("section:vip-codes", visibleVipCodes.map((link) => link.href)),
+                                  !!posTreeExpanded["vip-codes"],
+                                )}
+                              </button>
+                              {posTreeExpanded["vip-codes"] && (
+                                <div className="fcb-nav-sub-group">
+                                  {visibleVipCodes.map((link) => (
+                                    <Link
+                                      key={link.href}
+                                      href={link.href}
+                                      className={linkClass(link.href)}
+                                      onClick={() => dismissNew(link.href)}
+                                    >
+                                      {link.label}
+                                      {showsNew(link.href) && <NewBadge />}
+                                    </Link>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                           )}
 

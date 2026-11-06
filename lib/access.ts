@@ -14,6 +14,7 @@ import {
   ADMIN_LINKS,
   POS_LABEL_BRANDS,
   UPC_BRANDS,
+  VIP_CODE_LINKS,
 } from "@/lib/appPages";
 
 // Access lockdown (2026-10-22, per Chad): "nobody should be able to see
@@ -62,6 +63,7 @@ export function homeFor(profile: ProfileWithSections | null): string {
   }
   if (can("pos_labels") && POS_LABEL_BRANDS[0]?.sizes[0]) return POS_LABEL_BRANDS[0].sizes[0].href;
   if (can("upcs") && UPC_BRANDS[0]?.sizes[0]) return UPC_BRANDS[0].sizes[0].href;
+  for (const l of VIP_CODE_LINKS) if (can(l.section)) return l.href;
   for (const l of ADMIN_LINKS) if (l.section && can(l.section)) return l.href;
   if (can(ERNIE_SECTION)) return "/ernie";
   return "/no-access";

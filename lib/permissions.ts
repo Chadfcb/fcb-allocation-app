@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Role } from "@/lib/types/db";
 import { DISTRIBUTOR_PAGES, type DistributorSectionKey } from "@/lib/distributorPages";
+import { VIP_CODE_BRANDS, type VipCodesSectionKey } from "@/lib/vipItemCodes";
 
 // Single source of truth for the per-user, per-section access system that
 // replaces the old binary admin/basic split for anything that used to be
@@ -57,7 +58,10 @@ export type SectionKey =
   | "ekos_sync"
   // Distributors (2026-10-22) — one key per distributor page, from
   // lib/distributorPages.ts (dist_matagrano, dist_guardian, …).
-  | DistributorSectionKey;
+  | DistributorSectionKey
+  // VIP Item Codes (2026-11-06) — one key per brand page, from
+  // lib/vipItemCodes.ts (vip_codes_fcb, vip_codes_speakeasy, vip_codes_sonoma_cider).
+  | VipCodesSectionKey;
 
 // Ernie AI is deliberately its own grantable section, separate from every
 // page section above — an admin may want someone to have, say, Purchase
@@ -100,6 +104,7 @@ export type GroupKey =
   | "finance"
   | "operations"
   | "sales"
+  | "vip_item_codes"
   | "events_calendar"
   | "pos_labels"
   | "tanks"
@@ -172,6 +177,15 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
       // has_section(auth.uid(), 'accounts') in sql/sales_accounts.sql.
       { key: "accounts", label: "Accounts" },
     ],
+  },
+  {
+    // VIP Item Codes (Sales → VIP Item Codes, below UPC's) — added
+    // 2026-11-06 per Chad: one page per brand (Full Circle, Speakeasy,
+    // Sonoma Cider), each its own checkbox like Distributors. RLS:
+    // has_section(auth.uid(), <brand's key>) in sql/vip_item_codes.sql.
+    key: "vip_item_codes",
+    label: "VIP Item Codes",
+    items: VIP_CODE_BRANDS.map((b) => ({ key: b.section, label: b.name })),
   },
   {
     key: "events_calendar",
@@ -309,7 +323,7 @@ export const ADMIN_RESTRICTED_SECTIONS: AnySectionKey[] = [
 
 // Categories whose pages can be granted one by one in Users > Edit access
 // (every other category is all-or-nothing).
-export const PER_PAGE_GROUPS: GroupKey[] = ["distributors", "admin"];
+export const PER_PAGE_GROUPS: GroupKey[] = ["distributors", "vip_item_codes", "admin"];
 
 export const GROUP_KEYS: GroupKey[] = SECTION_GROUPS.map((g) => g.key);
 

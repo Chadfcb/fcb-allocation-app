@@ -16,6 +16,7 @@
 import type { Role } from "@/lib/types/db";
 import { hasSection, ERNIE_SECTION, type AnySectionKey, type SectionKey } from "@/lib/permissions";
 import { DISTRIBUTOR_PAGES, distributorHref } from "@/lib/distributorPages";
+import { VIP_CODE_BRANDS, vipCodesHref } from "@/lib/vipItemCodes";
 
 export type AppLink<S = SectionKey> = { href: string; label: string; section: S; about?: string };
 export type BrandTree = {
@@ -70,6 +71,15 @@ export const DISTRIBUTOR_LINKS: AppLink[] = DISTRIBUTOR_PAGES.map((d) => ({
   label: d.name,
   section: d.section,
   about: `${d.name}'s daily dashboard: today's priorities (stores missing must-carry items, accounts slipping, big losses to win back), ${d.name}'s inventory (on hand, weeks of supply, when it was last updated), check-ins (overall, maintenance route progress for the current two-month period, accounts checked in with notes, route accounts not yet visited), recent win backs and new accounts, cases vs last year, cases by month and top brands — for the last 30 / 90 days, year to date or custom dates. Click any account for its details (store phone, contacts, what they buy, last check-ins with who the rep spoke with).`,
+}));
+
+// VIP Item Codes (2026-11-06) — Sales → VIP Item Codes, right below UPC's.
+// One page per brand, each its own access checkbox (lib/vipItemCodes.ts).
+export const VIP_CODE_LINKS: AppLink[] = VIP_CODE_BRANDS.map((b) => ({
+  href: vipCodesHref(b.slug),
+  label: b.name,
+  section: b.section,
+  about: `${b.name} VIP item codes: every current ${b.name} item with FCB's Supplier Item Code and VIP Item ID (the codes set up in VIP's Item Catalog), plus a Download button (Excel).`,
 }));
 
 export const CALENDARS_LINKS: AppLink[] = [
@@ -240,6 +250,7 @@ export function pagesForErnie(role: Role | undefined, sections: AnySectionKey[],
         UPC_BRANDS.map((b) => `${b.label}: ${b.sizes.map((s) => s.href).join(", ")}`).join("; "),
     );
   }
+  for (const l of VIP_CODE_LINKS) if (can(l.section)) out.push(line("Sales > VIP Item Codes > ", l));
   for (const l of SALES_LINKS) if (can(l.section)) out.push(line("Sales > ", l));
   for (const l of DISTRIBUTOR_LINKS) if (can(l.section)) out.push(line("Sales > Distributors > ", l));
   for (const l of CALENDARS_LINKS) if (can(l.section)) out.push(line("Calendars > ", l));
