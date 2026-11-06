@@ -20,6 +20,8 @@ export type CreativeAsset = {
   source: string;
   created_by: string | null;
   created_at: string;
+  // Email Studio folder (added 2026-11-06; null = No folder).
+  folder_id?: string | null;
 };
 
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"];

@@ -32,6 +32,13 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    // "+ New folder" on Email Studio's Emails and Creative Library tabs.
+    id: "feature:email-studio-folders",
+    page: "/admin/email",
+    label: "Email Studio: Folders on the Emails and Creative Library tabs (e.g. all the Oobli emails in one folder)",
+    added: "2026-11-06",
+  },
+  {
     // Shows on the ✨ Ernie button in the email designer and on the panel's
     // "Edit email" tab; clicking the tab clears it.
     id: "feature:email-studio-ernie-edit-email",

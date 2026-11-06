@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { firstNameFor } from "@/lib/displayName";
-import EmailStudioClient, { type DesignRow, type AssetRow } from "@/components/EmailStudioClient";
+import EmailStudioClient, { type DesignRow, type AssetRow, type FolderRow } from "@/components/EmailStudioClient";
 import type { ListRow } from "@/components/EmailAudienceTab";
 import type { CampaignRow } from "@/components/EmailSentTab";
 import { DAILY_CAP, sentToday } from "@/lib/email/queue";
@@ -13,13 +13,15 @@ export const dynamic = "force-dynamic";
 
 export default async function EmailStudioPage() {
   const supabase = await createClient();
-  const [{ data: designs, error: designsError }, { data: assets, error: assetsError }] = await Promise.all([
+  const [{ data: designs, error: designsError }, { data: assets, error: assetsError }, { data: folders }] = await Promise.all([
     supabase
       .from("email_designs")
-      .select("id, name, subject, status, updated_at, updated_by")
+      .select("id, name, subject, status, updated_at, updated_by, folder_id")
       .neq("status", "archived")
       .order("updated_at", { ascending: false }),
     supabase.from("creative_assets").select("*").order("created_at", { ascending: false }).limit(2000),
+    // Folders (added 2026-11-06) — shared by the Emails and Creative Library tabs.
+    supabase.from("email_folders").select("id, name, created_at").order("name"),
   ]);
 
   // Audience + Sent tabs (Phase 5, 2026-10-30).
@@ -67,6 +69,7 @@ export default async function EmailStudioPage() {
     <EmailStudioClient
       designs={(designs ?? []).map((d) => ({ ...d, updated_by_name: d.updated_by ? names[d.updated_by] ?? null : null })) as DesignRow[]}
       assets={(assets ?? []) as AssetRow[]}
+      folders={(folders ?? []) as FolderRow[]}
       loadError={loadError}
       lists={lists}
       suppressionCount={suppressionCount ?? 0}

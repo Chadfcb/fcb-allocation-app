@@ -161,6 +161,36 @@ export const GUIDE_SECTIONS: Section[] = [
     ),
   },
   {
+    id: "folders",
+    title: "Folders — keep a brand's emails and pictures together",
+    who: "create",
+    body: (
+      <>
+        <p>
+          The <K>Folders</K> row sits above the emails and above the Creative Library. It&apos;s the same set of folders on both tabs, so
+          an &ldquo;Oobli&rdquo; folder can hold the Oobli emails and the Oobli pictures.
+        </p>
+        <Bullets>
+          <li>
+            Click <K>+ New folder</K>, type a name, then <K>Add</K>.
+          </li>
+          <li>Click a folder to see only what&apos;s in it. <K>All</K> shows everything; <K>No folder</K> shows what isn&apos;t in one yet.</li>
+          <li>
+            To move an email or file, use the <K>📁 folder menu</K> on its card.
+          </li>
+          <li>
+            While you&apos;re looking at a folder, <K>+ New email</K> and new uploads go straight into it. A duplicated email stays in the
+            same folder as the original.
+          </li>
+          <li>
+            With a folder open you can <K>Rename</K> it or <K>Delete folder</K>. Deleting a folder doesn&apos;t delete anything inside —
+            those emails and files just go back to No folder.
+          </li>
+        </Bullets>
+      </>
+    ),
+  },
+  {
     id: "ernie",
     title: "Using Ernie — change the email, make pictures and animations",
     who: "create",
