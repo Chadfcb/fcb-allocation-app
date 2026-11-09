@@ -29,6 +29,7 @@ import JamesEffectiveness from "@/components/JamesEffectiveness";
 import JamesDirection from "@/components/JamesDirection";
 import RemoveFromLists from "@/components/RemoveFromLists";
 import RemovedAccountsButton from "@/components/RemovedAccountsButton";
+import ParLevelsButton from "@/components/ParLevelsButton";
 import { useActionItems, type ActionRow } from "@/components/SalesActionItems";
 import {
   CARD,
@@ -763,11 +764,13 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
               <section className={`${CARD} flex min-w-0 flex-[1_1_420px] flex-col gap-3`}>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <h2 className="text-[15px] font-semibold text-neutral-100">Stock at {dist}</h2>
+                    <h2 className="text-[15px] font-semibold text-neutral-100">On Hand at {dist}</h2>
                     <p className={`text-[12.5px] ${MUTED}`}>Their inventory · {stockLine}</p>
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     {FILE_INVENTORY_DISTRIBUTORS.includes(dist) && <UploadInventory dist={dist} onDone={load} />}
+                    {/* Par levels next to Export (2026-11-09, per Chad). */}
+                    <ParLevelsButton supabase={supabase} dist={dist} stockLine={stockLine} />
                     <ExportButton onClick={exportStock} busy={busy === "stock"} />
                   </div>
                 </div>
@@ -1058,7 +1061,13 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
           title={`${dist} On Hand Inventory`}
           sub={`Their inventory · ${stockLine}`}
           onClose={() => setStockOpen(false)}
-          actions={<ExportButton onClick={exportStock} busy={busy === "stock"} />}
+          actions={
+            <div className="flex items-center gap-2">
+              {/* Par levels next to Export (2026-11-09, per Chad) — Markstein's stock lives in this pop-up. */}
+              <ParLevelsButton supabase={supabase} dist={dist} stockLine={stockLine} />
+              <ExportButton onClick={exportStock} busy={busy === "stock"} />
+            </div>
+          }
         >
           <div className="flex flex-col gap-3">{stockContent}</div>
         </Modal>

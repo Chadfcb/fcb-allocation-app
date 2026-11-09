@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Supa } from "@/components/SalesDashboardClient";
 import { AccountPopup } from "@/components/DistributorPageClient";
+import ParLevelsButton from "@/components/ParLevelsButton";
 import { CARD, MUTED, Change, ExportButton, Modal, Pill, Row, Stat, exportSheets } from "@/components/SalesDashboardHome";
 import { DISTRIBUTOR_PAGES, FILE_INVENTORY_DISTRIBUTORS, NO_INVENTORY_DISTRIBUTORS } from "@/lib/distributorPages";
 import { REP_BY_DISTRIBUTOR } from "@/lib/salesAccounts";
@@ -91,7 +92,7 @@ export default function SalesDistInventory({ supabase }: { supabase: Supa }) {
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-4">
         {DISTS.map((d) => (
-          <StockBlock key={d} dist={d} data={stock[d]} error={errors[d]} onPick={(item) => setPick({ dist: d, item })} />
+          <StockBlock key={d} supabase={supabase} dist={d} data={stock[d]} error={errors[d]} onPick={(item) => setPick({ dist: d, item })} />
         ))}
       </div>
       {pick && !account && <ProductSalesPopup supabase={supabase} pick={pick} onClose={() => setPick(null)} onOpenAccount={(id) => setAccount(id)} />}
@@ -103,7 +104,7 @@ export default function SalesDistInventory({ supabase }: { supabase: Supa }) {
 // ---------------------------------------------------------------------------
 // One distributor's block — same as "Stock at <dist>" on the distributor pages
 // ---------------------------------------------------------------------------
-function StockBlock({ dist, data, error, onPick }: { dist: string; data: StockData | undefined; error?: string; onPick: (i: StockItem) => void }) {
+function StockBlock({ supabase, dist, data, error, onPick }: { supabase: Supa; dist: string; data: StockData | undefined; error?: string; onPick: (i: StockItem) => void }) {
   const [busy, setBusy] = useState(false);
   const items = data?.inventory ?? [];
   const low = items.filter((i) => isOut(i) || isLow(i));
@@ -134,12 +135,16 @@ function StockBlock({ dist, data, error, onPick }: { dist: string; data: StockDa
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-[15px] font-semibold text-neutral-100">
-            Stock at {dist}
+            On Hand at {dist}
             {rep && <span className={`ml-1.5 text-[13px] font-normal ${MUTED}`}>· {rep}</span>}
           </h2>
           <p className={`text-[12.5px] ${MUTED}`}>Their inventory · {error ?? line}</p>
         </div>
-        {items.length > 0 && <ExportButton onClick={exportStock} busy={busy} />}
+        {/* Par levels button next to Export (2026-11-09, per Chad). */}
+        <div className="flex flex-wrap items-center gap-2">
+          <ParLevelsButton supabase={supabase} dist={dist} stockLine={line} />
+          {items.length > 0 && <ExportButton onClick={exportStock} busy={busy} />}
+        </div>
       </div>
       {low.length > 0 && (
         <div className="flex flex-col gap-1.5 rounded-xl border border-red-500/30 bg-red-500/5 p-3">

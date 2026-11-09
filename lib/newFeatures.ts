@@ -167,6 +167,14 @@ export const NEW_FEATURES: NewFeature[] = [
     label: `${d.name} page: All Chain Mandates / Chain Authorizations buttons (stores, buying vs missing, export)`,
     added: "2026-10-22",
   })),
+  // Par levels button next to Export in the On Hand block on every distributor
+  // page (2026-11-09, per Chad). Markstein: inside the On Hand Inventory pop-up.
+  ...DISTRIBUTOR_PAGES.map((d) => ({
+    id: `feature:dist-par-levels-${d.slug}`,
+    page: distributorHref(d.slug),
+    label: `${d.name} page: Par levels button next to Export in the On Hand block — par level, on hand and how far short per product, export`,
+    added: "2026-11-09",
+  })),
   // Buying accounts (60 days) button on every distributor page (2026-11-04).
   // Not on Coast / Superior — no accounts, button not shown.
   ...DISTRIBUTOR_PAGES.filter((d) => !NO_ACCOUNT_SLUGS.includes(d.slug)).map((d) => ({
