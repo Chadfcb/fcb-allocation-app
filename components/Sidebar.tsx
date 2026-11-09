@@ -140,6 +140,8 @@ const NEW_SIDEBAR_IDS: string[] = [
   "/distributors/superior",
   "/distributors/saccani",
   "/distributors/coast",
+  // The Localist (2026-11-09) — new distributor page, per Chad.
+  "/distributors/the-localist",
   // Football POS — new POS sub-link, added 2026-09-05, per Chad.
   "/pos/football",
   // Cash Flow Dashboard — new Finance section, added 2026-09-09, per Chad.

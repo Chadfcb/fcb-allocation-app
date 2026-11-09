@@ -20,10 +20,17 @@ export const DISTRIBUTOR_PAGES = [
   { slug: "superior", name: "Superior", section: "dist_superior" },
   { slug: "saccani", name: "Saccani", section: "dist_saccani" },
   { slug: "coast", name: "Coast", section: "dist_coast" },
+  // The Localist (2026-11-09, per Chad) — a delivery service FCB self-distributes
+  // through, set up as a distributor. No LilyPad/VIP accounts yet.
+  { slug: "the-localist", name: "The Localist", section: "dist_the_localist" },
 ] as const;
 
 export type DistributorPage = (typeof DISTRIBUTOR_PAGES)[number];
 export type DistributorSectionKey = DistributorPage["section"];
+
+// Distributor pages with no store accounts (nothing in LilyPad/VIP), so the
+// account buttons (Buying accounts, Removed accounts, Search accounts) are hidden.
+export const NO_ACCOUNT_SLUGS: string[] = ["coast", "superior", "the-localist"];
 
 export const distributorHref = (slug: string) => `/distributors/${slug}`;
 

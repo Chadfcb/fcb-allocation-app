@@ -55,7 +55,7 @@ import {
   wbRows,
 } from "@/components/SalesDashboardHome";
 import { REP_BY_DISTRIBUTOR } from "@/lib/salesAccounts";
-import { DISTRIBUTOR_PAGES, FILE_INVENTORY_DISTRIBUTORS, NO_INVENTORY_DISTRIBUTORS } from "@/lib/distributorPages";
+import { DISTRIBUTOR_PAGES, FILE_INVENTORY_DISTRIBUTORS, NO_ACCOUNT_SLUGS, NO_INVENTORY_DISTRIBUTORS } from "@/lib/distributorPages";
 import { CARRIED_DAYS, buildStoreReports, resolveLists, splitKey, statusFor, type DashOverview, type GapStore } from "@/lib/salesDashboard";
 import { loadGapStores } from "@/lib/salesGapMany";
 import { addDaysIso, brands, distColor, fmtDay, fmtN, kpis, pctChange, periodRange, winbacksIn, type DateRange, type HomeData, type Period } from "@/lib/salesDashHome";
@@ -664,7 +664,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
           ))}
           {/* Buying accounts (60 days) — 2026-11-04, per Chad. Not on Coast /
               Superior (no accounts in LilyPad). */}
-          {pageSlug && pageSlug !== "coast" && pageSlug !== "superior" && (
+          {pageSlug && !NO_ACCOUNT_SLUGS.includes(pageSlug) && (
             <button
               type="button"
               onClick={() => {
@@ -693,7 +693,7 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
         </div>
         {/* Removed accounts (2026-11-02, per Chad — far right of the header, the
             spot marked on his screenshot). Not on Coast / Superior (no accounts). */}
-        {pageSlug && pageSlug !== "coast" && pageSlug !== "superior" && (
+        {pageSlug && !NO_ACCOUNT_SLUGS.includes(pageSlug) && (
           <RemovedAccountsButton supabase={supabase} dist={dist} slug={pageSlug} version={version} onOpen={(id) => setOpenId(id)} onChanged={load} />
         )}
       </div>

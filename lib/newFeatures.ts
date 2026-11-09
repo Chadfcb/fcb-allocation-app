@@ -21,7 +21,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { DISTRIBUTOR_PAGES, distributorHref } from "@/lib/distributorPages";
+import { DISTRIBUTOR_PAGES, NO_ACCOUNT_SLUGS, distributorHref } from "@/lib/distributorPages";
 
 export interface NewFeature {
   id: string; // unique, prefixed "feature:"
@@ -169,7 +169,7 @@ export const NEW_FEATURES: NewFeature[] = [
   })),
   // Buying accounts (60 days) button on every distributor page (2026-11-04).
   // Not on Coast / Superior — no accounts, button not shown.
-  ...DISTRIBUTOR_PAGES.filter((d) => d.slug !== "coast" && d.slug !== "superior").map((d) => ({
+  ...DISTRIBUTOR_PAGES.filter((d) => !NO_ACCOUNT_SLUGS.includes(d.slug)).map((d) => ({
     id: `feature:dist-buying-accounts-${d.slug}`,
     page: distributorHref(d.slug),
     label: `${d.name} page: Buying accounts (60 days) button — every account that ordered in the last 60 days and what it bought (also opens from at a glance), export`,
@@ -177,7 +177,7 @@ export const NEW_FEATURES: NewFeature[] = [
   })),
   // Removed accounts button, far right of each distributor page's header
   // (2026-11-02). Not on Coast / Superior — no accounts, button not shown.
-  ...DISTRIBUTOR_PAGES.filter((d) => d.slug !== "coast" && d.slug !== "superior").map((d) => ({
+  ...DISTRIBUTOR_PAGES.filter((d) => !NO_ACCOUNT_SLUGS.includes(d.slug)).map((d) => ({
     id: `feature:dist-removed-accounts-${d.slug}`,
     page: distributorHref(d.slug),
     label: `${d.name} page: Removed accounts button — accounts taken off the lists, why, who and when, put back`,
@@ -185,7 +185,7 @@ export const NEW_FEATURES: NewFeature[] = [
   })),
   // Not on Coast or Superior (Chad, 2026-10-29): they have no accounts, so
   // there's nothing to pick in the search box and the badge could never clear.
-  ...DISTRIBUTOR_PAGES.filter((d) => d.slug !== "coast" && d.slug !== "superior").map((d) => ({
+  ...DISTRIBUTOR_PAGES.filter((d) => !NO_ACCOUNT_SLUGS.includes(d.slug)).map((d) => ({
     id: `feature:dist-account-search-${d.slug}`,
     page: distributorHref(d.slug),
     label: `${d.name} page: Search accounts box above the stock block (opens the account pop-up)`,

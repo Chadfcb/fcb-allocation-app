@@ -76,8 +76,9 @@ export const CURRENT_DISTRIBUTORS = [
   "Markstein",
   "Coast",
   "Superior",
+  "The Localist",
 ];
-export const NO_REP_DISTRIBUTORS = ["Coast", "Superior"];
+export const NO_REP_DISTRIBUTORS = ["Coast", "Superior", "The Localist"];
 
 export const REPS: { rep: string; territory: string }[] = [
   { rep: "Steve", territory: "Matagrano" },
