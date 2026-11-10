@@ -167,6 +167,14 @@ export const NEW_FEATURES: NewFeature[] = [
     label: `${d.name} page: All Chain Mandates / Chain Authorizations buttons (stores, buying vs missing, export)`,
     added: "2026-10-22",
   })),
+  // Sales Sheets button at the top of every distributor page (2026-11-10, per
+  // Chad) — opens Sales → POS → Sales Sheets. Clicking it on one page clears all.
+  ...DISTRIBUTOR_PAGES.map((d) => ({
+    id: `feature:dist-sales-sheets-${d.slug}`,
+    page: distributorHref(d.slug),
+    label: `${d.name} page: Sales Sheets button at the top — opens the FCB / Speakeasy / Sonoma Cider sales sheets`,
+    added: "2026-11-10",
+  })),
   // Par levels button next to Export in the On Hand block on every distributor
   // page (2026-11-09, per Chad). Markstein: inside the On Hand Inventory pop-up.
   ...DISTRIBUTOR_PAGES.map((d) => ({

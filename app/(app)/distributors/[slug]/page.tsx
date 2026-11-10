@@ -18,5 +18,7 @@ export default async function DistributorPage({ params }: { params: Promise<{ sl
   const profile = await getProfile();
   if (!profile || !hasSection(profile.role, profile.sections, page.section, profile.is_super_admin)) redirect("/");
   const name = profile.full_name?.trim() || null;
-  return <DistributorPageClient dist={page.name} viewerName={name} />;
+  // Sales Sheets button at the top (2026-11-10) — only for people with Sales Sheets access.
+  const canSalesSheets = hasSection(profile.role, profile.sections, "sales_sheets", profile.is_super_admin);
+  return <DistributorPageClient dist={page.name} viewerName={name} canSalesSheets={canSalesSheets} />;
 }

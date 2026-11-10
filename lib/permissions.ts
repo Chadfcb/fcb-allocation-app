@@ -39,6 +39,7 @@ export type SectionKey =
   | "chain_mandates"
   | "accounts"
   | "football_pos"
+  | "sales_sheets"
   | "tanks"
   | "brew_planner"
   | "sales_dashboard"
@@ -210,7 +211,11 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
     // (preview + download) but with no brand/size nesting — it's one
     // shared pool, not per-brand artwork.
     label: "POS",
-    items: [{ key: "football_pos", label: "Football POS" }],
+    // Sales Sheets added 2026-11-10, per Chad (FCB / Speakeasy / Sonoma Cider).
+    items: [
+      { key: "football_pos", label: "Football POS" },
+      { key: "sales_sheets", label: "Sales Sheets" },
+    ],
   },
   {
     // Tanks (3D tank view under MAIN) — its own Users > Edit toggle, added

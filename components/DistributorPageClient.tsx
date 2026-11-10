@@ -22,6 +22,7 @@
 // sales_territory_buying — sql/distributor_buying_accounts.sql.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { useNewFeature } from "@/lib/newFeatures";
 import NewBadge from "@/components/NewBadge";
@@ -306,7 +307,15 @@ function PeriodPicker({ value, onChange, asOf, salesNote }: { value: BlockPeriod
   );
 }
 
-export default function DistributorPageClient({ dist, viewerName }: { dist: string; viewerName: string | null }) {
+export default function DistributorPageClient({
+  dist,
+  viewerName,
+  canSalesSheets = false,
+}: {
+  dist: string;
+  viewerName: string | null;
+  canSalesSheets?: boolean;
+}) {
   const supabase = useMemo(() => createClient(), []);
   // Each block's own date buttons (2026-10-22).
   const [ckP, setCkP] = useBlockPeriod(dist, "ck");
@@ -331,6 +340,8 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
   // ordered in the last 60 days and what it bought.
   const [buyingOpen, setBuyingOpen] = useState(false);
   const buyingNew = useNewFeature(`feature:dist-buying-accounts-${dist.toLowerCase().trim().replace(/\s+/g, "-")}`);
+  // Sales Sheets button (2026-11-10, per Chad).
+  const salesSheetsNew = useNewFeature(`feature:dist-sales-sheets-${dist.toLowerCase().trim().replace(/\s+/g, "-")}`);
   // Markstein On Hand Inventory pop-up (2026-10-29).
   const [stockOpen, setStockOpen] = useState(false);
   const stockBtnNew = useNewFeature("feature:markstein-on-hand-inventory");
@@ -690,6 +701,19 @@ export default function DistributorPageClient({ dist, viewerName }: { dist: stri
               Markstein On Hand Inventory
               {stockBtnNew.isNew && <NewBadge inline />}
             </button>
+          )}
+          {/* Sales Sheets (2026-11-10, per Chad: "a button in the distributors
+              sections, at the top somewhere, where our sales reps can click,
+              that takes them to this section"). Only with Sales Sheets access. */}
+          {canSalesSheets && (
+            <Link
+              href="/pos/sales-sheets"
+              onClick={() => salesSheetsNew.dismiss()}
+              className="flex items-center gap-1.5 rounded-lg border border-[#6abc46]/40 bg-[#6abc46]/10 px-3.5 py-2 text-sm font-semibold text-neutral-100 hover:bg-[#6abc46]/20"
+            >
+              Sales Sheets
+              {salesSheetsNew.isNew && <NewBadge inline />}
+            </Link>
           )}
         </div>
         {/* Removed accounts (2026-11-02, per Chad — far right of the header, the

@@ -123,6 +123,7 @@ const SECTION_PATH_MAP: { prefix: string; sections: AnySectionKey[] }[] = [
   { prefix: "app/(app)/social-media-calendar/", sections: ["events_calendar"] },
   { prefix: "app/(app)/pos/labels/", sections: ["pos_labels"] },
   { prefix: "app/(app)/pos/football/", sections: ["football_pos"] },
+  { prefix: "app/(app)/pos/sales-sheets/", sections: ["sales_sheets"] },
   { prefix: "app/(app)/tasks/", sections: ["tasks"] },
   { prefix: "app/(app)/finance/cashflow-dashboard/", sections: ["cashflow_dashboard"] },
   { prefix: "app/(app)/finance/distributor-data/", sections: ["distributor_data"] },

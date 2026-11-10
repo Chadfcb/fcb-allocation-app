@@ -84,6 +84,8 @@ const NEW_SIDEBAR_IDS: string[] = [
   "/social-media-calendar",
   // Beer Finder (2026-11-04) — Main, below Tasks.
   "/beer-finder",
+  // Sales Sheets (2026-11-10) — Sales → POS, below Football POS.
+  "/pos/sales-sheets",
   // Twilio (2026-10-29) — sub-category of Admin.
   "/twilio/setup",
   "/twilio/sign-ups",

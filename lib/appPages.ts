@@ -90,6 +90,7 @@ export const CALENDARS_LINKS: AppLink[] = [
 
 export const POS_LINKS: AppLink[] = [
   { href: "/pos/football", label: "Football POS", section: "football_pos", about: "Football-season POS artwork library." },
+  { href: "/pos/sales-sheets", label: "Sales Sheets", section: "sales_sheets", about: "Sales sheets for FCB, Speakeasy and Sonoma Cider, with previews and downloads." },
 ];
 
 // Data (2026-11-03, per Chad: "pull margin analysis, cost per case, contribution

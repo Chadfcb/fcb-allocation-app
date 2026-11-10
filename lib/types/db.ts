@@ -801,6 +801,21 @@ export interface PosFootballFile {
   uploaded_at: string;
 }
 
+// POS > Sales Sheets (added 2026-11-10) — same shape as PosFootballFile plus
+// which brand page it's on (fcb / speakeasy / sonoma-cider).
+export interface PosSalesSheetFile {
+  id: string;
+  brand: string;
+  file_name: string;
+  storage_path: string | null;
+  external_url: string | null;
+  preview_path: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  uploaded_by: string | null;
+  uploaded_at: string;
+}
+
 // UPC's (added 2026-09-05) — a reference table of product name -> UPC
 // barcode, editable right on the page (add/edit/delete), per Chad. Set up
 // exactly like Labels above, per Chad, 2026-09-05: "i want it set up
