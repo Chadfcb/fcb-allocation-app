@@ -32,6 +32,13 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    // "+ New folder" on Sales → POS → Sales Sheets (2026-11-11, Eddie's ask).
+    id: "feature:sales-sheets-folders",
+    page: "/pos/sales-sheets",
+    label: "Sales Sheets: Folders (e.g. Distributors, Chains) shared by FCB, Speakeasy and Sonoma Cider",
+    added: "2026-11-11",
+  },
+  {
     // "+ New folder" on Email Studio's Emails and Creative Library tabs.
     id: "feature:email-studio-folders",
     page: "/admin/email",

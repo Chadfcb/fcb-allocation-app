@@ -814,6 +814,15 @@ export interface PosSalesSheetFile {
   size_bytes: number | null;
   uploaded_by: string | null;
   uploaded_at: string;
+  folder_id?: string | null; // Folders (2026-11-11) — null = "No folder"
+}
+
+// Sales Sheets folders (added 2026-11-11, per Eddie/Chad) — one shared list
+// used under all three brands. sql/pos_sales_sheet_folders.sql.
+export interface PosSalesSheetFolder {
+  id: string;
+  name: string;
+  created_at: string;
 }
 
 // UPC's (added 2026-09-05) — a reference table of product name -> UPC
