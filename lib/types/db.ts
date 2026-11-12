@@ -817,6 +817,20 @@ export interface PosSalesSheetFile {
   folder_id?: string | null; // Folders (2026-11-11) — null = "No folder"
 }
 
+// Distributor Files (added 2026-11-12, per Chad) — the drag-and-drop Files box
+// at the top of every distributor page. sql/distributor_files.sql.
+export interface DistributorFile {
+  id: string;
+  dist: string;
+  file_name: string;
+  storage_path: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  uploaded_by: string | null;
+  uploaded_by_name: string | null;
+  uploaded_at: string;
+}
+
 // Sales Sheets folders (added 2026-11-11, per Eddie/Chad) — one shared list
 // used under all three brands. sql/pos_sales_sheet_folders.sql.
 export interface PosSalesSheetFolder {

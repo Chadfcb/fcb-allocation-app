@@ -174,6 +174,14 @@ export const NEW_FEATURES: NewFeature[] = [
     label: `${d.name} page: All Chain Mandates / Chain Authorizations buttons (stores, buying vs missing, export)`,
     added: "2026-10-22",
   })),
+  // Files drop box at the top of every distributor page (2026-11-12, per Chad).
+  // Using it on one page clears all.
+  ...DISTRIBUTOR_PAGES.map((d) => ({
+    id: `feature:dist-files-${d.slug}`,
+    page: distributorHref(d.slug),
+    label: `${d.name} page: Files box at the top — drag and drop files for ${d.name}, then preview, download or delete them`,
+    added: "2026-11-12",
+  })),
   // Sales Sheets button at the top of every distributor page (2026-11-10, per
   // Chad) — opens Sales → POS → Sales Sheets. Clicking it on one page clears all.
   ...DISTRIBUTOR_PAGES.map((d) => ({

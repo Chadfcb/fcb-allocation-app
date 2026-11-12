@@ -31,6 +31,7 @@ import JamesDirection from "@/components/JamesDirection";
 import RemoveFromLists from "@/components/RemoveFromLists";
 import RemovedAccountsButton from "@/components/RemovedAccountsButton";
 import ParLevelsButton from "@/components/ParLevelsButton";
+import DistributorFilesBox from "@/components/DistributorFilesBox";
 import { useActionItems, type ActionRow } from "@/components/SalesActionItems";
 import {
   CARD,
@@ -722,6 +723,11 @@ export default function DistributorPageClient({
           <RemovedAccountsButton supabase={supabase} dist={dist} slug={pageSlug} version={version} onOpen={(id) => setOpenId(id)} onChanged={load} />
         )}
       </div>
+
+      {/* Files box (2026-11-12, per Chad: "a button at the top, that looks
+          different from the others, where we can drag and drop files into it
+          ... lets do that for all distributors"). */}
+      {pageSlug && <DistributorFilesBox dist={dist} slug={pageSlug} viewerName={viewerName} />}
 
       {err && <p className="rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{err}</p>}
       {!home && !err && <p className={`text-sm ${MUTED}`}>Loading…</p>}
