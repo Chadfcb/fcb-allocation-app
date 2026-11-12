@@ -16,5 +16,6 @@ export default async function SalesDashboardPage() {
   // Quick links under the title (2026-10-28): UPC's and POS only show for
   // people who can open those pages.
   const can = (k: "upcs" | "football_pos") => hasSection(profile.role, profile.sections, k, profile.is_super_admin);
-  return <SalesDashboardClient canUpcs={can("upcs")} canPos={can("football_pos")} />;
+  // Viewer's name goes on files they drop in the Files box (2026-11-12).
+  return <SalesDashboardClient canUpcs={can("upcs")} canPos={can("football_pos")} viewerName={profile.full_name?.trim() || null} />;
 }

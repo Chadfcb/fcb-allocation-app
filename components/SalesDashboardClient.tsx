@@ -33,6 +33,7 @@ import SalesQuickLinks from "@/components/SalesQuickLinks";
 import SalesDistInventory from "@/components/SalesDistInventory";
 import SalesAccountFinder from "@/components/SalesAccountFinder";
 import SalesChainClass from "@/components/SalesChainClass";
+import DistributorFilesBox from "@/components/DistributorFilesBox";
 import NewBadge from "@/components/NewBadge";
 import { useNewFeature } from "@/lib/newFeatures";
 import { isFormerDistributor } from "@/lib/salesAccounts";
@@ -242,7 +243,7 @@ function HowToRead({ view, chain, dist, asOf }: { view: "store" | "item"; chain:
   );
 }
 
-export default function SalesDashboardClient({ canUpcs = false, canPos = false }: { canUpcs?: boolean; canPos?: boolean }) {
+export default function SalesDashboardClient({ canUpcs = false, canPos = false, viewerName = null }: { canUpcs?: boolean; canPos?: boolean; viewerName?: string | null }) {
   const supabase = useMemo(() => createClient(), []);
   const [ov, setOv] = useState<DashOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -338,6 +339,10 @@ export default function SalesDashboardClient({ canUpcs = false, canPos = false }
           setTab("class");
         }}
       />
+      {/* Sales Dashboard Files (2026-11-12, per Chad: "can we add the same thing
+          to the sales dashboard, id like to throw files in there too") — the
+          same drop box as the distributor pages, its own file list. */}
+      <DistributorFilesBox dist="Sales Dashboard" slug="sales-dashboard" viewerName={viewerName} featureId="feature:sales-dashboard-files" />
       {tab !== "home" && (
       <div className="flex gap-1 border-b border-neutral-800">
         {TABS.map(([k, label]) => (

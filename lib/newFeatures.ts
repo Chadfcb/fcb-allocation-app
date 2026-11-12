@@ -174,6 +174,13 @@ export const NEW_FEATURES: NewFeature[] = [
     label: `${d.name} page: All Chain Mandates / Chain Authorizations buttons (stores, buying vs missing, export)`,
     added: "2026-10-22",
   })),
+  // Files drop box on the Sales Dashboard (2026-11-12, per Chad).
+  {
+    id: "feature:sales-dashboard-files",
+    page: "/sales-dashboard",
+    label: "Sales Dashboard: Files box under the quick links — drag and drop files, then preview, download or delete them",
+    added: "2026-11-12",
+  },
   // Files drop box at the top of every distributor page (2026-11-12, per Chad).
   // Using it on one page clears all.
   ...DISTRIBUTOR_PAGES.map((d) => ({

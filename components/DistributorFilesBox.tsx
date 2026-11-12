@@ -8,6 +8,11 @@
 // pop-up list with Preview / Download / Delete. Each distributor keeps its own
 // files. Same storage pattern as POS → Sales Sheets.
 // SQL: sql/distributor_files.sql (table distributor_files, bucket distributor-files).
+//
+// Sales Dashboard Files (2026-11-12, per Chad: "can we add the same thing to
+// the sales dashboard, id like to throw files in there too"). Same box with
+// dist = "Sales Dashboard", storage folder sales-dashboard/, gated by Sales
+// Dashboard access. SQL: sql/sales_dashboard_files.sql.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -74,10 +79,12 @@ export default function DistributorFilesBox({
   dist,
   slug,
   viewerName,
+  featureId,
 }: {
-  dist: string;
-  slug: string;
+  dist: string; // whose files: a distributor name, or "Sales Dashboard"
+  slug: string; // storage folder: the page slug (the-localist, sales-dashboard)
   viewerName: string | null;
+  featureId?: string; // New! tag id (default: feature:dist-files-<slug>)
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [files, setFiles] = useState<DistributorFile[]>([]);
@@ -94,7 +101,7 @@ export default function DistributorFilesBox({
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const dragDepth = useRef(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const isNew = useNewFeature(`feature:dist-files-${slug}`);
+  const isNew = useNewFeature(featureId ?? `feature:dist-files-${slug}`);
 
   const load = useCallback(async () => {
     const {
