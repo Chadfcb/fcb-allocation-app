@@ -19,7 +19,10 @@
 // Sales Dashboard home, one distributor), sales_territory_stock,
 // sales_territory_checkins, sales_territory_account, and the Action Items gap
 // check — sql/distributors.sql. Buying accounts (60 days) pop-up:
-// sales_territory_buying — sql/distributor_buying_accounts.sql.
+// sales_territory_buying — sql/distributor_buying_accounts.sql. Markstein's
+// "Old Bay Area Distributing accounts" button in Today's priorities:
+// markstein_old_bad_list / markstein_old_bad_account —
+// sql/markstein_old_bad_accounts.sql.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -108,6 +111,30 @@ interface NewAccount {
   lb: string | null;
   ce12: number;
 }
+// Old Bay Area Distributing accounts (Markstein, 2026-11-12, per Chad): accounts
+// that bought from Bay Area Distributing and haven't bought from Markstein since
+// it took over (8/1/2024). Plan: claude/bad-accounts-vs-markstein-2026-11-12.md.
+interface OldBadAccount {
+  outlet_id: string;
+  name: string;
+  city: string | null;
+  address: string | null;
+  phone: string | null;
+  premise: string | null;
+  bad_name: string;
+  bad_units_2023: number | null;
+  last_buy: string | null;
+  last_dist: string | null;
+  lifetime_ce: number | null;
+  last_checkin: string | null;
+  contacts: number;
+}
+interface OldBadData {
+  as_of: string | null;
+  accounts: OldBadAccount[];
+  history: { outlet_id: string; month: string; product: string; size: string; dist: string; ce: number; last_buy: string | null }[];
+}
+
 interface AccountDetail {
   account: {
     outlet_id: string;
@@ -124,9 +151,42 @@ interface AccountDetail {
     lifetime_ce: number;
   } | null;
   as_of: string | null;
-  sales: { month: string; product: string; size: string; ce: number; last_buy: string | null }[];
+  sales: { month: string; product: string; size: string; ce: number; last_buy: string | null; dist?: string }[];
+  all_time?: boolean;
   checkins: { checkin_date: string; rep: string | null; activity: string | null; notes: string | null; brands: string | null; contact?: string | null }[];
   contacts?: { name: string | null; title: string | null; phone: string | null; mobile: string | null; email: string | null; notes: string | null }[];
+}
+
+// Export columns — Old Bay Area Distributing accounts (2026-11-12).
+const COLS_OLD_BAD = [
+  { header: "Account", key: "name", width: 32 },
+  { header: "Bay Area Distributing name", key: "bad", width: 30 },
+  { header: "Premise", key: "premise", width: 12 },
+  { header: "Address", key: "address", width: 28 },
+  { header: "City", key: "city" },
+  { header: "Phone", key: "phone" },
+  { header: "Last order", key: "lb" },
+  { header: "Last bought from", key: "from", width: 22 },
+  { header: "CEs all time", key: "ce", width: 12 },
+  { header: "Bay Area units Jan–Apr 2023", key: "units", width: 14 },
+  { header: "Last check-in", key: "checkin" },
+  { header: "Contacts on file", key: "contacts", width: 10 },
+  { header: "Outlet ID", key: "id", width: 12 },
+];
+const COLS_OLD_BAD_HISTORY = [
+  { header: "Account", key: "name", width: 32 },
+  { header: "Month", key: "month", width: 10 },
+  { header: "Item", key: "item", width: 30 },
+  { header: "Size", key: "size", width: 22 },
+  { header: "Bought from", key: "from", width: 22 },
+  { header: "CEs", key: "ce", width: 8 },
+  { header: "Last order that month", key: "lb", width: 14 },
+  { header: "Outlet ID", key: "id", width: 12 },
+];
+// "Mar 2023"
+function fmtMonth(iso: string): string {
+  const [y, m] = iso.slice(0, 7).split("-").map(Number);
+  return new Date(Date.UTC(y, (m || 1) - 1, 1)).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
 }
 
 // "Thu 10/22/26, 4:12 AM" — Pacific time.
@@ -331,7 +391,10 @@ export default function DistributorPageClient({
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
-  const [att, setAtt] = useState<"gaps" | "slip" | "lost">("gaps");
+  const [att, setAtt] = useState<"gaps" | "slip" | "lost" | "bad">("gaps");
+  // Old Bay Area Distributing accounts (Markstein only, 2026-11-12).
+  const [oldBad, setOldBad] = useState<OldBadData | null>(null);
+  const oldBadNew = useNewFeature("feature:markstein-old-bad-accounts");
   const [follow, setFollow] = useState<"won" | "new">("won");
   const [openId, setOpenId] = useState<string | null>(null);
   // Chain list pop-ups (2026-10-22, per Chad): All Chain Mandates / Chain Authorizations.
@@ -412,6 +475,21 @@ export default function DistributorPageClient({
     loadCheckins();
   }, [loadCheckins, version]);
 
+  // Old Bay Area Distributing accounts — Markstein only; reloads with the page.
+  useEffect(() => {
+    if (dist !== "Markstein") return;
+    let cancelled = false;
+    supabase.rpc("markstein_old_bad_list").then(({ data, error }) => {
+      if (cancelled) return;
+      if (error) setErr(error.message);
+      else setOldBad(data as OldBadData);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, dist, version]);
+  const oldBadIds = useMemo(() => new Set((oldBad?.accounts ?? []).map((a) => a.outlet_id)), [oldBad]);
+
   const resolved = useMemo(() => (ov ? resolveLists(ov) : null), [ov]);
   const actions = useActionItems(supabase, ov, resolved, version, dist);
 
@@ -450,17 +528,63 @@ export default function DistributorPageClient({
 
   const low = (stock?.inventory ?? []).filter((i) => i.per_week > 0 && (i.on_hand <= 0 || (i.weeks_left ?? 99) < 2));
 
-  const ATT = {
+  const ATT: Record<"gaps" | "slip" | "lost" | "bad", { label: string; desc: string; count: number | null; rule: string }> = {
     gaps: { label: "Must-carry gaps", desc: "Chain stores not buying a must-carry item", count: actions.rows ? gaps.length : null, rule: "Stores not buying an item their chain says they must carry. Biggest first." },
     slip: { label: "Slipping now", desc: "61–90 day non-buy, all accounts", count: slip.length, rule: "61–90 days since their last order — still saveable. Biggest 12-month buyers first." },
     lost: { label: "Must win back", desc: "90+ day lost, all accounts", count: lost.length, rule: "Lost in the last year (90+ days quiet). Biggest 12-month buyers first." },
-  } as const;
+    bad: {
+      label: "Old Bay Area Distributing accounts",
+      desc: "Lost — bought from Bay Area, never from Markstein",
+      count: oldBad ? oldBad.accounts.length : null,
+      rule: "Bay Area Distributing's 2023 top accounts that haven't bought from Markstein since it took over (8/1/2024). Biggest all-time buyers first.",
+    },
+  };
+  const attKeys: (keyof typeof ATT)[] = dist === "Markstein" ? ["gaps", "slip", "lost", "bad"] : ["gaps", "slip", "lost"];
 
   const exportAtt = async () => {
     setBusy("att");
     try {
       if (att === "gaps") await exportSheets(`${dist} - must-carry gaps - ${home?.as_of}.xlsx`, [{ name: "Must-carry gaps", title: `${dist} — must-carry gaps`, cols: COLS_GAPS, rows: gapRows(gaps) }]);
-      else
+      else if (att === "bad") {
+        const names = new Map((oldBad?.accounts ?? []).map((a) => [a.outlet_id, a.name]));
+        await exportSheets(`Old Bay Area Distributing accounts - ${oldBad?.as_of ?? home?.as_of}.xlsx`, [
+          {
+            name: "Old Bay Area accounts",
+            title: `Old Bay Area Distributing accounts · ${ATT.bad.rule}`,
+            cols: COLS_OLD_BAD,
+            rows: (oldBad?.accounts ?? []).map((a) => ({
+              name: a.name,
+              bad: a.bad_name,
+              premise: a.premise === "On" ? "On-premise" : a.premise === "Off" ? "Off-premise" : "",
+              address: a.address ?? "",
+              city: a.city ?? "",
+              phone: a.phone ?? "",
+              lb: a.last_buy ?? "",
+              from: a.last_dist ?? "",
+              ce: Number(a.lifetime_ce) || 0,
+              units: a.bad_units_2023 ?? "",
+              checkin: a.last_checkin ?? "",
+              contacts: a.contacts,
+              id: a.outlet_id,
+            })),
+          },
+          {
+            name: "What they bought (all time)",
+            title: "Old Bay Area Distributing accounts — every month of what they bought, all time",
+            cols: COLS_OLD_BAD_HISTORY,
+            rows: (oldBad?.history ?? []).map((h) => ({
+              name: names.get(h.outlet_id) ?? h.outlet_id,
+              month: h.month.slice(0, 7),
+              item: h.product,
+              size: h.size,
+              from: h.dist,
+              ce: Number(h.ce) || 0,
+              lb: h.last_buy ?? "",
+              id: h.outlet_id,
+            })),
+          },
+        ]);
+      } else
         await exportSheets(`${dist} - ${ATT[att].label} - ${home?.as_of}.xlsx`, [
           { name: ATT[att].label, title: `${dist} — ${ATT[att].label} · ${ATT[att].rule}`, cols: COLS_ACCOUNTS, rows: accountRows(att === "slip" ? slip : lost) },
         ]);
@@ -590,6 +714,17 @@ export default function DistributorPageClient({
       value={fmtN(r.impact)}
       valueLabel="CEs / yr at stake"
       onClick={() => setOpenId(r.store.outlet_id)}
+    />
+  ));
+  const oldBadRowsView = (oldBad?.accounts ?? []).map((a) => (
+    <Row
+      key={a.outlet_id}
+      left={<Dot color="#ef6a55" />}
+      title={`${a.name}${a.city ? ` · ${a.city}` : ""}`}
+      sub={`${a.premise === "On" ? "On-premise · " : a.premise === "Off" ? "Off-premise · " : ""}${a.last_buy ? `last order ${fmtDay(a.last_buy)}${a.last_dist ? ` from ${a.last_dist}` : ""}` : "no orders on record"}${a.last_checkin ? ` · last check-in ${fmtDay(a.last_checkin)}` : " · no check-in on record"}`}
+      value={fmtN(Number(a.lifetime_ce) || 0)}
+      valueLabel="CEs all time"
+      onClick={() => setOpenId(a.outlet_id)}
     />
   ));
   const acctRowsView = (att === "slip" ? slip : lost).map((a) => (
@@ -762,11 +897,19 @@ export default function DistributorPageClient({
                 <ExportButton onClick={exportAtt} busy={busy === "att"} />
               </div>
               <div className="flex flex-wrap gap-2">
-                {(Object.keys(ATT) as (keyof typeof ATT)[]).map((key) => (
-                  <Pill key={key} on={att === key} onClick={() => setAtt(key)}>
+                {attKeys.map((key) => (
+                  <Pill
+                    key={key}
+                    on={att === key}
+                    onClick={() => {
+                      setAtt(key);
+                      if (key === "bad") oldBadNew.dismiss();
+                    }}
+                  >
                     <span className="flex flex-col items-start py-1 leading-tight">
-                      <span>
+                      <span className="flex items-center gap-1.5">
                         {ATT[key].label} <span className="font-mono opacity-80">{ATT[key].count ?? "…"}</span>
+                        {key === "bad" && oldBadNew.isNew && <NewBadge inline />}
                       </span>
                       <span className="text-[10.5px] font-normal opacity-70">{ATT[key].desc}</span>
                     </span>
@@ -777,8 +920,10 @@ export default function DistributorPageClient({
               <div className="flex max-h-[380px] flex-col overflow-y-auto pr-1">
                 {att === "gaps" && !actions.rows ? (
                   <p className={`py-4 text-sm ${MUTED}`}>Checking chain stores…</p>
-                ) : (att === "gaps" ? gapRowsView : acctRowsView).length ? (
-                  att === "gaps" ? gapRowsView : acctRowsView
+                ) : att === "bad" && !oldBad ? (
+                  <p className={`py-4 text-sm ${MUTED}`}>Loading…</p>
+                ) : (att === "gaps" ? gapRowsView : att === "bad" ? oldBadRowsView : acctRowsView).length ? (
+                  att === "gaps" ? gapRowsView : att === "bad" ? oldBadRowsView : acctRowsView
                 ) : (
                   <p className={`py-4 text-sm ${MUTED}`}>Nothing here right now.</p>
                 )}
@@ -1102,7 +1247,7 @@ export default function DistributorPageClient({
           <div className="flex flex-col gap-3">{stockContent}</div>
         </Modal>
       )}
-      {openId && <AccountPopup supabase={supabase} outletId={openId} onClose={() => setOpenId(null)} onChanged={load} />}
+      {openId && <AccountPopup supabase={supabase} outletId={openId} allTime={oldBadIds.has(openId)} onClose={() => setOpenId(null)} onChanged={load} />}
     </div>
   );
 }
@@ -1684,12 +1829,26 @@ interface SearchRow {
   is_off: boolean;
 }
 
-export function AccountPopup({ supabase, outletId, onClose, onChanged }: { supabase: ReturnType<typeof createClient>; outletId: string; onClose: () => void; onChanged?: () => void }) {
+export function AccountPopup({
+  supabase,
+  outletId,
+  onClose,
+  onChanged,
+  allTime = false,
+}: {
+  supabase: ReturnType<typeof createClient>;
+  outletId: string;
+  onClose: () => void;
+  onChanged?: () => void;
+  // Old Bay Area Distributing accounts (2026-11-12): all-time purchases (with
+  // who sold it) and every check-in, not just the last 13 months / last 10.
+  allTime?: boolean;
+}) {
   const [d, setD] = useState<AccountDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
-    supabase.rpc("sales_territory_account", { p_outlet: outletId }).then(({ data, error }) => {
+    supabase.rpc(allTime ? "markstein_old_bad_account" : "sales_territory_account", { p_outlet: outletId }).then(({ data, error }) => {
       if (cancelled) return;
       if (error) setErr(error.message);
       else setD(data as AccountDetail);
@@ -1697,7 +1856,7 @@ export function AccountPopup({ supabase, outletId, onClose, onChanged }: { supab
     return () => {
       cancelled = true;
     };
-  }, [supabase, outletId]);
+  }, [supabase, outletId, allTime]);
 
   // Items they buy: total cases in the last 13 months + last bought.
   const items = useMemo(() => {
@@ -1772,7 +1931,7 @@ export function AccountPopup({ supabase, outletId, onClose, onChanged }: { supab
             )}
           </div>
           <div>
-            <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">What they buy · last 13 months · CEs</h3>
+            <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">{d.all_time ? "What they bought · all time · CEs" : "What they buy · last 13 months · CEs"}</h3>
             {items.length ? (
               <div className="grid max-h-[260px] grid-cols-[minmax(0,1fr)_auto_auto] gap-x-4 gap-y-1 overflow-y-auto pr-1 text-[13px]">
                 {items.map((i) => (
@@ -1784,11 +1943,30 @@ export function AccountPopup({ supabase, outletId, onClose, onChanged }: { supab
                 ))}
               </div>
             ) : (
-              <p className={`text-sm ${MUTED}`}>No orders in the last 13 months.</p>
+              <p className={`text-sm ${MUTED}`}>{d.all_time ? "No orders on record." : "No orders in the last 13 months."}</p>
             )}
           </div>
+          {d.all_time && d.sales.length > 0 && (
+            <div>
+              <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">Every order · by month · CEs</h3>
+              <div className="grid max-h-[300px] grid-cols-[auto_minmax(0,1fr)_auto_auto] gap-x-4 gap-y-1 overflow-y-auto pr-1 text-[13px]">
+                <span className="text-[11px] text-neutral-500">Month</span>
+                <span className="text-[11px] text-neutral-500">Item</span>
+                <span className="text-right text-[11px] text-neutral-500">CEs</span>
+                <span className="text-[11px] text-neutral-500">Bought from</span>
+                {d.sales.map((s, i) => (
+                  <span key={i} className="contents">
+                    <span className="whitespace-nowrap text-neutral-400">{fmtMonth(s.month)}</span>
+                    <span className="min-w-0 truncate text-neutral-200">{`${s.product} ${s.size}`.trim()}</span>
+                    <span className="text-right font-mono">{fmtN(Number(s.ce) || 0)}</span>
+                    <span className="whitespace-nowrap text-neutral-400">{s.dist ?? ""}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
           <div>
-            <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">Last check-ins</h3>
+            <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-500">{d.all_time ? `All check-ins (${d.checkins.length})` : "Last check-ins"}</h3>
             {d.checkins.length ? (
               <div className="flex flex-col">
                 {d.checkins.map((c, i) => (

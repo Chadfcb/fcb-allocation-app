@@ -94,6 +94,12 @@ export const NEW_FEATURES: NewFeature[] = [
     added: "2026-10-29",
   },
   {
+    id: "feature:markstein-old-bad-accounts",
+    page: "/distributors/markstein",
+    label: "Distributors → Markstein: Today's priorities — Old Bay Area Distributing accounts: accounts that bought from Bay Area Distributing and haven't bought from Markstein, with all-time history in the account pop-up, Export",
+    added: "2026-11-12",
+  },
+  {
     id: "feature:james-not-bought",
     page: "/distributors/markstein",
     label: "Distributors → Markstein: Effectiveness — Actually bought and CEs bought are now all time since committing (30-day figure underneath), plus a Didn't buy button: commitments with no order since, click an account, Export",
