@@ -487,6 +487,7 @@ export default function DistributorPageClient({
   // Superior's top 50 accounts (Superior only, 2026-11-13).
   const [top50, setTop50] = useState<Top50Data | null>(null);
   const top50New = useNewFeature("feature:superior-top50");
+  const [top50Prem, setTop50Prem] = useState<"all" | "On" | "Off">("all");
   // Old accounts list — Markstein (Old Bay Area Distributing, 2026-11-12) and
   // Superior (non buy from Saccani, 2026-11-13). See OLD_LISTS.
   const oldCfg = OLD_LISTS[dist] ?? null;
@@ -601,6 +602,10 @@ export default function DistributorPageClient({
   const top50Ids = useMemo(() => new Set((top50?.accounts ?? []).map((a) => a.outlet_id)), [top50]);
   const top50In = (top50?.accounts ?? []).filter((a) => a.superior_last);
   const top50Out = (top50?.accounts ?? []).filter((a) => !a.superior_last);
+  // On / off premise picker for the Top 100 lists (2026-11-13, per Chad) —
+  // the list and Export follow it.
+  const top50Shown = (att === "in50" ? top50In : top50Out).filter((a) => top50Prem === "all" || a.list_premise === top50Prem);
+  const top50PremLabel = top50Prem === "On" ? " - On premise" : top50Prem === "Off" ? " - Off premise" : "";
   const oldBadIds = useMemo(() => new Set((oldBad?.accounts ?? []).map((a) => a.outlet_id)), [oldBad]);
 
   const resolved = useMemo(() => (ov ? resolveLists(ov) : null), [ov]);
@@ -719,13 +724,13 @@ export default function DistributorPageClient({
           },
         ]);
       } else if (att === "in50" || att === "out50") {
-        const list = att === "in50" ? top50In : top50Out;
+        const list = top50Shown;
         const ids = new Set(list.map((a) => a.outlet_id));
         const names = new Map(list.map((a) => [a.outlet_id, a.name]));
-        await exportSheets(`Superior ${ATT[att].label} - ${top50?.as_of ?? home?.as_of}.xlsx`, [
+        await exportSheets(`Superior ${ATT[att].label}${top50PremLabel} - ${top50?.as_of ?? home?.as_of}.xlsx`, [
           {
             name: att === "in50" ? "Top 100 - we're in" : "Top 100 - not in",
-            title: `${ATT[att].label} · ${ATT[att].rule}`,
+            title: `${ATT[att].label}${top50PremLabel} · ${ATT[att].rule}`,
             cols: COLS_TOP50,
             rows: list.map((a) => ({
               name: a.name,
@@ -904,7 +909,7 @@ export default function DistributorPageClient({
       onClick={() => setOpenId(a.outlet_id)}
     />
   ));
-  const top50RowsView = (att === "in50" ? top50In : top50Out).map((a) => (
+  const top50RowsView = top50Shown.map((a) => (
     <Row
       key={a.outlet_id}
       left={<Dot color={a.superior_last ? "#6abc46" : "#ef6a55"} />}
@@ -1107,6 +1112,20 @@ export default function DistributorPageClient({
                 ))}
               </div>
               <p className="text-xs text-neutral-500">{ATT[att].rule}</p>
+              {(att === "in50" || att === "out50") && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {(["all", "On", "Off"] as const).map((p) => {
+                    const base = att === "in50" ? top50In : top50Out;
+                    const n = p === "all" ? base.length : base.filter((a) => a.list_premise === p).length;
+                    return (
+                      <Pill key={p} on={top50Prem === p} onClick={() => setTop50Prem(p)}>
+                        {p === "all" ? "All" : p === "On" ? "On premise" : "Off premise"} <span className="font-mono opacity-80">{top50 ? n : "…"}</span>
+                      </Pill>
+                    );
+                  })}
+                  <span className="text-[11px] text-neutral-500">Export follows this choice</span>
+                </div>
+              )}
               <div className="flex max-h-[380px] flex-col overflow-y-auto pr-1">
                 {att === "gaps" && !actions.rows ? (
                   <p className={`py-4 text-sm ${MUTED}`}>Checking chain stores…</p>
