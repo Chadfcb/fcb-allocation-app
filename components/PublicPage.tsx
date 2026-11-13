@@ -5,9 +5,16 @@ import Link from "next/link";
 // sign-up) — added 2026-10-29. Open to anyone with no login (carriers review
 // them when approving FCB's texting campaign; buyers use the sign-up page).
 // Plain light page on purpose: no sidebar, nothing from the app.
+//
+// 21+ age check (added 2026-11-13, for the new texting campaign — carriers
+// require it on every linked page): the same FCB Age Check the websites use
+// (Admin → Age Check), loaded on every public page here.
 export default function PublicPage({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="min-h-screen w-full bg-white text-neutral-800">
+      {/* Plain async script (React puts it in <head>) so the cover goes up while the page is still loading — no
+          flash of the page first. The script re-attaches itself if anything redraws the page. */}
+      <script src="/api/age-check/script" async />
       <div className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6">
         <div className="mb-8 flex items-center gap-3 border-b border-neutral-200 pb-6">
           <Image src="/branding/fcb-logo.png" alt="Full Circle Brewing" width={56} height={56} className="h-14 w-14 object-contain" />
@@ -22,6 +29,7 @@ export default function PublicPage({ title, children }: { title: string; childre
           <p className="mt-2 flex flex-wrap gap-4">
             <Link href="/privacy" className="underline hover:text-neutral-800">Privacy Policy</Link>
             <Link href="/terms" className="underline hover:text-neutral-800">Terms &amp; Conditions</Link>
+            <Link href="/text-join" className="underline hover:text-neutral-800">Text JOIN</Link>
             <Link href="/sms-signup" className="underline hover:text-neutral-800">Text sign-up</Link>
           </p>
         </footer>

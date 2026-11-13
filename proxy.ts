@@ -48,6 +48,9 @@ export async function proxy(request: NextRequest) {
 // data). Its default images live in /public/age-check (already exempt as
 // image files).
 //
+// /text-join (added 2026-11-13) is another PUBLIC texting page: the JOIN card
+// reps hand out, shown so carriers can see how people sign up. No app data.
+//
 // Same for the PUBLIC Beer Finder (added 2026-11-04): /beer-finder (exactly —
 // /beer-finder/manage, the internal page, still needs a login) is shown inside
 // our websites to anyone. It only shows public info (beer_finder_public()).
@@ -58,6 +61,6 @@ export async function proxy(request: NextRequest) {
 // untouched and still requires a real login exactly as before.
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|api/cron|api/slack|api/google-calendar/hook|api/twilio|api/sms-signup|api/email-studio/worker|api/email/|email/unsubscribe|api/age-check|privacy$|privacy/|beer-finder$|terms$|terms/|sms-signup$|sms-signup/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|api/cron|api/slack|api/google-calendar/hook|api/twilio|api/sms-signup|api/email-studio/worker|api/email/|email/unsubscribe|api/age-check|privacy$|privacy/|beer-finder$|terms$|terms/|sms-signup$|sms-signup/|text-join$|text-join/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

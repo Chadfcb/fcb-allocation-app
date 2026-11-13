@@ -11,6 +11,10 @@ export default function SmsSignupForm({ consentText }: { consentText: string }) 
   const [business, setBusiness] = useState("");
   const [phone, setPhone] = useState("");
   const [rep, setRep] = useState("");
+  // Birth date (added 2026-11-13) — 21+ only; checked again on the server.
+  const [dobMonth, setDobMonth] = useState("");
+  const [dobDay, setDobDay] = useState("");
+  const [dobYear, setDobYear] = useState("");
   const [website, setWebsite] = useState(""); // hidden spam trap
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -29,7 +33,7 @@ export default function SmsSignupForm({ consentText }: { consentText: string }) 
       const res = await fetch("/api/sms-signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, business, phone, rep, website, consent }),
+        body: JSON.stringify({ name, business, phone, rep, website, consent, dobMonth, dobDay, dobYear }),
       });
       const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
       if (!res.ok || !json.ok) {
@@ -56,6 +60,9 @@ export default function SmsSignupForm({ consentText }: { consentText: string }) 
   const input =
     "w-full rounded-lg border border-neutral-300 bg-white px-3 py-2.5 text-neutral-900 outline-none focus:border-neutral-600";
 
+  const dobInput =
+    "rounded-lg border border-neutral-300 bg-white px-3 py-2.5 text-center text-neutral-900 outline-none focus:border-neutral-600";
+
   return (
     <form onSubmit={submit} className="space-y-4 rounded-xl border border-neutral-200 p-4 sm:p-6">
       <label className="block">
@@ -79,6 +86,45 @@ export default function SmsSignupForm({ consentText }: { consentText: string }) 
           placeholder="(559) 555-1234"
         />
       </label>
+      <fieldset>
+        <legend className="mb-1 block text-sm font-semibold">
+          Your birth date <span className="font-normal text-neutral-500">(you must be 21 or older)</span>
+        </legend>
+        <div className="flex items-center gap-2">
+          <input
+            className={`${dobInput} w-16`}
+            value={dobMonth}
+            onChange={(e) => setDobMonth(e.target.value.replace(/\D/g, "").slice(0, 2))}
+            required
+            inputMode="numeric"
+            placeholder="MM"
+            aria-label="Birth month"
+            autoComplete="bday-month"
+          />
+          <span className="text-neutral-400">/</span>
+          <input
+            className={`${dobInput} w-16`}
+            value={dobDay}
+            onChange={(e) => setDobDay(e.target.value.replace(/\D/g, "").slice(0, 2))}
+            required
+            inputMode="numeric"
+            placeholder="DD"
+            aria-label="Birth day"
+            autoComplete="bday-day"
+          />
+          <span className="text-neutral-400">/</span>
+          <input
+            className={`${dobInput} w-24`}
+            value={dobYear}
+            onChange={(e) => setDobYear(e.target.value.replace(/\D/g, "").slice(0, 4))}
+            required
+            inputMode="numeric"
+            placeholder="YYYY"
+            aria-label="Birth year"
+            autoComplete="bday-year"
+          />
+        </div>
+      </fieldset>
       <label className="block">
         <span className="mb-1 block text-sm font-semibold">
           Your Full Circle Brewing rep <span className="font-normal text-neutral-500">(optional)</span>

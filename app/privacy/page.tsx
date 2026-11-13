@@ -9,7 +9,7 @@ import { TWILIO } from "@/lib/twilio";
 // information with third parties for marketing purposes." Don't remove it.
 export const metadata: Metadata = { title: "Privacy Policy | Full Circle Brewing" };
 
-const UPDATED = "October 29, 2026";
+const UPDATED = "November 13, 2026";
 
 export default function PrivacyPage() {
   return (
@@ -25,6 +25,7 @@ export default function PrivacyPage() {
       <ul className="list-disc space-y-1 pl-6">
         <li>Your name, business name, and the business you buy for.</li>
         <li>Your mobile phone number, and the date, time and method you agreed to receive text messages (for example, texting JOIN or using our sign-up form).</li>
+        <li>Your birth date, which we ask for only to confirm you are 21 or older. Our sign-up record keeps only that your age was confirmed and when. If you send your birth date by text, that text is kept in our message log like any other message you send us; birth dates entered on our web form are not stored.</li>
         <li>Messages you send to our text number, and your opt-out requests.</li>
         <li>Ordinary business records such as your account&apos;s purchase history and the sales representative assigned to your account.</li>
       </ul>
@@ -34,6 +35,7 @@ export default function PrivacyPage() {
         <li>To send you text messages you agreed to receive about new beer releases, seasonal products and availability.</li>
         <li>To route your replies to your {TWILIO.brand} sales representative so they can follow up.</li>
         <li>To keep a record of your consent and honor opt-out requests.</li>
+        <li>To confirm you are 21 or older before you are signed up. Our texts are about beer and are only for adults 21+.</li>
         <li>To serve your business account and fulfill orders through your distributor.</li>
       </ul>
 

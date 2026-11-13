@@ -8,7 +8,7 @@ import { TWILIO } from "@/lib/twilio";
 // data rates may apply" disclosure, and the brand name.
 export const metadata: Metadata = { title: "Terms & Conditions | Full Circle Brewing" };
 
-const UPDATED = "October 29, 2026";
+const UPDATED = "November 13, 2026";
 
 export default function TermsPage() {
   return (
@@ -28,8 +28,10 @@ export default function TermsPage() {
         </li>
         <li>
           <strong>How to join.</strong> Text <strong>{TWILIO.joinKeyword}</strong> to {TWILIO.numberDisplay}, or sign up
-          at <a href="/sms-signup" className="underline">our text sign-up page</a>. You will receive a confirmation
-          text. Consent is not a condition of purchase.
+          at <a href="/sms-signup" className="underline">our text sign-up page</a>. Either way, you must confirm your
+          birth date: after texting {TWILIO.joinKeyword} we ask you to reply with it, and you are only signed up if you
+          are 21 or older. You will then receive a confirmation text. See{" "}
+          <a href="/text-join" className="underline">how it works</a>. Consent is not a condition of purchase.
         </li>
         <li>
           <strong>Message frequency.</strong> Message frequency varies, typically a few messages per month.
@@ -51,7 +53,8 @@ export default function TermsPage() {
         </li>
         <li>
           <strong>Age.</strong> Our messages promote alcoholic beverages and are intended only for business contacts who
-          are 21 years of age or older.
+          are 21 years of age or older. We confirm your age with your birth date before you are signed up, and anyone
+          under 21 is not signed up.
         </li>
         <li>
           <strong>Privacy.</strong> See our <a href="/privacy" className="underline">Privacy Policy</a>. We do not sell or

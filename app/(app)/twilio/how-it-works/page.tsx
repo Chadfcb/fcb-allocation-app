@@ -48,13 +48,21 @@ export default function TwilioHowItWorksPage() {
               Our rep tells the buyer: &ldquo;Text <strong className="text-neutral-100">{TWILIO.joinKeyword}</strong> to{" "}
               {TWILIO.numberDisplay}.&rdquo;
             </>,
-            `The buyer texts ${TWILIO.joinKeyword} and immediately gets a confirmation text back.`,
+            `The buyer texts ${TWILIO.joinKeyword}. We text back asking for their birth date — the phone carriers require a 21+ check because our texts are about beer.`,
+            "If the birth date shows they're 21 or older, they're signed up and get a confirmation text. Under 21, they're not signed up.",
+            <>
+              The card reps hand out, and exactly how this works, is on our public{" "}
+              <a href="/text-join" target="_blank" rel="noreferrer" className="text-brand underline">
+                Text JOIN page
+              </a>
+              .
+            </>,
             <>
               Buyers can also sign up on a short{" "}
               <a href="/sms-signup" target="_blank" rel="noreferrer" className="text-brand underline">
                 web form
               </a>{" "}
-              our rep can share or fill out with them.
+              our rep can share or fill out with them. It asks for their birth date too.
             </>,
             "No app, no login, no cost to the buyer (normal message rates may apply).",
             "We only text people who signed up. By law we can't text our account list without their OK.",
@@ -94,7 +102,9 @@ export default function TwilioHowItWorksPage() {
         <Bullets
           items={[
             "Twilio account, phone number and business registration are done.",
-            "The phone carriers still have to approve the texting campaign. That usually takes several days to two weeks.",
+            "The first texting campaign was turned down on 10/30 because carriers restrict beer texts without a strong 21+ age check, and they couldn't see how people sign up.",
+            "Fixed since: a 21+ age check on fullcirclebrewing.com and on our sign-up pages, a birth-date step before anyone is signed up, and a public Text JOIN page.",
+            "Next: Twilio is switching our business profile's website to fullcirclebrewing.com, then we submit a new campaign. Approval usually takes several days to two weeks and isn't guaranteed.",
             "Sign-ups and the record of each buyer's consent are kept in FCB-Data (Twilio → Text Sign-ups).",
             "Next to build: automatically sending replies to the rep, and a screen to send new-item texts.",
           ]}

@@ -7,6 +7,11 @@ import { createClient } from "@/lib/supabase/client";
 // FCB new-item texts. Phone, status and the consent record (how / when / the
 // exact wording) are read-only — only Twilio and the sign-up form set them.
 // Editable: name, business, rep, notes, and the linked account.
+//
+// 21+ age step (added 2026-11-13): texting JOIN no longer signs anyone up by
+// itself. "Waiting on age" = asked for their birth date, not signed up yet.
+// "Under 21" = gave an under-21 birth date, never signed up. Only "Opted in"
+// people (who confirmed 21+) are ever texted.
 
 export type SmsContactRow = {
   id: string;
@@ -15,18 +20,20 @@ export type SmsContactRow = {
   business: string | null;
   outlet_id: string | null;
   rep_name: string | null;
-  status: "opted_in" | "opted_out";
+  status: "opted_in" | "opted_out" | "pending_age" | "under_21";
   opt_in_method: "keyword" | "web_form" | null;
   opt_in_keyword: string | null;
   opt_in_at: string | null;
   consent_text: string | null;
   opt_out_at: string | null;
   opt_out_keyword: string | null;
+  age_verified_at?: string | null;
+  age_method?: "keyword" | "web_form" | null;
   notes: string | null;
   created_at: string;
 };
 
-type Filter = "all" | "opted_in" | "opted_out" | "unlinked";
+type Filter = "all" | "opted_in" | "pending_age" | "opted_out" | "under_21" | "unlinked";
 
 function fmtPhone(e164: string) {
   const d = e164.replace(/\D/g, "").replace(/^1(?=\d{10}$)/, "");
@@ -72,6 +79,8 @@ export default function TwilioSignupsClient({
       all: rows.length,
       opted_in: rows.filter((r) => r.status === "opted_in").length,
       opted_out: rows.filter((r) => r.status === "opted_out").length,
+      pending_age: rows.filter((r) => r.status === "pending_age").length,
+      under_21: rows.filter((r) => r.status === "under_21").length,
       unlinked: rows.filter((r) => r.status === "opted_in" && !r.outlet_id).length,
     }),
     [rows],
@@ -83,6 +92,8 @@ export default function TwilioSignupsClient({
     return rows.filter((r) => {
       if (filter === "opted_in" && r.status !== "opted_in") return false;
       if (filter === "opted_out" && r.status !== "opted_out") return false;
+      if (filter === "pending_age" && r.status !== "pending_age") return false;
+      if (filter === "under_21" && r.status !== "under_21") return false;
       if (filter === "unlinked" && (r.status !== "opted_in" || r.outlet_id)) return false;
       if (!q) return true;
       const hay = [r.name, r.business, r.rep_name, r.notes, r.outlet_id ? accountNames[r.outlet_id] : ""]
@@ -115,8 +126,9 @@ export default function TwilioSignupsClient({
         <h1 className="text-lg font-semibold text-neutral-100">Twilio — Text Sign-ups</h1>
         <p className="text-sm text-neutral-400">
           Everyone who agreed to FCB new-item texts (texted JOIN to (559) 478-0269 or used the sign-up form), and
-          anyone who opted out with STOP. Only people shown as opted in will ever be texted. Click a row to link the
-          account, set the rep, or see the exact consent record.
+          anyone who opted out with STOP. Everyone must confirm their birth date (21+) before they&apos;re signed up —
+          &ldquo;Waiting on age&rdquo; means we asked and they haven&apos;t answered yet. Only people shown as opted in
+          will ever be texted. Click a row to link the account, set the rep, or see the exact consent record.
         </p>
       </div>
 
@@ -129,7 +141,9 @@ export default function TwilioSignupsClient({
       <div className="flex flex-wrap items-center gap-2">
         {tab("all", "All")}
         {tab("opted_in", "Opted in")}
+        {tab("pending_age", "Waiting on age")}
         {tab("opted_out", "Opted out")}
+        {tab("under_21", "Under 21")}
         {tab("unlinked", "Needs account")}
         <input
           value={search}
@@ -201,6 +215,10 @@ function Row({
   const statusPill =
     row.status === "opted_in" ? (
       <span className="rounded-full bg-green-500/15 px-2 py-0.5 text-xs font-semibold text-green-300">Opted in</span>
+    ) : row.status === "pending_age" ? (
+      <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-semibold text-amber-300">Waiting on age</span>
+    ) : row.status === "under_21" ? (
+      <span className="rounded-full bg-neutral-500/20 px-2 py-0.5 text-xs font-semibold text-neutral-300">Under 21</span>
     ) : (
       <span className="rounded-full bg-red-500/15 px-2 py-0.5 text-xs font-semibold text-red-300">Opted out</span>
     );
@@ -225,7 +243,7 @@ function Row({
         <td className="px-3 py-2">{statusPill}</td>
         <td className="whitespace-nowrap px-3 py-2 text-neutral-400">{row.status === "opted_out" ? `Replied ${row.opt_out_keyword ?? "STOP"}` : howJoined(row)}</td>
         <td className="whitespace-nowrap px-3 py-2 text-neutral-400">
-          {fmtWhen(row.status === "opted_out" ? row.opt_out_at : row.opt_in_at)}
+          {fmtWhen(row.status === "opted_out" ? row.opt_out_at : row.status === "opted_in" ? row.opt_in_at : row.created_at)}
         </td>
       </tr>
       {open && (
@@ -403,6 +421,22 @@ function Editor({
         <p>Mobile: <span className="text-neutral-200">{fmtPhone(row.phone)}</span></p>
         <p>How they joined: <span className="text-neutral-200">{howJoined(row)}</span></p>
         <p>Joined: <span className="text-neutral-200">{fmtWhen(row.opt_in_at)}</span></p>
+        <p>
+          21+ confirmed:{" "}
+          <span className="text-neutral-200">
+            {row.age_verified_at
+              ? `${fmtWhen(row.age_verified_at)} (${row.age_method === "web_form" ? "birth date on the sign-up form" : "birth date by text"})`
+              : "not yet"}
+          </span>
+        </p>
+        {row.status === "pending_age" && (
+          <p className="text-amber-300">
+            Texted {row.opt_in_keyword ?? "JOIN"} — we asked for their birth date. Not signed up until they answer (21+).
+          </p>
+        )}
+        {row.status === "under_21" && (
+          <p className="text-neutral-300">Gave a birth date under 21. Not signed up, and this number can&apos;t sign up again.</p>
+        )}
         {row.consent_text && (
           <p>
             Wording: <span className="text-neutral-300">&ldquo;{row.consent_text}&rdquo;</span>

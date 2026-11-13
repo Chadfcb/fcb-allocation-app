@@ -15,8 +15,10 @@ export default function SmsSignupPage() {
         Be the first to hear about new {TWILIO.brand} releases, seasonal beers and availability for your store or bar.
         Your {TWILIO.brand} sales rep gets your replies, so you can order right from a text.
       </p>
+      <p>For buyers and managers at licensed businesses, 21 or older.</p>
       <p className="rounded-lg bg-neutral-100 px-4 py-3">
-        Fastest way: text <strong>{TWILIO.joinKeyword}</strong> to <strong>{TWILIO.numberDisplay}</strong>.
+        Fastest way: text <strong>{TWILIO.joinKeyword}</strong> to <strong>{TWILIO.numberDisplay}</strong> (we&apos;ll
+        ask for your birth date to confirm you&apos;re 21+). <a href="/text-join" className="underline">How it works</a>.
       </p>
       <SmsSignupForm consentText={WEB_CONSENT_TEXT} />
     </PublicPage>

@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { ageFrom, MIN_AGE } from "@/lib/ageCheck";
 
 // Twilio texting — shared settings and helpers (added 2026-10-29, per Chad).
 // Plan + decisions: claude/twilio-texting-notes.md in the project.
@@ -21,14 +22,60 @@ export const TWILIO = {
   joinKeyword: "JOIN",
 } as const;
 
-// Sent back right away when someone texts JOIN.
+// Sent once someone has confirmed they're 21+ (after texting JOIN and
+// replying with their birth date, or on the web form).
 export const JOIN_CONFIRMATION =
   `${TWILIO.brand}: You're signed up for new-item texts. Msg frequency varies. ` +
   `Msg & data rates may apply. Reply HELP for help, STOP to opt out.`;
 
+// 21+ age check on sign-ups (added 2026-11-13, for the new campaign after the
+// 10/30 rejection — carriers require an age step in every way to sign up).
+// Texting JOIN doesn't sign anyone up by itself any more: we ask for their
+// birth date first, and only 21+ get signed up.
+export const AGE_QUESTION =
+  `${TWILIO.brand}: Almost done! To finish signing up for new-item texts, reply with your birth date ` +
+  `(MM/DD/YYYY). You must be 21 or older. Reply STOP to cancel.`;
+export const AGE_RETRY =
+  `${TWILIO.brand}: Sorry, we couldn't read that date. Please reply with your birth date like 06/15/1985. ` +
+  `You must be 21 or older. Reply STOP to cancel.`;
+export const AGE_DENIED =
+  `${TWILIO.brand}: Sorry, you must be 21 or older to sign up for our texts. You have not been signed up.`;
+/** Stop asking after this many tries in a row (so an auto-reply can't loop). */
+export const AGE_MAX_ASKS = 3;
+
+/** Reads a birth date out of a text: "06/15/1985", "6-15-1985", "6.15.1985",
+ *  "6 15 1985" or "06151985". Returns the age in years, or null if it isn't a
+ *  real past date. (2-digit years aren't accepted — "85" could be 1985 or 2085.) */
+export function ageFromText(body: string, today = new Date()): number | null {
+  const t = body.trim().replace(/[.!\s]+$/, "");
+  let m: number, d: number, y: number;
+  const parts = t.match(/^(\d{1,2})\s*[/.\-\s]\s*(\d{1,2})\s*[/.\-\s]\s*(\d{4})$/);
+  if (parts) {
+    m = +parts[1];
+    d = +parts[2];
+    y = +parts[3];
+  } else {
+    const digits = t.replace(/\D/g, "");
+    if (t.replace(/[\d\s]/g, "").length > 0 || digits.length !== 8) return null;
+    m = +digits.slice(0, 2);
+    d = +digits.slice(2, 4);
+    y = +digits.slice(4);
+  }
+  return ageFrom(m, d, y, today);
+}
+
+/** Age from the web form's month / day / year boxes, or null if not a real date. */
+export function ageFromParts(m: unknown, d: unknown, y: unknown, today = new Date()): number | null {
+  const n = (v: unknown) => (typeof v === "string" || typeof v === "number" ? parseInt(String(v), 10) : NaN);
+  return ageFrom(n(m), n(d), n(y), today);
+}
+
+export const MIN_TEXT_AGE = MIN_AGE;
+
 // What the web sign-up form's (unchecked) consent box says.
 export const WEB_CONSENT_TEXT =
-  `By checking this box, I agree to receive recurring marketing text messages from ${TWILIO.brand} ` +
+  `By checking this box, I confirm I am 21 or older and a buyer or manager at a licensed business, and I agree to ` +
+  `receive recurring marketing text messages from ${TWILIO.brand} ` +
   `about new beer releases, seasonal products and availability at the mobile number provided. ` +
   `Consent is not a condition of purchase. Msg frequency varies. Msg & data rates may apply. ` +
   `Reply HELP for help, STOP to opt out.`;
