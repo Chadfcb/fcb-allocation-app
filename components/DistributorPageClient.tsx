@@ -265,7 +265,7 @@ const OLD_LISTS: Record<string, {
     account: "superior_saccani_nonbuy_account",
     feature: "feature:superior-saccani-nonbuy",
     label: "Superior non buy from Saccani accounts",
-    desc: "Bought from Saccani, not buying from Superior",
+    desc: "Bought from Saccani but not Superior",
     rule: "Accounts that bought from Saccani and haven't bought those items from Superior (Superior's list, 11/12/2026). Remove an account once it buys again. Biggest all-time buyers first.",
     oldHeader: "Name on Superior's list",
     unitsHeader: "Saccani cases / kegs not bought from Superior",
