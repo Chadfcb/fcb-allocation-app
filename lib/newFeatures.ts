@@ -96,7 +96,7 @@ export const NEW_FEATURES: NewFeature[] = [
   {
     id: "feature:superior-top50",
     page: "/distributors/superior",
-    label: "Distributors → Superior: Today's priorities — Top 50 we're in / not in: Superior's top 50 on- and off-premise craft accounts, split by whether they've ordered from Superior, with all-time history in the account pop-up, Export",
+    label: "Distributors → Superior: Today's priorities — Top 100 we're in / not in: Superior's top 50 on-premise + top 50 off-premise craft accounts, split by whether they've ordered from Superior, with all-time history in the account pop-up, Export",
     added: "2026-11-13",
   },
   {

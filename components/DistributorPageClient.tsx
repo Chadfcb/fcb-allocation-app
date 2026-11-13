@@ -652,16 +652,16 @@ export default function DistributorPageClient({
       rule: oldCfg?.rule ?? "",
     },
     in50: {
-      label: "Top 50 — we're in",
-      desc: "Superior's top 50 accounts buying from Superior",
+      label: "Top 100 — we're in",
+      desc: "Superior's top 100 accounts buying from Superior",
       count: top50 ? top50In.length : null,
-      rule: "Superior's top 50 independent craft accounts (on + off premise, Superior's lists 11/12/2026) that have ordered from Superior. Biggest all-time buyers first.",
+      rule: "Superior's top 100 independent craft accounts (top 50 on premise + top 50 off premise, Superior's lists 11/12/2026) that have ordered from Superior. Biggest all-time buyers first.",
     },
     out50: {
-      label: "Top 50 — not in",
-      desc: "Superior's top 50 accounts not buying from Superior — go after these",
+      label: "Top 100 — not in",
+      desc: "Superior's top 100 accounts not buying from Superior — go after these",
       count: top50 ? top50Out.length : null,
-      rule: "Superior's top 50 independent craft accounts (on + off premise, Superior's lists 11/12/2026) with no order from Superior yet. They move to \"we're in\" as soon as Superior sells to them. Biggest all-time buyers first.",
+      rule: "Superior's top 100 independent craft accounts (top 50 on premise + top 50 off premise, Superior's lists 11/12/2026) with no order from Superior yet. They move to \"we're in\" as soon as Superior sells to them. Biggest all-time buyers first.",
     },
   };
   const attKeys: (keyof typeof ATT)[] = [
@@ -724,7 +724,7 @@ export default function DistributorPageClient({
         const names = new Map(list.map((a) => [a.outlet_id, a.name]));
         await exportSheets(`Superior ${ATT[att].label} - ${top50?.as_of ?? home?.as_of}.xlsx`, [
           {
-            name: att === "in50" ? "Top 50 - we're in" : "Top 50 - not in",
+            name: att === "in50" ? "Top 100 - we're in" : "Top 100 - not in",
             title: `${ATT[att].label} · ${ATT[att].rule}`,
             cols: COLS_TOP50,
             rows: list.map((a) => ({
