@@ -94,6 +94,12 @@ export const NEW_FEATURES: NewFeature[] = [
     added: "2026-10-29",
   },
   {
+    id: "feature:superior-saccani-nonbuy",
+    page: "/distributors/superior",
+    label: "Distributors → Superior: Today's priorities — Superior non buy from Saccani accounts: accounts that bought from Saccani and haven't bought from Superior, with all-time history in the account pop-up, Export",
+    added: "2026-11-13",
+  },
+  {
     id: "feature:markstein-old-bad-accounts",
     page: "/distributors/markstein",
     label: "Distributors → Markstein: Today's priorities — Old Bay Area Distributing accounts: accounts that bought from Bay Area Distributing and haven't bought from Markstein, with all-time history in the account pop-up, Export",

@@ -23,6 +23,9 @@
 // "Old Bay Area Distributing accounts" button in Today's priorities:
 // markstein_old_bad_list / markstein_old_bad_account —
 // sql/markstein_old_bad_accounts.sql.
+// "Superior non buy from Saccani accounts" button (Superior, 2026-11-13):
+// superior_saccani_nonbuy_list / superior_saccani_nonbuy_account —
+// sql/superior_saccani_nonbuy.sql (same list + pop-up as Markstein's).
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -128,6 +131,9 @@ interface OldBadAccount {
   lifetime_ce: number | null;
   last_checkin: string | null;
   contacts: number;
+  // Superior non buy from Saccani: what they bought from Saccani and haven't
+  // bought from Superior (from Superior's list, 11/12/2026).
+  note?: string | null;
 }
 interface OldBadData {
   as_of: string | null;
@@ -171,6 +177,7 @@ const COLS_OLD_BAD = [
   { header: "Bay Area units Jan–Apr 2023", key: "units", width: 14 },
   { header: "Last check-in", key: "checkin" },
   { header: "Contacts on file", key: "contacts", width: 10 },
+  { header: "Not buying from Superior", key: "note", width: 40 },
   { header: "Outlet ID", key: "id", width: 12 },
 ];
 const COLS_OLD_BAD_HISTORY = [
@@ -183,6 +190,50 @@ const COLS_OLD_BAD_HISTORY = [
   { header: "Last order that month", key: "lb", width: 14 },
   { header: "Outlet ID", key: "id", width: 12 },
 ];
+// Today's priorities 4th button, per distributor: Markstein's "Old Bay Area
+// Distributing accounts" (2026-11-12) and Superior's "Superior non buy from
+// Saccani accounts" (2026-11-13). Same list + all-time account pop-up.
+const OLD_LISTS: Record<string, {
+  list: string;
+  account: string;
+  feature: string;
+  label: string;
+  desc: string;
+  rule: string;
+  oldHeader: string;
+  unitsHeader: string;
+  file: string;
+  sheet: string;
+  historyTitle: string;
+}> = {
+  Markstein: {
+    list: "markstein_old_bad_list",
+    account: "markstein_old_bad_account",
+    feature: "feature:markstein-old-bad-accounts",
+    label: "Old Bay Area Distributing accounts",
+    desc: "Lost — bought from Bay Area, never from Markstein",
+    rule: "Bay Area Distributing's 2023 top accounts that haven't bought from Markstein since it took over (8/1/2024). Biggest all-time buyers first.",
+    oldHeader: "Bay Area Distributing name",
+    unitsHeader: "Bay Area units Jan–Apr 2023",
+    file: "Old Bay Area Distributing accounts",
+    sheet: "Old Bay Area accounts",
+    historyTitle: "Old Bay Area Distributing accounts — every month of what they bought, all time",
+  },
+  Superior: {
+    list: "superior_saccani_nonbuy_list",
+    account: "superior_saccani_nonbuy_account",
+    feature: "feature:superior-saccani-nonbuy",
+    label: "Superior non buy from Saccani accounts",
+    desc: "Bought from Saccani, not buying from Superior",
+    rule: "Accounts that bought from Saccani and haven't bought those items from Superior (Superior's list, 11/12/2026). Remove an account once it buys again. Biggest all-time buyers first.",
+    oldHeader: "Name on Superior's list",
+    unitsHeader: "Saccani cases / kegs not bought from Superior",
+    file: "Superior non buy from Saccani accounts",
+    sheet: "Non buy from Saccani",
+    historyTitle: "Superior non buy from Saccani accounts — every month of what they bought, all time",
+  },
+};
+
 // "Mar 2023"
 function fmtMonth(iso: string): string {
   const [y, m] = iso.slice(0, 7).split("-").map(Number);
@@ -392,9 +443,11 @@ export default function DistributorPageClient({
   const [err, setErr] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
   const [att, setAtt] = useState<"gaps" | "slip" | "lost" | "bad">("gaps");
-  // Old Bay Area Distributing accounts (Markstein only, 2026-11-12).
+  // Old accounts list — Markstein (Old Bay Area Distributing, 2026-11-12) and
+  // Superior (non buy from Saccani, 2026-11-13). See OLD_LISTS.
+  const oldCfg = OLD_LISTS[dist] ?? null;
   const [oldBad, setOldBad] = useState<OldBadData | null>(null);
-  const oldBadNew = useNewFeature("feature:markstein-old-bad-accounts");
+  const oldBadNew = useNewFeature(oldCfg?.feature ?? "feature:markstein-old-bad-accounts");
   const [follow, setFollow] = useState<"won" | "new">("won");
   const [openId, setOpenId] = useState<string | null>(null);
   // Chain list pop-ups (2026-10-22, per Chad): All Chain Mandates / Chain Authorizations.
@@ -475,11 +528,11 @@ export default function DistributorPageClient({
     loadCheckins();
   }, [loadCheckins, version]);
 
-  // Old Bay Area Distributing accounts — Markstein only; reloads with the page.
+  // Old accounts list — Markstein + Superior only; reloads with the page.
   useEffect(() => {
-    if (dist !== "Markstein") return;
+    if (!oldCfg) return;
     let cancelled = false;
-    supabase.rpc("markstein_old_bad_list").then(({ data, error }) => {
+    supabase.rpc(oldCfg.list).then(({ data, error }) => {
       if (cancelled) return;
       if (error) setErr(error.message);
       else setOldBad(data as OldBadData);
@@ -487,7 +540,7 @@ export default function DistributorPageClient({
     return () => {
       cancelled = true;
     };
-  }, [supabase, dist, version]);
+  }, [supabase, oldCfg, version]);
   const oldBadIds = useMemo(() => new Set((oldBad?.accounts ?? []).map((a) => a.outlet_id)), [oldBad]);
 
   const resolved = useMemo(() => (ov ? resolveLists(ov) : null), [ov]);
@@ -533,13 +586,13 @@ export default function DistributorPageClient({
     slip: { label: "Slipping now", desc: "61–90 day non-buy, all accounts", count: slip.length, rule: "61–90 days since their last order — still saveable. Biggest 12-month buyers first." },
     lost: { label: "Must win back", desc: "90+ day lost, all accounts", count: lost.length, rule: "Lost in the last year (90+ days quiet). Biggest 12-month buyers first." },
     bad: {
-      label: "Old Bay Area Distributing accounts",
-      desc: "Lost — bought from Bay Area, never from Markstein",
+      label: oldCfg?.label ?? "",
+      desc: oldCfg?.desc ?? "",
       count: oldBad ? oldBad.accounts.length : null,
-      rule: "Bay Area Distributing's 2023 top accounts that haven't bought from Markstein since it took over (8/1/2024). Biggest all-time buyers first.",
+      rule: oldCfg?.rule ?? "",
     },
   };
-  const attKeys: (keyof typeof ATT)[] = dist === "Markstein" ? ["gaps", "slip", "lost", "bad"] : ["gaps", "slip", "lost"];
+  const attKeys: (keyof typeof ATT)[] = oldCfg ? ["gaps", "slip", "lost", "bad"] : ["gaps", "slip", "lost"];
 
   const exportAtt = async () => {
     setBusy("att");
@@ -547,11 +600,13 @@ export default function DistributorPageClient({
       if (att === "gaps") await exportSheets(`${dist} - must-carry gaps - ${home?.as_of}.xlsx`, [{ name: "Must-carry gaps", title: `${dist} — must-carry gaps`, cols: COLS_GAPS, rows: gapRows(gaps) }]);
       else if (att === "bad") {
         const names = new Map((oldBad?.accounts ?? []).map((a) => [a.outlet_id, a.name]));
-        await exportSheets(`Old Bay Area Distributing accounts - ${oldBad?.as_of ?? home?.as_of}.xlsx`, [
+        await exportSheets(`${oldCfg?.file ?? ATT.bad.label} - ${oldBad?.as_of ?? home?.as_of}.xlsx`, [
           {
-            name: "Old Bay Area accounts",
-            title: `Old Bay Area Distributing accounts · ${ATT.bad.rule}`,
-            cols: COLS_OLD_BAD,
+            name: oldCfg?.sheet ?? ATT.bad.label,
+            title: `${ATT.bad.label} · ${ATT.bad.rule}`,
+            cols: COLS_OLD_BAD.filter((c) => c.key !== "note" || dist === "Superior").map((c) =>
+              c.key === "bad" ? { ...c, header: oldCfg?.oldHeader ?? c.header } : c.key === "units" ? { ...c, header: oldCfg?.unitsHeader ?? c.header } : c,
+            ),
             rows: (oldBad?.accounts ?? []).map((a) => ({
               name: a.name,
               bad: a.bad_name,
@@ -563,6 +618,7 @@ export default function DistributorPageClient({
               from: a.last_dist ?? "",
               ce: Number(a.lifetime_ce) || 0,
               units: a.bad_units_2023 ?? "",
+              ...(a.note ? { note: a.note } : {}),
               checkin: a.last_checkin ?? "",
               contacts: a.contacts,
               id: a.outlet_id,
@@ -570,7 +626,7 @@ export default function DistributorPageClient({
           },
           {
             name: "What they bought (all time)",
-            title: "Old Bay Area Distributing accounts — every month of what they bought, all time",
+            title: oldCfg?.historyTitle ?? ATT.bad.label,
             cols: COLS_OLD_BAD_HISTORY,
             rows: (oldBad?.history ?? []).map((h) => ({
               name: names.get(h.outlet_id) ?? h.outlet_id,
@@ -721,7 +777,7 @@ export default function DistributorPageClient({
       key={a.outlet_id}
       left={<Dot color="#ef6a55" />}
       title={`${a.name}${a.city ? ` · ${a.city}` : ""}`}
-      sub={`${a.premise === "On" ? "On-premise · " : a.premise === "Off" ? "Off-premise · " : ""}${a.last_buy ? `last order ${fmtDay(a.last_buy)}${a.last_dist ? ` from ${a.last_dist}` : ""}` : "no orders on record"}${a.last_checkin ? ` · last check-in ${fmtDay(a.last_checkin)}` : " · no check-in on record"}`}
+      sub={`${a.premise === "On" ? "On-premise · " : a.premise === "Off" ? "Off-premise · " : ""}${a.note ? `Not buying from Superior: ${a.note} · ` : ""}${a.last_buy ? `last order ${fmtDay(a.last_buy)}${a.last_dist ? ` from ${a.last_dist}` : ""}` : "no orders on record"}${a.last_checkin ? ` · last check-in ${fmtDay(a.last_checkin)}` : " · no check-in on record"}`}
       value={fmtN(Number(a.lifetime_ce) || 0)}
       valueLabel="CEs all time"
       onClick={() => setOpenId(a.outlet_id)}
@@ -1247,7 +1303,7 @@ export default function DistributorPageClient({
           <div className="flex flex-col gap-3">{stockContent}</div>
         </Modal>
       )}
-      {openId && <AccountPopup supabase={supabase} outletId={openId} allTime={oldBadIds.has(openId)} onClose={() => setOpenId(null)} onChanged={load} />}
+      {openId && <AccountPopup supabase={supabase} outletId={openId} allTime={oldBadIds.has(openId)} allTimeFn={oldCfg?.account} onClose={() => setOpenId(null)} onChanged={load} />}
     </div>
   );
 }
@@ -1835,6 +1891,7 @@ export function AccountPopup({
   onClose,
   onChanged,
   allTime = false,
+  allTimeFn = "markstein_old_bad_account",
 }: {
   supabase: ReturnType<typeof createClient>;
   outletId: string;
@@ -1843,12 +1900,14 @@ export function AccountPopup({
   // Old Bay Area Distributing accounts (2026-11-12): all-time purchases (with
   // who sold it) and every check-in, not just the last 13 months / last 10.
   allTime?: boolean;
+  // Which all-time function to use (Superior non buy from Saccani, 2026-11-13).
+  allTimeFn?: string;
 }) {
   const [d, setD] = useState<AccountDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
-    supabase.rpc(allTime ? "markstein_old_bad_account" : "sales_territory_account", { p_outlet: outletId }).then(({ data, error }) => {
+    supabase.rpc(allTime ? allTimeFn : "sales_territory_account", { p_outlet: outletId }).then(({ data, error }) => {
       if (cancelled) return;
       if (error) setErr(error.message);
       else setD(data as AccountDetail);
@@ -1856,7 +1915,7 @@ export function AccountPopup({
     return () => {
       cancelled = true;
     };
-  }, [supabase, outletId, allTime]);
+  }, [supabase, outletId, allTime, allTimeFn]);
 
   // Items they buy: total cases in the last 13 months + last bought.
   const items = useMemo(() => {
