@@ -26,6 +26,8 @@
 // "Superior non buy from Saccani accounts" button (Superior, 2026-11-13):
 // superior_saccani_nonbuy_list / superior_saccani_nonbuy_account —
 // sql/superior_saccani_nonbuy.sql (same list + pop-up as Markstein's).
+// "Top 50 — we're in" / "Top 50 — not in" buttons (Superior, 2026-11-13):
+// superior_top50_list / superior_top50_account — sql/superior_top50.sql.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -140,6 +142,45 @@ interface OldBadData {
   accounts: OldBadAccount[];
   history: { outlet_id: string; month: string; product: string; size: string; dist: string; ce: number; last_buy: string | null }[];
 }
+
+// Superior's top 50 on- and off-premise craft accounts (2026-11-13, per Chad):
+// "we're in" = has ordered from Superior, "not in" = hasn't.
+interface Top50Account {
+  outlet_id: string;
+  name: string;
+  city: string | null;
+  address: string | null;
+  phone: string | null;
+  premise: string | null;
+  list_premise: string | null;
+  list_name: string;
+  superior_last: string | null;
+  last_buy: string | null;
+  last_dist: string | null;
+  lifetime_ce: number | null;
+  last_checkin: string | null;
+  contacts: number;
+}
+interface Top50Data {
+  as_of: string | null;
+  accounts: Top50Account[];
+  history: { outlet_id: string; month: string; product: string; size: string; dist: string; ce: number; last_buy: string | null }[];
+}
+const COLS_TOP50 = [
+  { header: "Account", key: "name", width: 32 },
+  { header: "Name on Superior's list", key: "list", width: 30 },
+  { header: "List", key: "listp", width: 14 },
+  { header: "Address", key: "address", width: 28 },
+  { header: "City", key: "city" },
+  { header: "Phone", key: "phone" },
+  { header: "Last Superior order", key: "sup" },
+  { header: "Last order", key: "lb" },
+  { header: "Last bought from", key: "from", width: 22 },
+  { header: "CEs all time", key: "ce", width: 12 },
+  { header: "Last check-in", key: "checkin" },
+  { header: "Contacts on file", key: "contacts", width: 10 },
+  { header: "Outlet ID", key: "id", width: 12 },
+];
 
 interface AccountDetail {
   account: {
@@ -442,7 +483,10 @@ export default function DistributorPageClient({
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
-  const [att, setAtt] = useState<"gaps" | "slip" | "lost" | "bad">("gaps");
+  const [att, setAtt] = useState<"gaps" | "slip" | "lost" | "bad" | "in50" | "out50">("gaps");
+  // Superior's top 50 accounts (Superior only, 2026-11-13).
+  const [top50, setTop50] = useState<Top50Data | null>(null);
+  const top50New = useNewFeature("feature:superior-top50");
   // Old accounts list — Markstein (Old Bay Area Distributing, 2026-11-12) and
   // Superior (non buy from Saccani, 2026-11-13). See OLD_LISTS.
   const oldCfg = OLD_LISTS[dist] ?? null;
@@ -541,6 +585,22 @@ export default function DistributorPageClient({
       cancelled = true;
     };
   }, [supabase, oldCfg, version]);
+  // Superior's top 50 — Superior only; reloads with the page.
+  useEffect(() => {
+    if (dist !== "Superior") return;
+    let cancelled = false;
+    supabase.rpc("superior_top50_list").then(({ data, error }) => {
+      if (cancelled) return;
+      if (error) setErr(error.message);
+      else setTop50(data as Top50Data);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase, dist, version]);
+  const top50Ids = useMemo(() => new Set((top50?.accounts ?? []).map((a) => a.outlet_id)), [top50]);
+  const top50In = (top50?.accounts ?? []).filter((a) => a.superior_last);
+  const top50Out = (top50?.accounts ?? []).filter((a) => !a.superior_last);
   const oldBadIds = useMemo(() => new Set((oldBad?.accounts ?? []).map((a) => a.outlet_id)), [oldBad]);
 
   const resolved = useMemo(() => (ov ? resolveLists(ov) : null), [ov]);
@@ -581,7 +641,7 @@ export default function DistributorPageClient({
 
   const low = (stock?.inventory ?? []).filter((i) => i.per_week > 0 && (i.on_hand <= 0 || (i.weeks_left ?? 99) < 2));
 
-  const ATT: Record<"gaps" | "slip" | "lost" | "bad", { label: string; desc: string; count: number | null; rule: string }> = {
+  const ATT: Record<"gaps" | "slip" | "lost" | "bad" | "in50" | "out50", { label: string; desc: string; count: number | null; rule: string }> = {
     gaps: { label: "Must-carry gaps", desc: "Chain stores not buying a must-carry item", count: actions.rows ? gaps.length : null, rule: "Stores not buying an item their chain says they must carry. Biggest first." },
     slip: { label: "Slipping now", desc: "61–90 day non-buy, all accounts", count: slip.length, rule: "61–90 days since their last order — still saveable. Biggest 12-month buyers first." },
     lost: { label: "Must win back", desc: "90+ day lost, all accounts", count: lost.length, rule: "Lost in the last year (90+ days quiet). Biggest 12-month buyers first." },
@@ -591,8 +651,26 @@ export default function DistributorPageClient({
       count: oldBad ? oldBad.accounts.length : null,
       rule: oldCfg?.rule ?? "",
     },
+    in50: {
+      label: "Top 50 — we're in",
+      desc: "Superior's top 50 accounts buying from Superior",
+      count: top50 ? top50In.length : null,
+      rule: "Superior's top 50 independent craft accounts (on + off premise, Superior's lists 11/12/2026) that have ordered from Superior. Biggest all-time buyers first.",
+    },
+    out50: {
+      label: "Top 50 — not in",
+      desc: "Superior's top 50 accounts not buying from Superior — go after these",
+      count: top50 ? top50Out.length : null,
+      rule: "Superior's top 50 independent craft accounts (on + off premise, Superior's lists 11/12/2026) with no order from Superior yet. They move to \"we're in\" as soon as Superior sells to them. Biggest all-time buyers first.",
+    },
   };
-  const attKeys: (keyof typeof ATT)[] = oldCfg ? ["gaps", "slip", "lost", "bad"] : ["gaps", "slip", "lost"];
+  const attKeys: (keyof typeof ATT)[] = [
+    "gaps",
+    "slip",
+    "lost",
+    ...(oldCfg ? (["bad"] as const) : []),
+    ...(dist === "Superior" ? (["out50", "in50"] as const) : []),
+  ];
 
   const exportAtt = async () => {
     setBusy("att");
@@ -638,6 +716,49 @@ export default function DistributorPageClient({
               lb: h.last_buy ?? "",
               id: h.outlet_id,
             })),
+          },
+        ]);
+      } else if (att === "in50" || att === "out50") {
+        const list = att === "in50" ? top50In : top50Out;
+        const ids = new Set(list.map((a) => a.outlet_id));
+        const names = new Map(list.map((a) => [a.outlet_id, a.name]));
+        await exportSheets(`Superior ${ATT[att].label} - ${top50?.as_of ?? home?.as_of}.xlsx`, [
+          {
+            name: att === "in50" ? "Top 50 - we're in" : "Top 50 - not in",
+            title: `${ATT[att].label} · ${ATT[att].rule}`,
+            cols: COLS_TOP50,
+            rows: list.map((a) => ({
+              name: a.name,
+              list: a.list_name,
+              listp: a.list_premise === "On" ? "On-premise" : "Off-premise",
+              address: a.address ?? "",
+              city: a.city ?? "",
+              phone: a.phone ?? "",
+              sup: a.superior_last ?? "",
+              lb: a.last_buy ?? "",
+              from: a.last_dist ?? "",
+              ce: Number(a.lifetime_ce) || 0,
+              checkin: a.last_checkin ?? "",
+              contacts: a.contacts,
+              id: a.outlet_id,
+            })),
+          },
+          {
+            name: "What they bought (all time)",
+            title: `${ATT[att].label} — every month of what they bought, all time`,
+            cols: COLS_OLD_BAD_HISTORY,
+            rows: (top50?.history ?? [])
+              .filter((h) => ids.has(h.outlet_id))
+              .map((h) => ({
+                name: names.get(h.outlet_id) ?? h.outlet_id,
+                month: h.month.slice(0, 7),
+                item: h.product,
+                size: h.size,
+                from: h.dist,
+                ce: Number(h.ce) || 0,
+                lb: h.last_buy ?? "",
+                id: h.outlet_id,
+              })),
           },
         ]);
       } else
@@ -778,6 +899,17 @@ export default function DistributorPageClient({
       left={<Dot color="#ef6a55" />}
       title={`${a.name}${a.city ? ` · ${a.city}` : ""}`}
       sub={`${a.premise === "On" ? "On-premise · " : a.premise === "Off" ? "Off-premise · " : ""}${a.note ? `Not buying from Superior: ${a.note} · ` : ""}${a.last_buy ? `last order ${fmtDay(a.last_buy)}${a.last_dist ? ` from ${a.last_dist}` : ""}` : "no orders on record"}${a.last_checkin ? ` · last check-in ${fmtDay(a.last_checkin)}` : " · no check-in on record"}`}
+      value={fmtN(Number(a.lifetime_ce) || 0)}
+      valueLabel="CEs all time"
+      onClick={() => setOpenId(a.outlet_id)}
+    />
+  ));
+  const top50RowsView = (att === "in50" ? top50In : top50Out).map((a) => (
+    <Row
+      key={a.outlet_id}
+      left={<Dot color={a.superior_last ? "#6abc46" : "#ef6a55"} />}
+      title={`${a.name}${a.city ? ` · ${a.city}` : ""}`}
+      sub={`${a.list_premise === "On" ? "On-premise · " : "Off-premise · "}${a.superior_last ? `last Superior order ${fmtDay(a.superior_last)}` : a.last_buy ? `no Superior order yet · last order ${fmtDay(a.last_buy)}${a.last_dist ? ` from ${a.last_dist}` : ""}` : "never bought Full Circle"}${a.last_checkin ? ` · last check-in ${fmtDay(a.last_checkin)}` : " · no check-in on record"}`}
       value={fmtN(Number(a.lifetime_ce) || 0)}
       valueLabel="CEs all time"
       onClick={() => setOpenId(a.outlet_id)}
@@ -960,12 +1092,14 @@ export default function DistributorPageClient({
                     onClick={() => {
                       setAtt(key);
                       if (key === "bad") oldBadNew.dismiss();
+                      if (key === "in50" || key === "out50") top50New.dismiss();
                     }}
                   >
                     <span className="flex flex-col items-start py-1 leading-tight">
                       <span className="flex items-center gap-1.5">
                         {ATT[key].label} <span className="font-mono opacity-80">{ATT[key].count ?? "…"}</span>
                         {key === "bad" && oldBadNew.isNew && <NewBadge inline />}
+                        {(key === "in50" || key === "out50") && top50New.isNew && <NewBadge inline />}
                       </span>
                       <span className="text-[10.5px] font-normal opacity-70">{ATT[key].desc}</span>
                     </span>
@@ -976,10 +1110,10 @@ export default function DistributorPageClient({
               <div className="flex max-h-[380px] flex-col overflow-y-auto pr-1">
                 {att === "gaps" && !actions.rows ? (
                   <p className={`py-4 text-sm ${MUTED}`}>Checking chain stores…</p>
-                ) : att === "bad" && !oldBad ? (
+                ) : (att === "bad" && !oldBad) || ((att === "in50" || att === "out50") && !top50) ? (
                   <p className={`py-4 text-sm ${MUTED}`}>Loading…</p>
-                ) : (att === "gaps" ? gapRowsView : att === "bad" ? oldBadRowsView : acctRowsView).length ? (
-                  att === "gaps" ? gapRowsView : att === "bad" ? oldBadRowsView : acctRowsView
+                ) : (att === "gaps" ? gapRowsView : att === "bad" ? oldBadRowsView : att === "in50" || att === "out50" ? top50RowsView : acctRowsView).length ? (
+                  att === "gaps" ? gapRowsView : att === "bad" ? oldBadRowsView : att === "in50" || att === "out50" ? top50RowsView : acctRowsView
                 ) : (
                   <p className={`py-4 text-sm ${MUTED}`}>Nothing here right now.</p>
                 )}
@@ -1303,7 +1437,7 @@ export default function DistributorPageClient({
           <div className="flex flex-col gap-3">{stockContent}</div>
         </Modal>
       )}
-      {openId && <AccountPopup supabase={supabase} outletId={openId} allTime={oldBadIds.has(openId)} allTimeFn={oldCfg?.account} onClose={() => setOpenId(null)} onChanged={load} />}
+      {openId && <AccountPopup supabase={supabase} outletId={openId} allTime={oldBadIds.has(openId) || top50Ids.has(openId)} allTimeFn={top50Ids.has(openId) ? "superior_top50_account" : oldCfg?.account} onClose={() => setOpenId(null)} onChanged={load} />}
     </div>
   );
 }

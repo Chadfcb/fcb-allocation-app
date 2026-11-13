@@ -94,6 +94,12 @@ export const NEW_FEATURES: NewFeature[] = [
     added: "2026-10-29",
   },
   {
+    id: "feature:superior-top50",
+    page: "/distributors/superior",
+    label: "Distributors → Superior: Today's priorities — Top 50 we're in / not in: Superior's top 50 on- and off-premise craft accounts, split by whether they've ordered from Superior, with all-time history in the account pop-up, Export",
+    added: "2026-11-13",
+  },
+  {
     id: "feature:superior-saccani-nonbuy",
     page: "/distributors/superior",
     label: "Distributors → Superior: Today's priorities — Superior non buy from Saccani accounts: accounts that bought from Saccani and haven't bought from Superior, with all-time history in the account pop-up, Export",
