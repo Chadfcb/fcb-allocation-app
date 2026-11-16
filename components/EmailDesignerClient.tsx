@@ -13,6 +13,7 @@ import { hasSwapPictures } from "@/lib/email/erniePlaceholder";
 import NewBadge from "@/components/NewBadge";
 import { useNewFeature } from "@/lib/newFeatures";
 import EmailStudioGuide from "@/components/EmailStudioGuide";
+import EmailExportButton from "@/components/EmailExportButton";
 
 // Email Studio's drag-and-drop email designer (added 2026-10-29, per Chad —
 // Phase 1 of claude/email-designer-plan.md). Built on GrapesJS + its
@@ -485,6 +486,12 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
           <button type="button" className={btn} disabled={!ready} onClick={openPreview}>
             Preview email
           </button>
+          {/* Export (added 2026-11-16) — exports what's on screen, saved or not. */}
+          <EmailExportButton
+            variant="button"
+            disabled={!ready}
+            getInput={async () => ({ name: name || "email", subject, preheader, bodyHtml: inlinedHtml() })}
+          />
           <button type="button" className={btn} disabled={!ready || sending || saving} onClick={() => void sendTest()}>
             {sending ? "Sending…" : "Send me a test"}
           </button>

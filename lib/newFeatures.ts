@@ -32,6 +32,13 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    // Export button on each email card and in the email designer (2026-11-16, Eddie's ask via Chad).
+    id: "feature:email-studio-export",
+    page: "/admin/email",
+    label: "Email Studio: Export an email (zip with pictures, or HTML only) to hand to an outside company",
+    added: "2026-11-16",
+  },
+  {
     // "+ New folder" on Sales → POS → Sales Sheets (2026-11-11, Eddie's ask).
     id: "feature:sales-sheets-folders",
     page: "/pos/sales-sheets",

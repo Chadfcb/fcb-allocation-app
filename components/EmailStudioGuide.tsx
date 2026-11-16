@@ -191,6 +191,44 @@ export const GUIDE_SECTIONS: Section[] = [
     ),
   },
   {
+    id: "export",
+    title: "Exporting an email — hand a design to someone outside FCB",
+    who: "create",
+    body: (
+      <>
+        <p>
+          Use <K>Export</K> when another company (a distributor, a retailer, an outside designer) needs one of our emails to edit or send
+          in their own tools. It&apos;s on every email card and in the designer&apos;s top bar.
+        </p>
+        <Bullets>
+          <li>
+            <K>Zip with pictures</K> — the best choice for handing off. You get a folder with <K>email.html</K>, an <K>images</K> folder
+            with every picture the email uses, and a <K>README.txt</K> with the subject line, preview text and picture sizes. Send them
+            the whole zip.
+          </li>
+          <li>
+            <K>HTML only</K> — one file. The pictures stay linked to where they&apos;re stored online. Some email services prefer this.
+          </li>
+          <li>
+            On a card, Export downloads the <strong>last saved</strong> version. In the designer, it downloads what&apos;s on your screen,
+            saved or not.
+          </li>
+          <li>
+            The FCB address + unsubscribe footer is <strong>not</strong> included — that&apos;s only added when we send. Their email
+            service must add its own.
+          </li>
+          <li>
+            They get the finished email as code, which any email tool or code editor can open. It won&apos;t open as drag-and-drop blocks
+            in their tools — that only works here in Email Studio.
+          </li>
+          <li>
+            An email with Ernie&apos;s gray &ldquo;Swap this picture&rdquo; boxes can&apos;t be exported — swap in real pictures first.
+          </li>
+        </Bullets>
+      </>
+    ),
+  },
+  {
     id: "ernie",
     title: "Using Ernie — change the email, make pictures and animations",
     who: "create",

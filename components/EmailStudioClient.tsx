@@ -17,6 +17,8 @@ import EmailAudienceTab, { type ListRow } from "@/components/EmailAudienceTab";
 import EmailSentTab, { type CampaignRow } from "@/components/EmailSentTab";
 import EmailStudioGuide from "@/components/EmailStudioGuide";
 import NewBadge from "@/components/NewBadge";
+import EmailExportButton from "@/components/EmailExportButton";
+import type { ExportInput } from "@/lib/email/exportDesign";
 import { useNewFeature } from "@/lib/newFeatures";
 
 // Admin → Email Studio (added 2026-10-29, per Chad — Phase 1 of
@@ -331,6 +333,17 @@ export default function EmailStudioClient({
             onDuplicate={(d) => void newEmail(d)}
             onArchive={(d) => void archive(d)}
             onMove={(d, f) => void moveDesign(d, f)}
+            getExport={async (d) => {
+              // The card list doesn't carry the email itself — load the saved version.
+              const { data, error } = await supabase
+                .from("email_designs")
+                .select("name, subject, preheader, html")
+                .eq("id", d.id)
+                .maybeSingle();
+              if (error || !data) return { error: "Couldn't load this email. Please try again." };
+              if (!data.html) return { error: "This email hasn't been saved with any content yet — open it, design it, and Save." };
+              return { name: data.name, subject: data.subject, preheader: data.preheader, bodyHtml: data.html };
+            }}
           />
         </>
       ) : tab === "library" ? (
@@ -373,6 +386,7 @@ function EmailsGrid({
   onDuplicate,
   onArchive,
   onMove,
+  getExport,
 }: {
   designs: DesignRow[];
   folders: FolderRow[];
@@ -380,6 +394,8 @@ function EmailsGrid({
   onDuplicate: (d: DesignRow) => void;
   onArchive: (d: DesignRow) => void;
   onMove: (d: DesignRow, folderId: string | null) => void;
+  /** Export (added 2026-11-16): the saved email to download. */
+  getExport: (d: DesignRow) => Promise<ExportInput | { error: string }>;
 }) {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   if (designs.length === 0) {
@@ -418,6 +434,7 @@ function EmailsGrid({
             <button type="button" onClick={() => onDuplicate(d)} className="text-neutral-300 underline">
               Duplicate
             </button>
+            <EmailExportButton getInput={() => getExport(d)} />
             {confirmId === d.id ? (
               <span className="text-red-300">
                 Remove it?{" "}
