@@ -94,7 +94,14 @@ export const GUIDE_SECTIONS: Section[] = [
         </Bullets>
         <p className="font-semibold text-neutral-100">Checking how it looks</p>
         <Bullets>
-          <li>Use the desktop / tablet / phone buttons at the top to see it at each size — most people read email on a phone.</li>
+          <li>
+            Click <K>📱 Phone view</K> at the top to see the email the way it looks on a phone (click <K>🖥 Desktop view</K> to go back) —
+            most people read email on a phone. Check it before marking an email Ready.
+          </li>
+          <li>
+            Emails are <K>700 pixels wide</K> on a computer and shrink to fit on phones. An older email made at 600 pixels? Click{" "}
+            <K>↔ Make wider</K> to make it 700 wide, look it over, then Save. <K>Undo wider</K> puts it back.
+          </li>
           <li>
             <K>Preview email</K> shows the full email the way it will go out, footer included.
           </li>
@@ -152,7 +159,7 @@ export const GUIDE_SECTIONS: Section[] = [
         <p className="font-semibold text-neutral-100">Sizes that work best</p>
         <Bullets>
           <li>
-            Emails are about <K>600 pixels wide</K>. Make full-width images about <K>1200 pixels wide</K> so they stay sharp on phones.
+            Emails are <K>700 pixels wide</K>. Make full-width images about <K>1400 pixels wide</K> so they stay sharp on every screen.
           </li>
           <li>Keep each image under about 1 MB and GIFs under about 5 MB so the email loads fast.</li>
           <li>Videos can&apos;t play inside most email apps — use a GIF for motion, or an Ernie animation (it adds a &ldquo;Watch the video&rdquo; button).</li>

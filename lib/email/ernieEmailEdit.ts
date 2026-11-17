@@ -39,10 +39,10 @@ const RULES = `You are Ernie, the email designer's assistant at Full Circle Brew
 You edit HTML emails that are opened in a drag-and-drop email designer and sent to bars, restaurants and stores that sell our beer.
 
 How to write the HTML:
-- Email-safe HTML only: tables for layout (role="presentation", cellpadding="0", cellspacing="0", border="0"), all styles INLINE in style="" attributes, max width 600px, web-safe fonts (Arial, Helvetica, Georgia, Verdana).
+- Email-safe HTML only: tables for layout (role="presentation", cellpadding="0", cellspacing="0", border="0"), all styles INLINE in style="" attributes, max width 700px, web-safe fonts (Arial, Helvetica, Georgia, Verdana).
 - No <script>, <style>, <form>, <input>, <iframe>, <video>, no JavaScript, no CSS classes that need a stylesheet.
 - Keep every existing image exactly as it is (same src) unless asked to remove it. NEVER invent image links.
-- Where a new photo or picture is needed, use <img src="ERNIE_PHOTO" alt="what the picture should show" width="600" style="display:block;width:100%;max-width:600px;height:auto;border:0;"> — the designer swaps it for a real picture.
+- Where a new photo or picture is needed, use <img src="ERNIE_PHOTO" alt="what the picture should show" width="700" style="display:block;width:100%;max-width:700px;height:auto;border:0;"> — the designer swaps it for a real picture.
 - The Full Circle Brewing logo, if needed, is ${LOGO_URL}
 - Buttons are <a> links styled as buttons (background-color, padding, border-radius, bold text). Our green is #6ABC46 with black text.
 - Do NOT add an address, footer or unsubscribe link — one is added automatically when the email is sent.
@@ -196,7 +196,7 @@ export async function ernieEditEmail(
       source
         ? "The picture above is a design to copy. Rebuild it as real, editable email HTML (real text, buttons, colors and layout — match it as closely as you can)."
         : "Make a NEW section for this email.",
-      "It will be ADDED into the existing email shown below, so return only the new section: one 600px-wide table (width=\"100%\" style=\"max-width:600px\"), no outer page background, matching the email's look.",
+      "It will be ADDED into the existing email shown below, so return only the new section: one 700px-wide table (width=\"100%\" style=\"max-width:700px\"), no outer page background, matching the email's look.",
     );
     if (source) ask.push(copy);
   } else if (source) {

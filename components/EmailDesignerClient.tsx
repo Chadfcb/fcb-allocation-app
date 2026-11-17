@@ -43,12 +43,18 @@ export type DesignFull = {
 
 const LOGO_URL = "https://www.fcb-data.com/branding/fcb-logo.png";
 
-// What a brand-new email starts with — an email-safe 600px layout Eddie can
+// Email width (2026-11-17, per Chad: emails were coming out "not wide enough" —
+// was 600px, the old email standard). New emails, pictures and video inserts
+// and Ernie's sections are 700px wide; on phones they still shrink to fit.
+// Older emails: the "Make wider" button changes their 600px widths to 700px.
+const EMAIL_WIDTH = 700;
+
+// What a brand-new email starts with — an email-safe 700px layout Eddie can
 // change or delete.
 const STARTER_TEMPLATE = `
 <table style="width:100%;background-color:#f4f4f4;border-collapse:collapse;" width="100%" cellpadding="0" cellspacing="0">
   <tr><td style="padding:24px 12px;" align="center">
-    <table style="width:100%;max-width:600px;background-color:#ffffff;border-collapse:collapse;" width="600" cellpadding="0" cellspacing="0">
+    <table style="width:100%;max-width:${EMAIL_WIDTH}px;background-color:#ffffff;border-collapse:collapse;" width="${EMAIL_WIDTH}" cellpadding="0" cellspacing="0">
       <tr><td style="padding:24px;text-align:center;background-color:#111111;" align="center">
         <img src="${LOGO_URL}" alt="Full Circle Brewing" width="120" style="width:120px;max-width:120px;height:auto;"/>
       </td></tr>
@@ -96,6 +102,7 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
   // the email as it was just before Ernie's last change (for Undo).
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
   const editEmailNew = useNewFeature("feature:email-studio-ernie-edit-email");
+  const widerNew = useNewFeature("feature:email-studio-wider");
   const beforeErnieRef = useRef<ReturnType<Editor["getProjectData"]> | null>(null);
 
   // Start the designer once.
@@ -208,7 +215,7 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
     (a: CreativeAsset) => {
       insertBlock(
         `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" style="padding:10px 0;">` +
-          `<img src="${a.public_url}" alt="" width="600" style="display:block;width:100%;max-width:600px;height:auto;border:0;" />` +
+          `<img src="${a.public_url}" alt="" width="${EMAIL_WIDTH}" style="display:block;width:100%;max-width:${EMAIL_WIDTH}px;height:auto;border:0;" />` +
           `</td></tr></table>`,
         a.public_url,
       );
@@ -221,7 +228,7 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
   const insertVideo = useCallback(
     (video: CreativeAsset, poster: CreativeAsset | null) => {
       const pic = poster
-        ? `<a href="${video.public_url}" target="_blank"><img src="${poster.public_url}" alt="Watch the video" width="600" style="display:block;width:100%;max-width:600px;height:auto;border:0;" /></a>`
+        ? `<a href="${video.public_url}" target="_blank"><img src="${poster.public_url}" alt="Watch the video" width="${EMAIL_WIDTH}" style="display:block;width:100%;max-width:${EMAIL_WIDTH}px;height:auto;border:0;" /></a>`
         : "";
       insertBlock(
         `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" style="padding:10px 0;">` +
@@ -304,6 +311,74 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
     setDirty(true);
     setMsg({ text: "Ernie changed the email — look it over, then Save." });
     return true;
+  }, []);
+
+  // "Make wider" (added 2026-11-17): changes an older email's 600px widths
+  // (the main column, full-width pictures) to 700px — in the designer's own
+  // saved layout, so everything stays editable. Undo puts it back.
+  const beforeWidenRef = useRef<ReturnType<Editor["getProjectData"]> | null>(null);
+  const [canUndoWiden, setCanUndoWiden] = useState(false);
+  const widenEmail = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const before = editor.getProjectData();
+    let n = 0;
+    const W = String(EMAIL_WIDTH);
+    const out = JSON.stringify(before)
+      .replace(/"(max-width|width)":"600px"/g, (_m, k) => {
+        n++;
+        return `"${k}":"${W}px"`;
+      })
+      .replace(/"width":"600"/g, () => {
+        n++;
+        return `"width":"${W}"`;
+      })
+      .replace(/(max-width|width):\s*600px/g, (_m, k) => {
+        n++;
+        return `${k}:${W}px`;
+      })
+      .replace(/width=\\"600\\"/g, () => {
+        n++;
+        return `width=\\"${W}\\"`;
+      });
+    if (!n) {
+      setMsg({ text: `This email is already wider than 600 pixels — nothing to change.` });
+      return;
+    }
+    try {
+      editor.loadProjectData(JSON.parse(out));
+    } catch {
+      editor.loadProjectData(before);
+      setMsg({ text: "Couldn't widen this email. Nothing was changed.", bad: true });
+      return;
+    }
+    beforeWidenRef.current = before;
+    setCanUndoWiden(true);
+    setSelectedLabel(null);
+    setDirty(true);
+    widerNew.dismiss();
+    setMsg({ text: `Made the email ${W} pixels wide. Look it over (check the phone view too), then Save.` });
+  }, [widerNew]);
+  const undoWiden = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor || !beforeWidenRef.current) return;
+    editor.loadProjectData(beforeWidenRef.current);
+    beforeWidenRef.current = null;
+    setCanUndoWiden(false);
+    setDirty(true);
+    setMsg({ text: "Put the email back to its old width." });
+  }, []);
+
+  // Phone / desktop view toggle (added 2026-11-17) — same as the small screen
+  // icons in the canvas, but easy to find. Check the phone view before Ready.
+  const [phoneView, setPhoneView] = useState(false);
+  const togglePhoneView = useCallback(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    setPhoneView((v) => {
+      editor.Devices.select(v ? "desktop" : "mobilePortrait");
+      return !v;
+    });
   }, []);
 
   const undoErnieEmail = useCallback(() => {
@@ -486,6 +561,31 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
           <button type="button" className={btn} disabled={!ready} onClick={openPreview}>
             Preview email
           </button>
+          <button
+            type="button"
+            className={btn}
+            disabled={!ready}
+            onClick={togglePhoneView}
+            title="See the email the way it looks on a phone"
+          >
+            {phoneView ? "🖥 Desktop view" : "📱 Phone view"}
+          </button>
+          {canUndoWiden ? (
+            <button type="button" className={btn} disabled={!ready} onClick={undoWiden} title="Put the email back to its old width">
+              Undo wider
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={btn}
+              disabled={!ready}
+              onClick={widenEmail}
+              title={`Older emails are 600 pixels wide. This makes them ${EMAIL_WIDTH} wide.`}
+            >
+              ↔ Make wider
+              {widerNew.isNew && <NewBadge inline />}
+            </button>
+          )}
           {/* Export (added 2026-11-16) — exports what's on screen, saved or not. */}
           <EmailExportButton
             variant="button"

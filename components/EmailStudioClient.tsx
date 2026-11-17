@@ -912,7 +912,7 @@ function CanvaHowTo() {
             Pick the file type: <strong>PNG</strong> or <strong>JPG</strong> for pictures, <strong>GIF</strong> for a moving picture that
             plays inside the email. (MP4 videos can&apos;t play inside most email apps — use GIF for motion.)
           </li>
-          <li>For email, set the width to about <strong>1200 px</strong> (sharp on phones, still loads fast). Keep GIFs under ~5 MB.</li>
+          <li>For email, set the width to about <strong>1400 px</strong> (emails are 700 wide — sharp on every screen, still loads fast). Keep GIFs under ~5 MB.</li>
           <li>Click <strong>Download</strong>, then drag the file onto this Creative Library (or click Upload).</li>
           <li>In the email designer, double-click an image (or drag in an Image block) and pick it from the library.</li>
           <li>Made a change in Canva? Download it again and upload it — the new version shows up next to the old one.</li>

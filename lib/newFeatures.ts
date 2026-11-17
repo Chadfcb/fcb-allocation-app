@@ -32,6 +32,13 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    // "↔ Make wider" in the email designer's top bar (2026-11-17, per Chad — emails were too narrow).
+    id: "feature:email-studio-wider",
+    page: "/admin/email",
+    label: "Email Studio designer: Make wider (older 600px emails → 700px) + Phone view button",
+    added: "2026-11-17",
+  },
+  {
     // Export button on each email card and in the email designer (2026-11-16, Eddie's ask via Chad).
     id: "feature:email-studio-export",
     page: "/admin/email",
