@@ -801,6 +801,20 @@ export interface PosFootballFile {
   uploaded_at: string;
 }
 
+// POS > Black History Month (added 2026-11-17, per Chad) — same as Football
+// POS: one flat file library of Black History Month POS art.
+export interface PosBhmFile {
+  id: string;
+  file_name: string;
+  storage_path: string | null;
+  external_url: string | null;
+  preview_path: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  uploaded_by: string | null;
+  uploaded_at: string;
+}
+
 // POS > Sales Sheets (added 2026-11-10) — same shape as PosFootballFile plus
 // which brand page it's on (fcb / speakeasy / sonoma-cider).
 export interface PosSalesSheetFile {

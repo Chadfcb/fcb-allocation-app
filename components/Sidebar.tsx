@@ -86,6 +86,8 @@ const NEW_SIDEBAR_IDS: string[] = [
   "/beer-finder",
   // Sales Sheets (2026-11-10) — Sales → POS, below Football POS.
   "/pos/sales-sheets",
+  // Black History Month POS (2026-11-17) — Sales → POS, below Football POS.
+  "/pos/black-history-month",
   // Twilio (2026-10-29) — sub-category of Admin.
   "/twilio/setup",
   "/twilio/sign-ups",

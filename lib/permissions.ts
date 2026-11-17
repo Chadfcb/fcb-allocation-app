@@ -40,6 +40,8 @@ export type SectionKey =
   | "accounts"
   | "football_pos"
   | "sales_sheets"
+  // Black History Month POS (2026-11-17) — Sales → POS, like Football POS.
+  | "bhm_pos"
   | "tanks"
   | "brew_planner"
   | "sales_dashboard"
@@ -215,6 +217,8 @@ export const SECTION_GROUPS: { key: GroupKey; label: string; items: SectionInfo[
     items: [
       { key: "football_pos", label: "Football POS" },
       { key: "sales_sheets", label: "Sales Sheets" },
+      // Black History Month added 2026-11-17, per Chad (same as Football POS).
+      { key: "bhm_pos", label: "Black History Month" },
     ],
   },
   {
