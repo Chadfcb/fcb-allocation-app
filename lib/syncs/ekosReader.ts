@@ -303,18 +303,33 @@ export async function readEkosOpenPurchaseOrders(): Promise<EkosPurchaseOrder[]>
   try {
     await page.goto(OPEN_PO_LIST_URL, { waitUntil: "networkidle2" });
     await snap(page, "Open PO list — just opened");
-    await waitFor(async () => (await shownPoNumbers(page)) !== null, "the Open Purchase Orders list");
+    // An empty Open list (2026-11-17, per Chad: "there are no open PO's")
+    // shows "No Records Found" and no "1-4 of 4" count — it only counts as
+    // ready once Ekos's own data for the Open list also says 0.
+    await waitFor(async () => {
+      const s = await shownPoNumbers(page);
+      if (s === null) return false;
+      if (s.total === 0) return payloads.some(emptyPayload);
+      return true;
+    }, "the Open Purchase Orders list");
     await snap(page, "Open PO list — ready");
+    // Empty: look once more after a moment, so a list that was still loading
+    // is never taken for "no open POs" (that would move every PO to Holding).
+    if (((await shownPoNumbers(page)) ?? { total: -1 }).total === 0) await sleep(2000);
   } finally {
     page.off("response", onResponse);
   }
 
-  const shown = (await shownPoNumbers(page)) ?? { numbers: [], total: 0 };
+  const shown = (await shownPoNumbers(page)) ?? { numbers: [], total: -1 };
   if (shown.total === 0) {
-    throw new Error(
-      "Ekos showed no open purchase orders — nothing was changed (an empty list would move every PO to Holding). If that's really right, sync from the paste box.",
-    );
+    if (payloads.some(emptyPayload)) {
+      // Confirmed: no open POs in Ekos. The sync moves any PO still open in
+      // the app to Holding (same as a PO closing in Ekos).
+      return [];
+    }
+    throw new Error("Ekos showed no open purchase orders but its data didn't confirm it — nothing was changed.");
   }
+  if (shown.total < 0) throw new Error("Couldn't read the Open Purchase Orders list in Ekos — nothing was changed.");
   const match = payloads.find(
     (p) => (p.totalCount ?? -1) === shown.total && shown.numbers.every((n) => p.records!.some((r) => r.Number === n)),
   );
@@ -347,13 +362,26 @@ export async function readEkosOpenPurchaseOrders(): Promise<EkosPurchaseOrder[]>
 
 // Numbers visible in the Open list + its "1-4 of 4" total. (On the PO list
 // that count is a <span>; on Distributor Inventory it is a <p> — read both.)
+// Ekos's data for an empty list: total 0, no records.
+function emptyPayload(p: PoListPayload): boolean {
+  return (p.records?.length ?? 0) === 0 && (p.totalCount ?? 0) === 0;
+}
+
 async function shownPoNumbers(page: Page): Promise<{ numbers: string[]; total: number } | null> {
   return page.evaluate(() => {
     const range = [...document.querySelectorAll("p, span")]
       .map((p) => (p.textContent || "").trim())
       .find((t) => /^\d+-\d+ of \d+$/.test(t) || /^0 of 0$/.test(t));
     const table = document.querySelector("table");
-    if (!range || !table) return null;
+    if (!table) return null;
+    // Empty list (2026-11-17): Ekos shows "No Records Found" (a span under
+    // the table, checked in Chad's Chrome) and no count.
+    if (!range) {
+      const empty = [...document.querySelectorAll("td, div, p, span")].some(
+        (e) => e.children.length === 0 && (e.textContent || "").trim() === "No Records Found",
+      );
+      return empty ? { numbers: [], total: 0 } : null;
+    }
     const numbers = [...table.querySelectorAll("tbody tr")]
       .map((tr) => ((tr as HTMLTableRowElement).cells[0]?.textContent || "").trim())
       .filter(Boolean);
