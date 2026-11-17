@@ -319,6 +319,7 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
   const beforeWidenRef = useRef<ReturnType<Editor["getProjectData"]> | null>(null);
   const [canUndoWiden, setCanUndoWiden] = useState(false);
   const widenEmail = useCallback(() => {
+    widerNew.dismiss(); // any click clears "New" — even when the email is already wide
     const editor = editorRef.current;
     if (!editor) return;
     const before = editor.getProjectData();
@@ -356,7 +357,6 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
     setCanUndoWiden(true);
     setSelectedLabel(null);
     setDirty(true);
-    widerNew.dismiss();
     setMsg({ text: `Made the email ${W} pixels wide. Look it over (check the phone view too), then Save.` });
   }, [widerNew]);
   const undoWiden = useCallback(() => {
