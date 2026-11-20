@@ -591,6 +591,10 @@ export interface PurchaseOrder {
   ordered_status: PoOrderedStatus;
   // Open / Holding / Completed — see PoRecordStatus above.
   record_status: PoRecordStatus;
+  // True once the PO was marked Completed after 2026-11-20 (or PO 3185): its
+  // packaging/label items were added to Packaging / Label Inventory
+  // (sql/po_receiving_inventory.sql).
+  adds_to_inventory: boolean;
   // The freeform note Chad (or whoever) typed onto the PO in Ekos itself —
   // this is the whole reason this feature exists, so it needs to travel
   // along with everything else and surface on both the Purchase Orders page

@@ -32,6 +32,13 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    // Completed POs add to Packaging / Label Inventory (2026-11-20, per Chad — received cans still showed short).
+    id: "feature:po-adds-inventory",
+    page: "/purchase-orders",
+    label: "Purchase Orders: completing a PO adds its packaging/labels to inventory + Needs a decision box",
+    added: "2026-11-20",
+  },
+  {
     // "↔ Make wider" in the email designer's top bar (2026-11-17, per Chad — emails were too narrow).
     id: "feature:email-studio-wider",
     page: "/admin/email",

@@ -47,7 +47,7 @@ export const FINANCE_LINKS: AppLink[] = [
 // Order matters to the Sidebar: it draws Labels / UPC's right after Weeks,
 // so anything listed after Weeks (Batch Ingredients) lands below them.
 export const OPERATIONS_LINKS: AppLink[] = [
-  { href: "/purchase-orders", label: "Purchase Orders", section: "purchase_orders", about: "Supplier purchase orders synced from Ekos: items, costs, delivery dates, paid / unpaid." },
+  { href: "/purchase-orders", label: "Purchase Orders", section: "purchase_orders", about: "Supplier purchase orders synced from Ekos: items, costs, delivery dates, paid / unpaid. Completing a PO adds its cans, lids, trays, Pak-Techs, kegs and labels to Packaging / Label Inventory (open a PO to see what it added; unmatched items show in Needs a decision)." },
   { href: "/inventory", label: "Inventory & Allocation", section: "inventory_allocation", about: "This week's brewery inventory and what's allocated to each distributor (with PO numbers, status flags and order value), plus the Packaging Inventory and Label Inventory panels with Consumed / Remaining (negative = short). Pick another week in the dropdown." },
   { href: "/distributor-inventory", label: "Distributor Inventory", section: "distributor_inventory", about: "What each distributor reports on hand in their warehouse, daily rate of sale and projected days on hand, per product." },
   { href: "/build-orders", label: "Build Orders", section: "build_orders", about: "Recommended order per distributor from par level vs. their on hand, with the total barrels needed per product and per beer (cans and kegs combined)." },

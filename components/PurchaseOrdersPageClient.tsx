@@ -31,10 +31,21 @@
 // Total Cost is read-only in Open (it's what Ekos reports) but editable in
 // Holding and Completed, since a vendor's final invoice can differ from the
 // PO total by the time it's actually settled.
+//
+// Completed POs add to inventory (added 2026-11-20, sql/po_receiving_inventory.sql):
+// moving a PO to Completed adds its cans / lids / trays / Pak-Techs / kegs /
+// labels to the newest week's Packaging Inventory and Label Inventory On Hand
+// (the database does it — trigger on record_status). PO item names are
+// matched through po_inventory_item_map; a packaging item with no match shows
+// in "Needs a decision" at the top, and picking a row there adds it. Each
+// expanded line item shows what it added ("Added to inventory" column).
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { logChange } from "@/lib/audit";
+import { PACKAGING_ITEMS, derivePackaging } from "@/lib/packaging";
+import { useNewFeature } from "@/lib/newFeatures";
+import NewBadge from "@/components/NewBadge";
 import type { PurchaseOrder, PurchaseOrderItem, PoPaymentStatus, PoOrderedStatus } from "@/lib/types/db";
 import {
   PO_PAYMENT_STATUS_LABELS,
@@ -55,6 +66,40 @@ function formatDate(value: string | null): string {
   return `${month}/${day}/${year}`;
 }
 
+// Same as public.po_inventory_name_key() in the database.
+function nameKey(name: string): string {
+  return name.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+const qtyFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+
+const PACKAGING_LABELS: Record<string, string> = Object.fromEntries(
+  PACKAGING_ITEMS.map((item) => [item.key, item.label]),
+);
+
+interface NeedsDecisionRow {
+  item_id: string;
+  purchase_order_id: string;
+  ekos_po_number: string;
+  supplier: string;
+  item_name: string;
+  quantity: number | null;
+}
+
+interface ReceiptRow {
+  purchase_order_id: string | null;
+  name_key: string;
+  target: "packaging" | "label";
+  item_key: string | null;
+  product_id: string | null;
+  qty: number;
+}
+
+interface LabelProduct {
+  id: string;
+  name: string;
+}
+
 function todayIsoDate(): string {
   return new Date().toISOString().slice(0, 10);
 }
@@ -66,6 +111,13 @@ export default function PurchaseOrdersPageClient() {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [needsDecision, setNeedsDecision] = useState<NeedsDecisionRow[]>([]);
+  const [receipts, setReceipts] = useState<ReceiptRow[]>([]);
+  const [labelProducts, setLabelProducts] = useState<LabelProduct[]>([]);
+  const [picks, setPicks] = useState<Record<string, string>>({});
+  const [savingPick, setSavingPick] = useState<string | null>(null);
+  const [pickError, setPickError] = useState<string | null>(null);
+  const inventoryFeature = useNewFeature("feature:po-adds-inventory");
 
   const load = useCallback(async () => {
     const {
@@ -73,12 +125,24 @@ export default function PurchaseOrdersPageClient() {
     } = await supabase.auth.getUser();
     setUserId(user?.id ?? null);
 
-    const [ordersRes, itemsRes] = await Promise.all([
+    const [ordersRes, itemsRes, needsRes, receiptsRes, productsRes] = await Promise.all([
       supabase.from("purchase_orders").select("*").order("po_date", { ascending: false }),
       supabase.from("purchase_order_items").select("*").order("sort_order", { ascending: true }),
+      supabase.from("po_inventory_needs_decision").select("*"),
+      supabase
+        .from("po_inventory_receipts")
+        .select("purchase_order_id, name_key, target, item_key, product_id, qty"),
+      supabase.from("products").select("id, name, active").order("sort_order", { ascending: true }),
     ]);
 
     setOrders((ordersRes.data as PurchaseOrder[]) ?? []);
+    setNeedsDecision((needsRes.data as NeedsDecisionRow[]) ?? []);
+    setReceipts((receiptsRes.data as ReceiptRow[]) ?? []);
+    setLabelProducts(
+      ((productsRes.data as (LabelProduct & { active: boolean })[]) ?? [])
+        .filter((p) => p.active && derivePackaging(p.name).kind === "can")
+        .map((p) => ({ id: p.id, name: p.name })),
+    );
 
     const map: Record<string, PurchaseOrderItem[]> = {};
     for (const item of (itemsRes.data as PurchaseOrderItem[]) ?? []) {
@@ -97,6 +161,8 @@ export default function PurchaseOrdersPageClient() {
       .channel("purchase-orders-live")
       .on("postgres_changes", { event: "*", schema: "public", table: "purchase_orders" }, load)
       .on("postgres_changes", { event: "*", schema: "public", table: "purchase_order_items" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "po_inventory_item_map" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "po_inventory_receipts" }, load)
       .subscribe();
 
     return () => {
@@ -105,7 +171,77 @@ export default function PurchaseOrdersPageClient() {
   }, [supabase, load]);
 
   function toggleExpanded(id: string) {
+    if (orders.find((po) => po.id === id)?.adds_to_inventory) inventoryFeature.dismiss();
     setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
+  }
+
+  // Saves a "Needs a decision" pick to the name list; the database then adds
+  // that item (on every completed PO that has it) to inventory.
+  async function handleSavePick(row: NeedsDecisionRow) {
+    if (!userId) return;
+    const choice = picks[row.item_id];
+    if (!choice) return;
+
+    setSavingPick(row.item_id);
+    setPickError(null);
+
+    const [kind, value] = choice.split(":");
+    const record =
+      kind === "packaging"
+        ? { target: "packaging", item_key: value, product_id: null }
+        : kind === "label"
+          ? { target: "label", item_key: null, product_id: value }
+          : { target: "skip", item_key: null, product_id: null };
+
+    const { error } = await supabase
+      .from("po_inventory_item_map")
+      .insert({ name_key: nameKey(row.item_name), item_name: row.item_name, ...record });
+
+    setSavingPick(null);
+    if (error) {
+      setPickError(error.message);
+      return;
+    }
+
+    const newValue =
+      record.target === "packaging"
+        ? PACKAGING_LABELS[record.item_key ?? ""] ?? record.item_key
+        : record.target === "label"
+          ? `${labelProducts.find((p) => p.id === record.product_id)?.name ?? "label"} labels`
+          : "Not packaging";
+    await logChange(supabase, {
+      weekId: null,
+      tableName: "po_inventory_item_map",
+      recordId: row.item_id,
+      fieldName: "inventory_match",
+      oldValue: row.item_name,
+      newValue,
+      changedBy: userId,
+    });
+    await load();
+  }
+
+  // What one PO line item added to inventory (net), for the expanded table.
+  function addedToInventory(po: PurchaseOrder, itemName: string): string {
+    if (!po.adds_to_inventory) return "—";
+    const key = nameKey(itemName);
+    const rows = receipts.filter((r) => r.purchase_order_id === po.id && r.name_key === key);
+    const byTarget = new Map<string, number>();
+    for (const r of rows) {
+      const label =
+        r.target === "packaging"
+          ? PACKAGING_LABELS[r.item_key ?? ""] ?? r.item_key ?? ""
+          : `${labelProducts.find((p) => p.id === r.product_id)?.name ?? "Label"} labels`;
+      byTarget.set(label, (byTarget.get(label) ?? 0) + Number(r.qty));
+    }
+    const parts = [...byTarget.entries()]
+      .filter(([, qty]) => qty !== 0)
+      .map(([label, qty]) => `${qty > 0 ? "+" : ""}${qtyFormatter.format(qty)} · ${label}`);
+    if (parts.length > 0) return parts.join(", ");
+    if (needsDecision.some((n) => n.purchase_order_id === po.id && nameKey(n.item_name) === key)) {
+      return "Needs a decision";
+    }
+    return "—";
   }
 
   async function handlePaymentStatusChange(poId: string, value: PoPaymentStatus) {
@@ -246,6 +382,7 @@ export default function PurchaseOrdersPageClient() {
 
     const existing = orders.find((po) => po.id === poId);
     const oldValue = existing?.record_status ?? "holding";
+    inventoryFeature.dismiss();
     setOrders((prev) => prev.map((po) => (po.id === poId ? { ...po, record_status: "completed" } : po)));
 
     const { data, error } = await supabase
@@ -427,13 +564,14 @@ export default function PurchaseOrdersPageClient() {
               {items.length === 0 ? (
                 <p className="text-sm text-neutral-500">No line items captured.</p>
               ) : (
-                <table className="w-full max-w-2xl text-xs">
+                <table className="w-full max-w-4xl text-xs">
                   <thead className="text-neutral-500">
                     <tr>
                       <th className="px-2 py-1 text-left">Item</th>
                       <th className="px-2 py-1 text-right">Quantity</th>
                       <th className="px-2 py-1 text-right">Unit Cost</th>
                       <th className="px-2 py-1 text-right">Line Total</th>
+                      {po.adds_to_inventory && <th className="px-2 py-1 text-left">Added to inventory</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-neutral-900">
@@ -447,6 +585,9 @@ export default function PurchaseOrdersPageClient() {
                         <td className="px-2 py-1 text-right text-neutral-400">
                           {item.line_total != null ? currencyFormatter.format(item.line_total) : "—"}
                         </td>
+                        {po.adds_to_inventory && (
+                          <td className="px-2 py-1 text-neutral-300">{addedToInventory(po, item.item_name)}</td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -482,6 +623,78 @@ export default function PurchaseOrdersPageClient() {
           </p>
         </div>
       </div>
+
+      {needsDecision.length > 0 && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-4">
+          <h2 className="text-sm font-semibold text-amber-300">Needs a decision — inventory</h2>
+          <p className="mb-3 text-xs text-neutral-400">
+            Packaging or label items on completed POs that don&apos;t match a Packaging Inventory or
+            Label Inventory row yet, so they haven&apos;t been added. Once saved, the same item name
+            is matched automatically on future POs.
+          </p>
+          {pickError && <p className="mb-2 text-xs text-red-400">{pickError}</p>}
+          <table className="w-full text-xs">
+            <thead className="text-neutral-500">
+              <tr>
+                <th className="px-2 py-1 text-left">PO</th>
+                <th className="px-2 py-1 text-left">Supplier</th>
+                <th className="px-2 py-1 text-left">Item</th>
+                <th className="px-2 py-1 text-right">Quantity</th>
+                <th className="px-2 py-1 text-left">Goes to</th>
+                <th className="px-2 py-1" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-900">
+              {needsDecision.map((row) => (
+                <tr key={row.item_id}>
+                  <td className="px-2 py-1 text-neutral-100">{row.ekos_po_number}</td>
+                  <td className="px-2 py-1 text-neutral-300">{row.supplier}</td>
+                  <td className="px-2 py-1 text-neutral-300">{row.item_name}</td>
+                  <td className="px-2 py-1 text-right text-neutral-300">
+                    {row.quantity != null ? qtyFormatter.format(row.quantity) : "—"}
+                  </td>
+                  <td className="px-2 py-1">
+                    <select
+                      value={picks[row.item_id] ?? ""}
+                      onChange={(e) => setPicks((prev) => ({ ...prev, [row.item_id]: e.target.value }))}
+                      className="w-72 rounded border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-[11px] text-neutral-100"
+                    >
+                      <option value="">Pick one…</option>
+                      <optgroup label="Packaging Inventory">
+                        {PACKAGING_ITEMS.map((item) => (
+                          <option key={item.key} value={`packaging:${item.key}`}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="Label Inventory">
+                        {labelProducts.map((p) => (
+                          <option key={p.id} value={`label:${p.id}`}>
+                            {p.name} labels
+                          </option>
+                        ))}
+                      </optgroup>
+                      <optgroup label="Other">
+                        <option value="skip:">Not packaging — don&apos;t add</option>
+                      </optgroup>
+                    </select>
+                  </td>
+                  <td className="px-2 py-1 text-right">
+                    <button
+                      type="button"
+                      disabled={!picks[row.item_id] || savingPick === row.item_id}
+                      onClick={() => handleSavePick(row)}
+                      className="rounded border border-brand/50 px-2 py-1 text-[11px] font-medium text-brand hover:bg-brand/10 disabled:opacity-40"
+                    >
+                      {savingPick === row.item_id ? "Saving…" : "Save"}
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <div className="overflow-x-auto rounded-lg border border-neutral-800">
         <table className="min-w-full text-sm">
@@ -567,9 +780,14 @@ export default function PurchaseOrdersPageClient() {
 
       <div>
         <div className="mb-2">
-          <h2 className="text-sm font-semibold text-neutral-100">Completed Purchase Orders</h2>
+          <h2 className="flex items-center text-sm font-semibold text-neutral-100">
+            Completed Purchase Orders
+            {inventoryFeature.isNew && <NewBadge inline />}
+          </h2>
           <p className="text-xs text-neutral-500">
-            The archive. Total Cost and Paid Date stay editable in case a final invoice differs
+            The archive. Completing a PO adds its cans, lids, trays, Pak-Techs, kegs and labels to
+            the current week&apos;s Packaging Inventory and Label Inventory On Hand (open a PO to see
+            what it added). Total Cost and Paid Date stay editable in case a final invoice differs
             from what Ekos originally reported.
           </p>
         </div>
