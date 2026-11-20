@@ -39,6 +39,8 @@
 // matched through po_inventory_item_map; a packaging item with no match shows
 // in "Needs a decision" at the top, and picking a row there adds it. Each
 // expanded line item shows what it added ("Added to inventory" column).
+// New! (feature:po-adds-inventory) sits on the Completed heading; clicking the
+// heading, opening any PO, or clicking Complete clears it (2026-11-20, Chad).
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -171,7 +173,7 @@ export default function PurchaseOrdersPageClient() {
   }, [supabase, load]);
 
   function toggleExpanded(id: string) {
-    if (orders.find((po) => po.id === id)?.adds_to_inventory) inventoryFeature.dismiss();
+    if (inventoryFeature.isNew) inventoryFeature.dismiss();
     setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
   }
 
@@ -780,9 +782,15 @@ export default function PurchaseOrdersPageClient() {
 
       <div>
         <div className="mb-2">
-          <h2 className="flex items-center text-sm font-semibold text-neutral-100">
-            Completed Purchase Orders
-            {inventoryFeature.isNew && <NewBadge inline />}
+          <h2 className="text-sm font-semibold text-neutral-100">
+            <button
+              type="button"
+              onClick={() => inventoryFeature.isNew && inventoryFeature.dismiss()}
+              className={`flex items-center ${inventoryFeature.isNew ? "cursor-pointer" : "cursor-default"}`}
+            >
+              Completed Purchase Orders
+              {inventoryFeature.isNew && <NewBadge inline />}
+            </button>
           </h2>
           <p className="text-xs text-neutral-500">
             The archive. Completing a PO adds its cans, lids, trays, Pak-Techs, kegs and labels to
