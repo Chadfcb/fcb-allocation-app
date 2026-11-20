@@ -38,6 +38,9 @@ export async function GET(req: NextRequest) {
     .order("updated_at", { ascending: false });
 
   query = projectId ? query.eq("project_id", projectId) : query.is("project_id", null);
+  // Email Studio chats (one per email, 2026-11-20) live inside the email
+  // designer, not in the Ernie page's list.
+  query = query.is("email_design_id", null);
 
   const { data, error } = await query;
 

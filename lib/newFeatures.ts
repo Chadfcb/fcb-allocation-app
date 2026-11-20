@@ -32,6 +32,13 @@ export interface NewFeature {
 
 export const NEW_FEATURES: NewFeature[] = [
   {
+    // Ernie → Chat tab in the email designer (2026-11-20, Eddie's ask via Chad).
+    id: "feature:email-studio-ernie-chat",
+    page: "/admin/email",
+    label: "Email Studio designer: Ernie Chat tab (chat about the open email; Ernie can change it and make pictures)",
+    added: "2026-11-20",
+  },
+  {
     // Completed POs add to Packaging / Label Inventory (2026-11-20, per Chad — received cans still showed short).
     id: "feature:po-adds-inventory",
     page: "/purchase-orders",

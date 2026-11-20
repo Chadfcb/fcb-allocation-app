@@ -237,14 +237,29 @@ export const GUIDE_SECTIONS: Section[] = [
   },
   {
     id: "ernie",
-    title: "Using Ernie — change the email, make pictures and animations",
+    title: "Using Ernie — chat, change the email, make pictures and animations",
     who: "create",
     body: (
       <>
         <p>
-          In the email designer, click <K>✨ Ernie</K> (top right). A panel opens with four tabs. Pictures and animations Ernie makes are
+          In the email designer, click <K>✨ Ernie</K> (top right). A panel opens with five tabs. Pictures and animations Ernie makes are
           saved to the Creative Library automatically.
         </p>
+        <p className="font-semibold text-neutral-100">Chat — talk with Ernie about the email</p>
+        <Bullets>
+          <li>
+            Ernie sees the email that&apos;s open and whatever part you&apos;ve clicked on. Ask for subject lines, wording, feedback, or
+            real FCB info (what&apos;s selling, new items).
+          </li>
+          <li>
+            Ask him to change something and it lands right in the email — <K>Undo this change</K> puts it back. Ask for a picture and it
+            shows in the chat with <K>Put it in the email</K>.
+          </li>
+          <li>
+            Each email keeps its own chat — open the email again and it&apos;s still there. <K>New chat</K> starts over.
+          </li>
+          <li>Changes and pictures count toward the same monthly limits as the other tabs.</li>
+        </Bullets>
         <p className="font-semibold text-neutral-100">Edit email — Ernie works on the email itself</p>
         <Bullets>
           <li>

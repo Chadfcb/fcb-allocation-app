@@ -5,6 +5,18 @@ import { buildErnieMaps } from "@/lib/ernie/dataMap";
 import { hasSection, getUserSections, ERNIE_SECTION } from "@/lib/permissions";
 import { buildFileContentBlocks, captureCodeExecutionFile, logErnieToolExecution, type ErnieFileRow } from "@/lib/ernie/files";
 import { closeBrowseSession, logBrowseStep } from "@/lib/ernie/browser";
+import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  EMAIL_CHAT_SYSTEM_PROMPT,
+  EMAIL_CHAT_TOOLS,
+  EMAIL_CHAT_TOOL_NAMES,
+  TOOLS_HIDDEN_IN_EMAIL_CHAT,
+  describeEmailChatTool,
+  emailSnapshotText,
+  isEmailChatContext,
+  runEmailChatTool,
+  type EmailChatState,
+} from "@/lib/email/ernieEmailChat";
 import {
   withHistoryCacheBreakpoint,
   addWrapUpNote,
@@ -52,6 +64,14 @@ import {
 // instead of one opaque "thinking" spinner (Chad's request, 2026-08-31).
 // Only the final answer is ever persisted to ernie_messages — the
 // intermediate status events are never saved, purely a live UI thing.
+//
+// Email Studio chat (added 2026-11-20, claude/email-studio-ernie-chat-plan.md):
+// a request carrying `email` comes from the Chat tab inside the email
+// designer. That conversation is tied to the email (ernie_conversations.
+// email_design_id), each message gets a snapshot of the open email in front
+// of it, and Ernie gets the email tools in lib/email/ernieEmailChat.ts. Their
+// results stream to the designer as "email_edit" / "email_asset" events.
+// Allowed for Ernie AI access OR Email Studio access.
 
 // Vercel kills a serverless function after its max duration — with no
 // maxDuration set, that default is only 10 seconds on this app's Hobby
@@ -159,11 +179,22 @@ export async function POST(req: NextRequest) {
   // grant — see lib/getProfile.ts's matching comment.
   const sections = isSuperAdmin ? [] : await getUserSections(supabase, user.id);
 
+  const body = (await req.json()) as {
+    conversationId?: string;
+    message?: string;
+    fileIds?: string[];
+    projectId?: string;
+    email?: unknown;
+  };
+  const emailCtx = isEmailChatContext(body.email) ? body.email : null;
+
   // Ernie is itself a grantable section (see lib/permissions.ts) — an admin
   // always has it; a Basic user needs it explicitly checked from Users >
   // Edit. Block the whole chat here rather than just filtering tools, since
-  // Chad was explicit some people may not get Ernie at all.
-  if (!hasSection(role, sections, ERNIE_SECTION)) {
+  // Chad was explicit some people may not get Ernie at all. The Email Studio
+  // chat is also open to anyone with Email Studio access (2026-11-20).
+  const emailStudioOk = !!emailCtx && hasSection(role, sections, "email_studio", isSuperAdmin);
+  if (!hasSection(role, sections, ERNIE_SECTION) && !emailStudioOk) {
     return NextResponse.json(
       { error: "Ernie isn't available on your account — ask an admin to grant Ernie AI access from Users." },
       { status: 403 },
@@ -181,12 +212,13 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
   const personNotes = personNotesRow?.notes ?? null;
 
-  const body = (await req.json()) as {
-    conversationId?: string;
-    message?: string;
-    fileIds?: string[];
-    projectId?: string;
-  };
+  // The email must be one this person can open (RLS on email_designs).
+  if (emailCtx) {
+    const { data: designRow } = await supabase.from("email_designs").select("id").eq("id", emailCtx.designId).maybeSingle();
+    if (!designRow) {
+      return NextResponse.json({ error: "That email isn't available on your account." }, { status: 403 });
+    }
+  }
   const newMessageText = body.message?.trim() ?? "";
   const fileIds = Array.isArray(body.fileIds)
     ? body.fileIds.filter((id): id is string => typeof id === "string" && id.length > 0)
@@ -309,6 +341,7 @@ export async function POST(req: NextRequest) {
               user_id: user.id,
               title: titleFromMessage(newMessageText),
               project_id: project?.id ?? null,
+              email_design_id: emailCtx?.designId ?? null,
             })
             .select("id")
             .single();
@@ -343,6 +376,11 @@ export async function POST(req: NextRequest) {
         const newMessageContentBlocks: any[] = [];
         for (const file of fileRows) {
           newMessageContentBlocks.push(...(await buildFileContentBlocks(supabase, file)));
+        }
+        // Email Studio chat: a snapshot of the open email goes in front of
+        // the message (not saved — only the typed message is).
+        if (emailCtx) {
+          newMessageContentBlocks.push({ type: "text", text: emailSnapshotText(emailCtx) });
         }
         if (newMessageText) {
           newMessageContentBlocks.push({ type: "text", text: newMessageText });
@@ -424,6 +462,10 @@ export async function POST(req: NextRequest) {
               project.description ? ` — ${project.description}` : ""
             }. It has its own file library, separate from anyone's directly-uploaded files: query ernie_project_files (id, project_id, file_name, storage_path, description, mime_type, size_bytes, added_by, created_at) via run_read_only_query, filtered to project_id = '${project.id}', to see what's in it — read the whole table for this project rather than guessing a filter, since it's small. Use read_library_file (bucket "ernie-project-files") to read one of those files without attaching it, and get_file_for_download only when someone wants the file itself handed over as a download. You only ever see the files of a Project you/this user have real access to — RLS enforces that automatically, the same as everywhere else.`
           : "";
+
+        // Email Studio chat: the email as Ernie's edits change it this reply.
+        const emailState: EmailChatState | null = emailCtx ? { ctx: emailCtx, html: emailCtx.html, partEdited: false } : null;
+        const emailAdmin = emailCtx ? createAdminClient() : null;
 
         let finalText = "";
         // Files Ernie produced or fetched during this turn (edit_spreadsheet,
@@ -511,9 +553,15 @@ export async function POST(req: NextRequest) {
                   text: buildErnieSystemPrompt(role, sections, isSuperAdmin, personNotes, ernieMaps) + projectSystemPrompt,
                   cache_control: { type: "ephemeral", ttl: "1h" },
                 },
+                ...(emailCtx ? [{ type: "text", text: EMAIL_CHAT_SYSTEM_PROMPT }] : []),
               ],
               tools: [
-                ...getErnieTools(role, sections, isSuperAdmin),
+                ...(emailCtx
+                  ? [
+                      ...getErnieTools(role, sections, isSuperAdmin).filter((t) => !TOOLS_HIDDEN_IN_EMAIL_CHAT.includes(t.name)),
+                      ...EMAIL_CHAT_TOOLS,
+                    ]
+                  : getErnieTools(role, sections, isSuperAdmin)),
                 WEB_SEARCH_TOOL,
                 WEB_FETCH_TOOL,
                 { ...CODE_EXECUTION_TOOL, cache_control: { type: "ephemeral", ttl: "1h" } },
@@ -666,7 +714,11 @@ export async function POST(req: NextRequest) {
             const extraSiblingBlocks: any[] = [];
             for (const block of content) {
               if (block.type !== "tool_use") continue;
-              send({ type: "status", label: describeErnieToolLabel(block.name, block.input) });
+              const isEmailTool = !!emailState && EMAIL_CHAT_TOOL_NAMES.includes(block.name);
+              send({
+                type: "status",
+                label: isEmailTool ? describeEmailChatTool(block.name) : describeErnieToolLabel(block.name, block.input),
+              });
               let result: unknown;
               try {
                 // Out of time for this reply: don't start another tool (a
@@ -674,7 +726,9 @@ export async function POST(req: NextRequest) {
                 // forced wrap-up answer.
                 result = isReplyOutOfTime(replyStartedAt)
                   ? { error: "Out of time for this reply — stop here and answer with what you've found so far." }
-                  : await runErnieTool(supabase, block.name, block.input ?? {}, role, sections, conversationId, isSuperAdmin, user.id, requestId);
+                  : isEmailTool
+                    ? await runEmailChatTool(emailAdmin!, user.id, emailState!, block.name, (block.input ?? {}) as Record<string, unknown>, send)
+                    : await runErnieTool(supabase, block.name, block.input ?? {}, role, sections, conversationId, isSuperAdmin, user.id, requestId);
               } catch (toolErr) {
                 result = {
                   error:

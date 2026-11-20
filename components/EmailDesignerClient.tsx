@@ -102,6 +102,7 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
   // the email as it was just before Ernie's last change (for Undo).
   const [selectedLabel, setSelectedLabel] = useState<string | null>(null);
   const editEmailNew = useNewFeature("feature:email-studio-ernie-edit-email");
+  const chatNew = useNewFeature("feature:email-studio-ernie-chat");
   const widerNew = useNewFeature("feature:email-studio-wider");
   const beforeErnieRef = useRef<ReturnType<Editor["getProjectData"]> | null>(null);
 
@@ -239,6 +240,9 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
     },
     [insertBlock],
   );
+
+  // Ernie → Chat (2026-11-20): the email's name / subject / preheader as typed right now.
+  const getEmailMeta = useCallback(() => ({ name, subject, preheader }), [name, subject, preheader]);
 
   // Ernie → Edit email: what to send Ernie for each choice.
   const getEmailContent = useCallback((scope: EmailScope): EmailContent | null => {
@@ -556,7 +560,7 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
             }}
           >
             ✨ Ernie
-            {editEmailNew.isNew && <NewBadge inline />}
+            {(editEmailNew.isNew || chatNew.isNew) && <NewBadge inline />}
           </button>
           <button type="button" className={btn} disabled={!ready} onClick={openPreview}>
             Preview email
@@ -694,6 +698,8 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
           onApplyEmail={applyErnieEmail}
           onUndoEmail={undoErnieEmail}
           onUpload={uploadFromErnie}
+          designId={design.id}
+          getMeta={getEmailMeta}
         />
       )}
 

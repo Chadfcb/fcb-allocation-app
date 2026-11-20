@@ -4,9 +4,14 @@ import { useCallback, useEffect, useState } from "react";
 import type { CreativeAsset } from "@/lib/creativeAssets";
 import NewBadge from "@/components/NewBadge";
 import { useNewFeature } from "@/lib/newFeatures";
+import ErnieStudioChat, { type EmailMeta } from "@/components/ErnieStudioChat";
 
 // Ernie inside the email designer (added 2026-10-30, per Chad: "we need to
-// do ernie and canva now" … "execute"). A side panel with four jobs:
+// do ernie and canva now" … "execute"). A side panel with these jobs:
+//   Chat    — (added 2026-11-20, Eddie's ask via Chad: "have ernie chat in
+//             there, so he can work with ernie directly") a back-and-forth
+//             chat that sees the email and can change it, make pictures and
+//             look things up. One chat per email. See ErnieStudioChat.tsx.
 //   Edit email — (added 2026-11-05, Eddie's ask: "an edit button where it
 //             goes in and writes or fixes stuff when asked") Ernie changes the
 //             email ITSELF: the whole email, just the selected part, or a new
@@ -32,7 +37,7 @@ type Usage = {
   emailEditCap?: number;
   costEstimate: number;
 };
-type Mode = "email" | "create" | "edit" | "animate";
+type Mode = "chat" | "email" | "create" | "edit" | "animate";
 export type EmailScope = "email" | "selection" | "add";
 export type EmailContent = { html: string; css?: string | null; fullEmailHtml?: string | null };
 type Pending = { id: string; prompt: string; source_asset_id: string | null; created_at: string };
@@ -57,6 +62,8 @@ export default function ErnieStudioPanel({
   onApplyEmail,
   onUndoEmail,
   onUpload,
+  designId,
+  getMeta,
 }: {
   assets: CreativeAsset[];
   onClose: () => void;
@@ -70,9 +77,13 @@ export default function ErnieStudioPanel({
   onApplyEmail: (html: string, scope: EmailScope) => boolean;
   onUndoEmail: () => void;
   onUpload: (file: File) => Promise<CreativeAsset[]>;
+  /** The email open in the designer (for the Chat tab's per-email chat). */
+  designId: string;
+  getMeta: () => EmailMeta;
 }) {
-  const [mode, setMode] = useState<Mode>("email");
+  const [mode, setMode] = useState<Mode>("chat");
   const editEmailNew = useNewFeature("feature:email-studio-ernie-edit-email");
+  const chatNew = useNewFeature("feature:email-studio-ernie-chat");
   // Edit email
   const [scope, setScope] = useState<EmailScope>("email");
   const [picId, setPicId] = useState<string | null>(null);
@@ -102,6 +113,16 @@ export default function ErnieStudioPanel({
         if (j.usage) setUsage(j.usage);
         if (j.pending) setRendering(j.pending);
         if (j.ready === false) setReady(false);
+      })
+      .catch(() => {});
+  }, []);
+
+  // After a chat reply (it may have changed the email or made a picture).
+  const refreshUsage = useCallback(() => {
+    fetch("/api/email-studio/ernie")
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.usage) setUsage(j.usage);
       })
       .catch(() => {});
   }, []);
@@ -246,11 +267,13 @@ export default function ErnieStudioPanel({
         setErr(null);
         setResult(null);
         if (m === "email") editEmailNew.dismiss();
+        if (m === "chat") chatNew.dismiss();
       }}
       className={`rounded-full px-3 py-1 text-sm ${mode === m ? "bg-brand/20 font-semibold text-neutral-100" : "text-neutral-400 hover:text-neutral-200"}`}
     >
       {label}
       {m === "email" && editEmailNew.isNew && <NewBadge inline />}
+      {m === "chat" && chatNew.isNew && <NewBadge inline />}
     </button>
   );
   const field = "w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100";
@@ -273,14 +296,29 @@ export default function ErnieStudioPanel({
         </button>
       </div>
 
-      <div className="flex gap-1 border-b border-neutral-800 px-3 py-2">
+      <div className="flex flex-wrap gap-1 border-b border-neutral-800 px-3 py-2">
+        {tab("chat", "Chat")}
         {tab("email", "Edit email")}
         {tab("create", "Create")}
         {tab("edit", "Edit picture")}
         {tab("animate", "Animate")}
       </div>
 
-      <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 text-sm text-neutral-300">
+      {mode === "chat" && (
+        <ErnieStudioChat
+          designId={designId}
+          getEmailContent={getEmailContent}
+          getMeta={getMeta}
+          selectedLabel={selectedLabel}
+          onApplyEmail={onApplyEmail}
+          onUndoEmail={onUndoEmail}
+          onNewAsset={onNewAsset}
+          onInsertImage={onInsertImage}
+          onUsageChanged={refreshUsage}
+        />
+      )}
+
+      <div className={`flex-1 space-y-4 overflow-y-auto px-4 py-4 text-sm text-neutral-300 ${mode === "chat" ? "hidden" : ""}`}>
         {!ready && (
           <p className="rounded-lg border border-amber-800 bg-amber-950/40 px-3 py-2 text-amber-200">
             Ernie&apos;s image tools aren&apos;t set up on the server.
