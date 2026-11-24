@@ -122,6 +122,30 @@ export const NEW_FEATURES: NewFeature[] = [
     added: "2026-10-29",
   },
   {
+    id: "feature:dist-hit-list-matagrano",
+    page: "/distributors/matagrano",
+    label: "Distributors → Matagrano: Today's priorities — SF Off-Prem hit list: SF + Santa Clara-area indie accounts to win back, with priority, why, and live status / last order / CEs; Won back tab; all-time history in the account pop-up; Export",
+    added: "2026-11-24",
+  },
+  {
+    id: "feature:dist-hit-list-valley-wide",
+    page: "/distributors/valley-wide",
+    label: "Distributors → Valley Wide: Today's priorities — Central Valley hit list: indie accounts to win back, with priority, why, and live status / last order / CEs; Won back tab; all-time history in the account pop-up; Export",
+    added: "2026-11-24",
+  },
+  {
+    id: "feature:dist-hit-list-mussetter",
+    page: "/distributors/mussetter",
+    label: "Distributors → Mussetter: Today's priorities — Central Valley hit list: indie accounts to win back, with priority, why, and live status / last order / CEs; Won back tab; all-time history in the account pop-up; Export",
+    added: "2026-11-24",
+  },
+  {
+    id: "feature:sales-rep-plan",
+    page: "/sales-dashboard",
+    label: "Sales Dashboard: Top 100 rep plan — each rep's (Lance, Steve, Ryan, Eric) best off-premise accounts to grow or win back, with the play, why, and live status / last order / CEs; Export",
+    added: "2026-11-24",
+  },
+  {
     id: "feature:superior-top50",
     page: "/distributors/superior",
     label: "Distributors → Superior: Today's priorities — Top 100 we're in / not in: Superior's top 50 on-premise + top 50 off-premise craft accounts, split by whether they've ordered from Superior, with all-time history in the account pop-up, Export",

@@ -28,6 +28,8 @@
 // sql/superior_saccani_nonbuy.sql (same list + pop-up as Markstein's).
 // "Top 50 — we're in" / "Top 50 — not in" buttons (Superior, 2026-11-13):
 // superior_top50_list / superior_top50_account — sql/superior_top50.sql.
+// "Hit list" button (Matagrano, Valley Wide, Mussetter, 2026-11-24):
+// hit_list / hit_list_account — sql/hit_lists.sql, components/HitList.tsx.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -40,6 +42,7 @@ import RemoveFromLists from "@/components/RemoveFromLists";
 import RemovedAccountsButton from "@/components/RemovedAccountsButton";
 import ParLevelsButton from "@/components/ParLevelsButton";
 import DistributorFilesBox from "@/components/DistributorFilesBox";
+import { HIT_LIST_BY_DIST, HIT_RULE, HitListBody, exportHitList, hitShown, useHitList } from "@/components/HitList";
 import { useActionItems, type ActionRow } from "@/components/SalesActionItems";
 import {
   CARD,
@@ -483,7 +486,11 @@ export default function DistributorPageClient({
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
-  const [att, setAtt] = useState<"gaps" | "slip" | "lost" | "bad" | "in50" | "out50">("gaps");
+  const [att, setAtt] = useState<"gaps" | "slip" | "lost" | "bad" | "in50" | "out50" | "hit">("gaps");
+  // Hit list (2026-11-24, per Chad) — Matagrano, Valley Wide, Mussetter. See HitList.tsx.
+  const hitKey = HIT_LIST_BY_DIST[dist] ?? null;
+  const hitNew = useNewFeature(`feature:dist-hit-list-${dist.toLowerCase().trim().replace(/\s+/g, "-")}`);
+  const [hitView, setHitView] = useState<"todo" | "won">("todo");
   // Superior's top 50 accounts (Superior only, 2026-11-13).
   const [top50, setTop50] = useState<Top50Data | null>(null);
   const top50New = useNewFeature("feature:superior-top50");
@@ -599,6 +606,8 @@ export default function DistributorPageClient({
       cancelled = true;
     };
   }, [supabase, dist, version]);
+  const hit = useHitList(supabase, hitKey, version, setErr);
+  const hitIds = useMemo(() => new Set((hit?.accounts ?? []).map((a) => a.outlet_id)), [hit]);
   const top50Ids = useMemo(() => new Set((top50?.accounts ?? []).map((a) => a.outlet_id)), [top50]);
   const top50In = (top50?.accounts ?? []).filter((a) => a.superior_last);
   const top50Out = (top50?.accounts ?? []).filter((a) => !a.superior_last);
@@ -646,7 +655,7 @@ export default function DistributorPageClient({
 
   const low = (stock?.inventory ?? []).filter((i) => i.per_week > 0 && (i.on_hand <= 0 || (i.weeks_left ?? 99) < 2));
 
-  const ATT: Record<"gaps" | "slip" | "lost" | "bad" | "in50" | "out50", { label: string; desc: string; count: number | null; rule: string }> = {
+  const ATT: Record<"gaps" | "slip" | "lost" | "bad" | "in50" | "out50" | "hit", { label: string; desc: string; count: number | null; rule: string }> = {
     gaps: { label: "Must-carry gaps", desc: "Chain stores not buying a must-carry item", count: actions.rows ? gaps.length : null, rule: "Stores not buying an item their chain says they must carry. Biggest first." },
     slip: { label: "Slipping now", desc: "61–90 day non-buy, all accounts", count: slip.length, rule: "61–90 days since their last order — still saveable. Biggest 12-month buyers first." },
     lost: { label: "Must win back", desc: "90+ day lost, all accounts", count: lost.length, rule: "Lost in the last year (90+ days quiet). Biggest 12-month buyers first." },
@@ -668,6 +677,12 @@ export default function DistributorPageClient({
       count: top50 ? top50Out.length : null,
       rule: "Superior's top 100 independent craft accounts (top 50 on premise + top 50 off premise, Superior's lists 11/12/2026) with no order from Superior yet. They move to \"we're in\" as soon as Superior sells to them. Biggest all-time buyers first.",
     },
+    hit: {
+      label: hit?.list.title ?? "Hit list",
+      desc: "Lapsed accounts to win back — live",
+      count: hit ? hitShown(hit, "todo").length : null,
+      rule: HIT_RULE,
+    },
   };
   const attKeys: (keyof typeof ATT)[] = [
     "gaps",
@@ -675,6 +690,7 @@ export default function DistributorPageClient({
     "lost",
     ...(oldCfg ? (["bad"] as const) : []),
     ...(dist === "Superior" ? (["out50", "in50"] as const) : []),
+    ...(hitKey ? (["hit"] as const) : []),
   ];
 
   const exportAtt = async () => {
@@ -723,6 +739,8 @@ export default function DistributorPageClient({
             })),
           },
         ]);
+      } else if (att === "hit") {
+        if (hit) await exportHitList(hit, hitShown(hit, hitView), `${dist} ${hit.list.title}${hitView === "won" ? " - won back" : ""}`);
       } else if (att === "in50" || att === "out50") {
         const list = top50Shown;
         const ids = new Set(list.map((a) => a.outlet_id));
@@ -1098,6 +1116,7 @@ export default function DistributorPageClient({
                       setAtt(key);
                       if (key === "bad") oldBadNew.dismiss();
                       if (key === "in50" || key === "out50") top50New.dismiss();
+                      if (key === "hit") hitNew.dismiss();
                     }}
                   >
                     <span className="flex flex-col items-start py-1 leading-tight">
@@ -1105,6 +1124,7 @@ export default function DistributorPageClient({
                         {ATT[key].label} <span className="font-mono opacity-80">{ATT[key].count ?? "…"}</span>
                         {key === "bad" && oldBadNew.isNew && <NewBadge inline />}
                         {(key === "in50" || key === "out50") && top50New.isNew && <NewBadge inline />}
+                        {key === "hit" && hitNew.isNew && <NewBadge inline />}
                       </span>
                       <span className="text-[10.5px] font-normal opacity-70">{ATT[key].desc}</span>
                     </span>
@@ -1126,6 +1146,9 @@ export default function DistributorPageClient({
                   <span className="text-[11px] text-neutral-500">Export follows this choice</span>
                 </div>
               )}
+              {att === "hit" ? (
+                <HitListBody data={hit} view={hitView} setView={setHitView} onOpen={(id) => setOpenId(id)} />
+              ) : (
               <div className="flex max-h-[380px] flex-col overflow-y-auto pr-1">
                 {att === "gaps" && !actions.rows ? (
                   <p className={`py-4 text-sm ${MUTED}`}>Checking chain stores…</p>
@@ -1137,6 +1160,7 @@ export default function DistributorPageClient({
                   <p className={`py-4 text-sm ${MUTED}`}>Nothing here right now.</p>
                 )}
               </div>
+              )}
             </section>
 
             {/* Markstein (2026-10-29, per Chad): Effectiveness takes this spot
@@ -1456,7 +1480,16 @@ export default function DistributorPageClient({
           <div className="flex flex-col gap-3">{stockContent}</div>
         </Modal>
       )}
-      {openId && <AccountPopup supabase={supabase} outletId={openId} allTime={oldBadIds.has(openId) || top50Ids.has(openId)} allTimeFn={top50Ids.has(openId) ? "superior_top50_account" : oldCfg?.account} onClose={() => setOpenId(null)} onChanged={load} />}
+      {openId && (
+        <AccountPopup
+          supabase={supabase}
+          outletId={openId}
+          allTime={oldBadIds.has(openId) || top50Ids.has(openId) || hitIds.has(openId)}
+          allTimeFn={hitIds.has(openId) ? "hit_list_account" : top50Ids.has(openId) ? "superior_top50_account" : oldCfg?.account}
+          onClose={() => setOpenId(null)}
+          onChanged={load}
+        />
+      )}
     </div>
   );
 }

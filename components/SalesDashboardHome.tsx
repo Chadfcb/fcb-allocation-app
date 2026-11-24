@@ -7,7 +7,7 @@
 // Dashboard Redesign Mockup").
 //
 // Top to bottom: period (30 / 90 days / Year to date / Custom dates) and
-// distributor filters · Needs attention + Win backs ·
+// distributor filters · Needs attention + Win backs · Top 100 rep plan ·
 // Distributors (click one → its biggest immediate impacts) · headline numbers ·
 // cases by month + account health · what's selling, chain coverage, rep
 // activity. Lists you drill into export to Excel (Chad 10/21: no whole-dashboard
@@ -27,6 +27,7 @@ import { coverageFor, useChainCoverage } from "@/lib/chainCoverage";
 import { BIG_LOST_CE } from "@/lib/salesAccounts";
 import { useNewFeature } from "@/lib/newFeatures";
 import NewBadge from "@/components/NewBadge";
+import { RepPlanBlock } from "@/components/HitList";
 import type { DashOverview, resolveLists } from "@/lib/salesDashboard";
 import {
   PERIODS,
@@ -884,6 +885,10 @@ export default function SalesDashboardHome({
           )}
         </section>
       </div>
+
+      {/* Top 100 rep plan (2026-11-24, per Chad): the rep plan spreadsheet as a
+          live hit list, one tab per rep — components/HitList.tsx. */}
+      <RepPlanBlock supabase={supabase} version={version} />
 
       {/* Distributors */}
       <section className={`${CARD} flex flex-col gap-3.5`}>
