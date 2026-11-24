@@ -28,6 +28,9 @@
 // sql/superior_saccani_nonbuy.sql (same list + pop-up as Markstein's).
 // "Top 50 — we're in" / "Top 50 — not in" buttons (Superior, 2026-11-13):
 // superior_top50_list / superior_top50_account — sql/superior_top50.sql.
+// Contacts button (every distributor, 2026-11-24): distributor_contacts +
+// distributor_account_contacts — sql/account_contacts.sql,
+// components/DistributorContactsButton.tsx.
 // "Hit list" button (Matagrano, Valley Wide, Mussetter, 2026-11-24):
 // hit_list / hit_list_account — sql/hit_lists.sql, components/HitList.tsx.
 
@@ -42,6 +45,7 @@ import RemoveFromLists from "@/components/RemoveFromLists";
 import RemovedAccountsButton from "@/components/RemovedAccountsButton";
 import ParLevelsButton from "@/components/ParLevelsButton";
 import DistributorFilesBox from "@/components/DistributorFilesBox";
+import DistributorContactsButton from "@/components/DistributorContactsButton";
 import { HIT_LIST_BY_DIST, HIT_RULE, HitListBody, exportHitList, hitShown, useHitList } from "@/components/HitList";
 import { useActionItems, type ActionRow } from "@/components/SalesActionItems";
 import {
@@ -1036,6 +1040,9 @@ export default function DistributorPageClient({
               {buyingNew.isNew && <NewBadge inline />}
             </button>
           )}
+          {/* Contacts (2026-11-24, per Chad): the distributor's own people, then
+              every contact on its accounts — components/DistributorContactsButton.tsx. */}
+          {pageSlug && <DistributorContactsButton supabase={supabase} dist={dist} slug={pageSlug} onOpenAccount={(id) => setOpenId(id)} />}
           {dist === "Markstein" && (
             <button
               type="button"
