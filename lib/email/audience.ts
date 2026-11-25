@@ -1,12 +1,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { loadStaffIndex } from "@/lib/email/distributorStaff";
 
 // Email Studio — who an email goes to (added 2026-10-30). Server-only; call
 // with the service-role client AFTER the email_studio access check (Eddie
 // doesn't have the Accounts section, but needs account contact emails here).
 //
 // An audience = account contacts (optionally filtered by distributor,
-// premise, recent buying) + any saved lists (e.g. the Mailchimp import) +
-// extra addresses typed in. Everyone on the do-not-email list
+// premise, recent buying — distributor staff and our own people are always
+// left out, lib/email/distributorStaff.ts) + distributor contacts (their own
+// people, only when picked, 2026-11-25) + any saved lists (e.g. the Mailchimp
+// import) + extra addresses typed in. Everyone on the do-not-email list
 // (email_suppressions) is always removed. One email per address.
 
 export type Audience = {
@@ -16,6 +19,11 @@ export type Audience = {
     premises?: string[]; // empty/undefined = all
     boughtWithinDays?: number | null; // e.g. 90 = bought in the last 90 days
   };
+  /** Distributors' own people (2026-11-25) — never part of "accounts". */
+  distributorContacts?: {
+    enabled: boolean;
+    distributors?: string[]; // empty/undefined = all
+  };
   listIds?: string[];
   extraEmails?: string[];
 };
@@ -24,7 +32,17 @@ export type Recipient = { email: string; name: string | null; business: string |
 
 export type AudienceResult = {
   recipients: Recipient[];
-  counts: { fromAccounts: number; fromLists: number; fromExtra: number; suppressed: number; invalid: number; total: number };
+  counts: {
+    fromAccounts: number;
+    fromDistributors: number;
+    /** Distributor staff found on accounts and left out of "Account contacts". */
+    staffSkipped: number;
+    fromLists: number;
+    fromExtra: number;
+    suppressed: number;
+    invalid: number;
+    total: number;
+  };
 };
 
 const EMAIL_RE = /^[^\s@,;<>()]+@[^\s@,;<>()]+\.[a-z]{2,}$/i;
@@ -59,6 +77,12 @@ export async function resolveAudience(admin: SupabaseClient, audience: Audience)
   const byEmail = new Map<string, Recipient>();
   let invalid = 0;
   let fromAccounts = 0;
+  let fromDistributors = 0;
+  const staffSkippedSet = new Set<string>();
+  const needStaff = !!audience.accounts?.enabled || !!audience.distributorContacts?.enabled;
+  const staff = needStaff ? await loadStaffIndex(admin, normalizeEmail) : null;
+  // Staff found on accounts, by distributor — for "Distributor contacts".
+  const staffOnAccounts: { email: string; name: string | null; distributor: string | null }[] = [];
   let fromLists = 0;
   let fromExtra = 0;
 
@@ -90,10 +114,46 @@ export async function resolveAudience(admin: SupabaseClient, audience: Audience)
           invalid++;
           continue;
         }
+        // Distributor staff / our own people never go out as "account contacts".
+        if (staff?.isStaff(e, c.name, allowed.get(c.outlet_id))) {
+          staffSkippedSet.add(e);
+          continue;
+        }
         if (!byEmail.has(e)) {
           byEmail.set(e, { email: e, name: c.name?.trim() || null, business: allowed.get(c.outlet_id) ?? null, outlet_id: c.outlet_id });
           fromAccounts++;
         }
+      }
+    }
+  }
+
+  // Distributor contacts (2026-11-25): each distributor's own people (Contacts
+  // button) + staff found on that distributor's accounts. Only when picked.
+  if (audience.distributorContacts?.enabled && staff) {
+    const dists = (audience.distributorContacts.distributors ?? []).filter(Boolean);
+    const want = (d: string | null) => !dists.length || (!!d && dists.includes(d.trim()));
+    const accts = await readAll<{ outlet_id: string; name: string; distributor: string | null }>((a, b) =>
+      admin.from("sales_accounts").select("outlet_id, name, distributor").range(a, b),
+    );
+    const acctById = new Map(accts.map((a) => [a.outlet_id, a]));
+    const contacts = await readAll<{ outlet_id: string; name: string | null; email: string | null }>((a, b) =>
+      admin.from("sales_account_contacts").select("outlet_id, name, email").not("email", "is", null).range(a, b),
+    );
+    for (const c of contacts) {
+      const acct = acctById.get(c.outlet_id);
+      if (!acct) continue;
+      for (const part of (c.email ?? "").split(/[;,\s]+/).filter(Boolean)) {
+        const e = normalizeEmail(part);
+        if (e && staff.isStaff(e, c.name, acct.name) && !/@(fullcirclebrewing|fcbbrands|choosecmc)\.com$/.test(e)) {
+          staffOnAccounts.push({ email: e, name: c.name?.trim() || null, distributor: acct.distributor?.trim() || null });
+        }
+      }
+    }
+    for (const p of [...staff.people, ...staffOnAccounts]) {
+      if (!want(p.distributor)) continue;
+      if (!byEmail.has(p.email)) {
+        byEmail.set(p.email, { email: p.email, name: p.name, business: p.distributor, outlet_id: null });
+        fromDistributors++;
       }
     }
   }
@@ -141,6 +201,15 @@ export async function resolveAudience(admin: SupabaseClient, audience: Audience)
 
   return {
     recipients,
-    counts: { fromAccounts, fromLists, fromExtra, suppressed: suppressedCount, invalid, total: recipients.length },
+    counts: {
+      fromAccounts,
+      fromDistributors,
+      staffSkipped: [...staffSkippedSet].filter((e) => !byEmail.has(e)).length,
+      fromLists,
+      fromExtra,
+      suppressed: suppressedCount,
+      invalid,
+      total: recipients.length,
+    },
   };
 }

@@ -11,6 +11,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 type Audience = {
   accounts: { enabled: boolean; distributors: string[]; premises: string[]; boughtWithinDays: number | null };
+  // Distributors' own people — a separate choice, never part of Account contacts (2026-11-25).
+  distributorContacts: { enabled: boolean; distributors: string[] };
   listIds: string[];
   extraEmails: string[];
 };
@@ -23,7 +25,16 @@ type Options = {
   dailyCap: number;
   sentToday: number;
 };
-type Counts = { fromAccounts: number; fromLists: number; fromExtra: number; suppressed: number; invalid: number; total: number };
+type Counts = {
+  fromAccounts: number;
+  fromDistributors?: number;
+  staffSkipped?: number;
+  fromLists: number;
+  fromExtra: number;
+  suppressed: number;
+  invalid: number;
+  total: number;
+};
 type Sample = { email: string; name: string | null; business: string | null };
 
 const BOUGHT_OPTIONS: { label: string; days: number | null }[] = [
@@ -54,6 +65,7 @@ export default function EmailSendDialog({
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [aud, setAud] = useState<Audience>({
     accounts: { enabled: true, distributors: [], premises: [], boughtWithinDays: null },
+    distributorContacts: { enabled: false, distributors: [] },
     listIds: [],
     extraEmails: [],
   });
@@ -215,6 +227,7 @@ export default function EmailSendDialog({
               />
               Account contacts (emails on file in Accounts)
             </label>
+            <p className="pl-6 text-xs text-neutral-500">Accounts only — distributor staff and our own people are always left out.</p>
             {aud.accounts.enabled && opts && (
               <div className="space-y-3 pl-6">
                 <div>
@@ -268,6 +281,39 @@ export default function EmailSendDialog({
             )}
           </section>
 
+          <section className="space-y-2">
+            <label className="flex items-center gap-2 font-semibold text-neutral-100">
+              <input
+                type="checkbox"
+                checked={aud.distributorContacts.enabled}
+                onChange={(e) => setAud((a) => ({ ...a, distributorContacts: { ...a.distributorContacts, enabled: e.target.checked } }))}
+                className="h-4 w-4"
+              />
+              Distributor contacts (the distributor&apos;s own people)
+            </label>
+            {aud.distributorContacts.enabled && opts && (
+              <div className="pl-6">
+                <p className="mb-1 text-xs text-neutral-500">
+                  Distributor (none picked = all). Their people on the Contacts button, plus their staff found on accounts.
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {opts.distributors.map((d) => (
+                    <button
+                      key={d}
+                      type="button"
+                      className={chip(aud.distributorContacts.distributors.includes(d))}
+                      onClick={() =>
+                        setAud((a) => ({ ...a, distributorContacts: { ...a.distributorContacts, distributors: toggle(a.distributorContacts.distributors, d) } }))
+                      }
+                    >
+                      {d}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </section>
+
           {opts && opts.lists.length > 0 && (
             <section className="space-y-2">
               <p className="font-semibold text-neutral-100">Lists</p>
@@ -303,7 +349,9 @@ export default function EmailSendDialog({
                   {counting && <span className="ml-2 text-xs text-neutral-500">updating…</span>}
                 </p>
                 <p className="text-xs text-neutral-500">
-                  {counts.fromAccounts} from accounts · {counts.fromLists} from lists · {counts.fromExtra} added by hand
+                  {counts.fromAccounts} from accounts · {counts.fromDistributors ?? 0} distributor contacts · {counts.fromLists} from lists ·{" "}
+                  {counts.fromExtra} added by hand
+                  {counts.staffSkipped ? ` · ${counts.staffSkipped} distributor staff left out of accounts` : ""}
                   {counts.suppressed ? ` · ${counts.suppressed} left out (unsubscribed / bounced)` : ""}
                   {counts.invalid ? ` · ${counts.invalid} invalid addresses skipped` : ""}
                 </p>
