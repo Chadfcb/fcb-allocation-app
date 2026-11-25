@@ -255,8 +255,8 @@ export default function DistributorEmailButtons({
   const accountsEmailed = useMemo(() => new Set((sends ?? []).map((s) => s.outlet_id)).size, [sends]);
   const openReplies = (replies ?? []).filter((r) => !r.handled_at).length;
 
-  // Nothing ever sent to this distributor's accounts → no buttons.
-  if (sends === null || (!err && sends.length === 0 && (replies ?? []).length === 0)) return null;
+  // Always shown (2026-11-25, per Chad: "put the button there, and have it
+  // empty unless emails have gone out") — (0) until the first send.
 
   return (
     <>
@@ -269,7 +269,7 @@ export default function DistributorEmailButtons({
         className={PILL}
         title="Which accounts got our emails"
       >
-        ✉️ Emails sent <span className="text-neutral-400">({accountsEmailed})</span>
+        ✉️ Emails sent <span className="text-neutral-400">({sends === null ? "…" : accountsEmailed})</span>
         {sentNew.isNew && <NewBadge inline />}
       </button>
       <button type="button" onClick={() => setOpen("replies")} className={PILL} title="Accounts that replied to our emails">
@@ -428,7 +428,7 @@ function EmailsSentModal({
             {shown.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-3 py-6 text-center text-neutral-500">
-                  No matches.
+                  {rows.length === 0 ? `No emails have gone to ${dist}'s accounts yet. They show up here as soon as one is sent.` : "No matches."}
                 </td>
               </tr>
             )}
