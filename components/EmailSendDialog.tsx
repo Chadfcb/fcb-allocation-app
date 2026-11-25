@@ -339,6 +339,10 @@ export default function EmailSendDialog({
               <input value={replyTo} onChange={(e) => setReplyTo(e.target.value)} className={field} />
             </label>
             <p className="text-xs text-neutral-500 sm:col-span-2">Sent from {opts?.fromAddress ?? "ernie@fullcirclebrewing.com"}.</p>
+            <p className="text-xs text-neutral-500 sm:col-span-2">
+              {"{{Account Name}}"} in the email or subject becomes each account&apos;s own name. Addresses typed in by hand or from a
+              list with no business name get &ldquo;Friend&rdquo;.
+            </p>
           </section>
 
           <section className="space-y-2">

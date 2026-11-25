@@ -46,6 +46,33 @@ export const NEW_FEATURES: NewFeature[] = [
     added: "2026-11-20",
   },
   {
+    // Distributor pages: ✉️ Emails sent + 💬 Replies (2026-11-25, per Chad) — first sends went to these two.
+    id: "feature:dist-emails-markstein",
+    page: "/distributors/markstein",
+    label: "Distributors → Markstein: Emails sent (which accounts got our emails) + Replies (what they said, with the account's info)",
+    added: "2026-11-25",
+  },
+  {
+    id: "feature:dist-emails-matagrano",
+    page: "/distributors/matagrano",
+    label: "Distributors → Matagrano: Emails sent (which accounts got our emails) + Replies (what they said, with the account's info)",
+    added: "2026-11-25",
+  },
+  {
+    // Email Studio → Replies tab + red number in the menu (2026-11-25, per Chad).
+    id: "feature:email-studio-replies",
+    page: "/admin/email",
+    label: "Email Studio: Replies — replies to our emails, checked once an hour, with a red number in the menu",
+    added: "2026-11-25",
+  },
+  {
+    // {{Account Name}} — each account's own name filled into the email (2026-11-25, per Chad).
+    id: "feature:email-studio-account-name",
+    page: "/admin/email",
+    label: "Email Studio: {{Account Name}} fills in each account's name when the email goes out",
+    added: "2026-11-25",
+  },
+  {
     // "↔ Make wider" in the email designer's top bar (2026-11-17, per Chad — emails were too narrow).
     id: "feature:email-studio-wider",
     page: "/admin/email",

@@ -92,6 +92,17 @@ export const GUIDE_SECTIONS: Section[] = [
             <K>Oops:</K> undo / redo are in the top toolbar (or Ctrl+Z / Cmd+Z).
           </li>
         </Bullets>
+        <p className="font-semibold text-neutral-100">Each account&apos;s name</p>
+        <Bullets>
+          <li>
+            Put <K>{"{{Account Name}}"}</K> in the email once, e.g. &ldquo;Hi {"{{Account Name}}"},&rdquo;. Double-click the text, put the
+            cursor where the name goes, then click <K>＋ Account name</K> (or type it). It works in the subject line too.
+          </li>
+          <li>
+            When the email goes out, every account gets its own name there (&ldquo;Hi Tower Liquor,&rdquo;). Nobody types names. A test
+            shows &ldquo;Sample Account&rdquo;; addresses typed in by hand or on a list with no business name get &ldquo;Friend&rdquo;.
+          </li>
+        </Bullets>
         <p className="font-semibold text-neutral-100">Checking how it looks</p>
         <Bullets>
           <li>

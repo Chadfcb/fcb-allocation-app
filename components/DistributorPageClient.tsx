@@ -46,6 +46,7 @@ import RemovedAccountsButton from "@/components/RemovedAccountsButton";
 import ParLevelsButton from "@/components/ParLevelsButton";
 import DistributorFilesBox from "@/components/DistributorFilesBox";
 import DistributorContactsButton from "@/components/DistributorContactsButton";
+import DistributorEmailButtons from "@/components/DistributorEmailButtons";
 import { HIT_LIST_BY_DIST, HIT_RULE, HitListBody, exportHitList, hitShown, useHitList } from "@/components/HitList";
 import { useActionItems, type ActionRow } from "@/components/SalesActionItems";
 import {
@@ -1043,6 +1044,9 @@ export default function DistributorPageClient({
           {/* Contacts (2026-11-24, per Chad): the distributor's own people, then
               every contact on its accounts — components/DistributorContactsButton.tsx. */}
           {pageSlug && <DistributorContactsButton supabase={supabase} dist={dist} slug={pageSlug} onOpenAccount={(id) => setOpenId(id)} />}
+          {/* Emails sent + Replies (2026-11-25, per Chad) — which accounts got our
+              emails, and who replied — components/DistributorEmailButtons.tsx. */}
+          {pageSlug && <DistributorEmailButtons supabase={supabase} dist={dist} slug={pageSlug} onOpenAccount={(id) => setOpenId(id)} />}
           {dist === "Markstein" && (
             <button
               type="button"

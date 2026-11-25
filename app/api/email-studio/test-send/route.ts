@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { sendMail } from "@/lib/email/sendMail";
 import { buildEmailDocument, htmlToText } from "@/lib/email/studio";
 import { hasSwapPictures } from "@/lib/email/erniePlaceholder";
+import { ACCOUNT_NAME_SAMPLE, fillAccountNameHtml, fillAccountNameText } from "@/lib/email/mergeTags";
 
 // Email Studio → "Send a test" (added 2026-10-29). Sends the SAVED version of
 // a design to the signed-in person's own email address only (never to
@@ -37,9 +38,10 @@ export async function POST(request: Request) {
     return Response.json({ error: "This email still has gray “Swap this picture” boxes. Double-click each one and pick a picture first." }, { status: 400 });
   }
 
-  const subject = `[TEST] ${design.subject?.trim() || design.name}`;
+  // {{Account Name}} shows as "Sample Account" in a test (2026-11-25).
+  const subject = `[TEST] ${fillAccountNameText(design.subject?.trim() || design.name, ACCOUNT_NAME_SAMPLE)}`;
   const html = buildEmailDocument({
-    bodyHtml: design.html,
+    bodyHtml: fillAccountNameHtml(design.html, ACCOUNT_NAME_SAMPLE),
     subject,
     preheader: design.preheader,
     // Real per-recipient unsubscribe links come with Phase 5 sending.

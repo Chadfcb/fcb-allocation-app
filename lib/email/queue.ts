@@ -1,6 +1,7 @@
 import type { createAdminClient } from "@/lib/supabase/admin";
 import { fromAddress, gmailConfigured, isGmailLimitError, sendCampaignEmail, UNSUB_PLACEHOLDER } from "@/lib/email/gmailSend";
 import { personalizeEmail } from "@/lib/email/tracking";
+import { accountNameFor, fillAccountNameHtml, fillAccountNameText } from "@/lib/email/mergeTags";
 import { htmlToText } from "@/lib/email/studio";
 import { unsubscribeOneClickUrl, unsubscribePageUrl } from "@/lib/email/unsubscribe";
 
@@ -117,6 +118,13 @@ export async function processEmailQueue(admin: Admin, opts: { maxThisRun?: numbe
     .in("id", campaignIds);
   const campById = new Map((camps ?? []).map((c) => [c.id, c]));
 
+  // Each person's account name for {{Account Name}} (2026-11-25).
+  const { data: biz } = await admin
+    .from("email_sends")
+    .select("id, business")
+    .in("id", rows.map((r) => r.id));
+  const businessById = new Map((biz ?? []).map((b) => [b.id as string, (b.business as string | null) ?? null]));
+
   // Anyone who unsubscribed (or was added to do-not-email) after the send started.
   const { data: supp } = await admin
     .from("email_suppressions")
@@ -137,8 +145,9 @@ export async function processEmailQueue(admin: Admin, opts: { maxThisRun?: numbe
       if (status === "skipped") result.skipped++;
       continue;
     }
+    const acctName = accountNameFor(businessById.get(r.id));
     const html = personalizeEmail({
-      html: c.html_snapshot,
+      html: fillAccountNameHtml(c.html_snapshot, acctName),
       sendId: r.id,
       unsubscribePlaceholder: UNSUB_PLACEHOLDER,
       unsubscribeUrl: unsubscribePageUrl(r.email),
@@ -149,7 +158,7 @@ export async function processEmailQueue(admin: Admin, opts: { maxThisRun?: numbe
         toName: r.name,
         fromName: c.from_name,
         replyTo: c.reply_to,
-        subject: c.subject,
+        subject: fillAccountNameText(c.subject, acctName),
         html,
         text: htmlToText(html),
         oneClickUnsubscribeUrl: unsubscribeOneClickUrl(r.email),

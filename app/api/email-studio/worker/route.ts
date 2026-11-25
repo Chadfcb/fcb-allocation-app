@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { processEmailQueue } from "@/lib/email/queue";
+import { checkRepliesIfDue } from "@/lib/email/replies";
 
 // Email Studio's sender (added 2026-10-30). Called every 5 minutes by
 // Supabase's own scheduler (pg_cron job "fcb-email-sender", set up by
@@ -21,7 +22,9 @@ async function handle(request: Request) {
   if (!ok) return Response.json({ error: "Not allowed" }, { status: 401 });
 
   const result = await processEmailQueue(admin);
-  return Response.json(result);
+  // Replies (2026-11-25): opens Ernie's inbox once an hour, not every 5 minutes.
+  const replies = await checkRepliesIfDue(admin);
+  return Response.json({ ...result, replies });
 }
 
 export const POST = handle;

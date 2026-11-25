@@ -567,6 +567,51 @@ export default function Sidebar({
     };
   }, [canSeeEkos, supabase]);
 
+  // Email reply alerts (2026-11-25, per Chad: notified "in the app"): a red
+  // number on Email Studio and on each distributor with replies nobody has
+  // marked handled yet (sql/email_replies.sql → email_open_reply_counts).
+  // Refreshes every 5 minutes, when the window comes back, and right after
+  // someone marks a reply handled ("fcb-replies-changed").
+  const [replyCounts, setReplyCounts] = useState<{ total: number; studio: boolean; byDist: Record<string, number> }>({
+    total: 0,
+    studio: false,
+    byDist: {},
+  });
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const { data, error } = await supabase.rpc("email_open_reply_counts");
+        if (cancelled || error || !data) return;
+        const d = data as { total?: number; studio?: boolean; by_dist?: Record<string, number> };
+        setReplyCounts({ total: d.total ?? 0, studio: !!d.studio, byDist: d.by_dist ?? {} });
+      } catch {
+        // No badge if it can't be read — never breaks the sidebar.
+      }
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), 5 * 60000);
+    const onFocus = () => void load();
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("fcb-replies-changed", onFocus);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("fcb-replies-changed", onFocus);
+    };
+  }, [supabase]);
+  const distReplyCount = (label: string) => replyCounts.byDist[label] ?? 0;
+  const replyBadge = (n: number) =>
+    n > 0 ? (
+      <span
+        className="ml-auto inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-red-500 px-1.5 text-[11px] font-bold leading-5 text-white"
+        title={`${n} email repl${n === 1 ? "y" : "ies"} waiting`}
+      >
+        {n}
+      </span>
+    ) : null;
+
   function showsNew(id: string) {
     if (NEW_SIDEBAR_IDS.includes(id) && !seenNew[id]) return true;
     return featureIdsOnPage(id).some((featureId) => !seenNew[featureId]);
@@ -1168,6 +1213,7 @@ export default function Sidebar({
                                 className="fcb-nav-sub is-parent"
                               >
                                 Distributors
+                                {replyBadge(visibleDistributors.reduce((t, l) => t + distReplyCount(l.label), 0))}
                                 {parentRight(
                                   sectionShowsNew("section:distributors", visibleDistributors.map((link) => link.href)),
                                   !!posTreeExpanded["distributors"],
@@ -1184,6 +1230,7 @@ export default function Sidebar({
                                     >
                                       {link.label}
                                       {showsNew(link.href) && <NewBadge />}
+                                      {replyBadge(distReplyCount(link.label))}
                                     </Link>
                                   ))}
                                 </div>
@@ -1390,6 +1437,7 @@ export default function Sidebar({
               >
                 <span>Admin</span>
                 <span className="flex items-center gap-2">
+                  {!adminExpanded && replyCounts.studio && replyBadge(replyCounts.total)}
                   {sectionShowsNew("section:admin", [
                     ...visibleAdmin.map((link) => link.href),
                     ...(visibleTwilio.length ? ["section:twilio", ...visibleTwilio.map((link) => link.href)] : []),
@@ -1480,6 +1528,7 @@ export default function Sidebar({
                       <AdminIcon href={row.href} />
                       {row.label}
                       {showsNew(row.href) && <NewBadge />}
+                      {row.href === "/admin/email" && replyCounts.studio && replyBadge(replyCounts.total)}
                     </Link>
                   ),
                 )}

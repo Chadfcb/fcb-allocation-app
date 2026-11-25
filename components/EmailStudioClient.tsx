@@ -14,6 +14,7 @@ import {
   type CreativeAsset,
 } from "@/lib/creativeAssets";
 import EmailAudienceTab, { type ListRow } from "@/components/EmailAudienceTab";
+import EmailRepliesTab from "@/components/EmailRepliesTab";
 import EmailSentTab, { type CampaignRow } from "@/components/EmailSentTab";
 import EmailStudioGuide from "@/components/EmailStudioGuide";
 import NewBadge from "@/components/NewBadge";
@@ -53,7 +54,7 @@ export type FolderRow = { id: string; name: string; created_at: string };
 // "all" = everything, "none" = not in a folder, otherwise a folder id.
 type FolderPick = string;
 
-type Tab = "emails" | "library" | "audience" | "sent" | "guide";
+type Tab = "emails" | "library" | "audience" | "sent" | "replies" | "guide";
 const WELCOME_KEY = "fcb-email-studio-welcome-dismissed";
 type KindFilter = "all" | "image" | "gif" | "psd" | "video" | "other";
 
@@ -94,6 +95,25 @@ export default function EmailStudioClient({
   const router = useRouter();
   const [supabase] = useState(() => createClient());
   const [tab, setTab] = useState<Tab>("emails");
+  // Replies (2026-11-25): red number on the tab = replies not handled yet.
+  const repliesNew = useNewFeature("feature:email-studio-replies");
+  const [openReplies, setOpenReplies] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const { data } = await supabase.rpc("email_open_reply_counts");
+      if (cancelled) return;
+      if (data) setOpenReplies((data as { total?: number }).total ?? 0);
+      try {
+        if (new URLSearchParams(window.location.search).get("tab") === "replies") setTab("replies");
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [supabase]);
   // First-visit welcome (remembered per browser; shows again if storage is blocked).
   const [showWelcome, setShowWelcome] = useState(false);
   useEffect(() => {
@@ -308,6 +328,20 @@ export default function EmailStudioClient({
         {tabBtn("library", "Creative Library", assets.length)}
         {tabBtn("audience", "Audience", lists.length)}
         {tabBtn("sent", "Sent", campaigns.length)}
+        <button
+          type="button"
+          onClick={() => {
+            setTab("replies");
+            repliesNew.dismiss();
+          }}
+          className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-semibold ${
+            tab === "replies" ? "bg-brand/20 text-neutral-100" : "text-neutral-400 hover:text-neutral-200"
+          }`}
+        >
+          Replies
+          {openReplies > 0 && <span className="rounded-full bg-red-500 px-1.5 text-xs font-bold text-white">{openReplies}</span>}
+          {repliesNew.isNew && <NewBadge inline />}
+        </button>
         {tabBtn("guide", "How to use", null)}
       </div>
 
@@ -370,6 +404,8 @@ export default function EmailStudioClient({
         </>
       ) : tab === "guide" ? (
         <EmailStudioGuide />
+      ) : tab === "replies" ? (
+        <EmailRepliesTab onCountChange={setOpenReplies} />
       ) : tab === "audience" ? (
         <EmailAudienceTab lists={lists} suppressionCount={suppressionCount} accountEmailCount={accountEmailCount} />
       ) : (

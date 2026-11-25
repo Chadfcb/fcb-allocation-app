@@ -7,6 +7,7 @@ import type { Editor } from "grapesjs";
 import { createClient } from "@/lib/supabase/client";
 import { isWebImage, uploadCreativeFiles, type CreativeAsset } from "@/lib/creativeAssets";
 import { buildEmailDocument } from "@/lib/email/studio";
+import { ACCOUNT_NAME_TAG } from "@/lib/email/mergeTags";
 import EmailSendDialog from "@/components/EmailSendDialog";
 import ErnieStudioPanel, { type EmailContent, type EmailScope } from "@/components/ErnieStudioPanel";
 import { hasSwapPictures } from "@/lib/email/erniePlaceholder";
@@ -104,6 +105,7 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
   const editEmailNew = useNewFeature("feature:email-studio-ernie-edit-email");
   const chatNew = useNewFeature("feature:email-studio-ernie-chat");
   const widerNew = useNewFeature("feature:email-studio-wider");
+  const acctNameNew = useNewFeature("feature:email-studio-account-name");
   const beforeErnieRef = useRef<ReturnType<Editor["getProjectData"]> | null>(null);
 
   // Start the designer once.
@@ -363,6 +365,31 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
     setDirty(true);
     setMsg({ text: `Made the email ${W} pixels wide. Look it over (check the phone view too), then Save.` });
   }, [widerNew]);
+  // "+ Account name" (2026-11-25): puts {{Account Name}} where the cursor is
+  // in the text being edited; each account's name replaces it when the email
+  // goes out (lib/email/mergeTags.ts). Not editing text → copies it to paste.
+  const insertAccountName = useCallback(() => {
+    acctNameNew.dismiss();
+    const editor = editorRef.current;
+    let inserted = false;
+    try {
+      if (editor?.getEditing()) {
+        const doc = editor.Canvas.getDocument();
+        inserted = !!doc?.execCommand("insertText", false, ACCOUNT_NAME_TAG);
+      }
+    } catch {
+      inserted = false;
+    }
+    if (inserted) {
+      setDirty(true);
+      setMsg({ text: `Added ${ACCOUNT_NAME_TAG}. Each account's own name goes there when the email is sent. Save when you're done.` });
+      return;
+    }
+    void navigator.clipboard?.writeText(ACCOUNT_NAME_TAG).catch(() => undefined);
+    setMsg({
+      text: `Copied ${ACCOUNT_NAME_TAG}. Double-click the text where the name should go and paste it (Ctrl+V), e.g. "Hi ${ACCOUNT_NAME_TAG},". Each account's own name goes there when the email is sent.`,
+    });
+  }, [acctNameNew]);
   const undoWiden = useCallback(() => {
     const editor = editorRef.current;
     if (!editor || !beforeWidenRef.current) return;
@@ -590,6 +617,17 @@ export default function EmailDesignerClient({ design, assets }: { design: Design
               {widerNew.isNew && <NewBadge inline />}
             </button>
           )}
+          <button
+            type="button"
+            className={btn}
+            disabled={!ready}
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={insertAccountName}
+            title="Each account's own name goes here when the email is sent"
+          >
+            ＋ Account name
+            {acctNameNew.isNew && <NewBadge inline />}
+          </button>
           {/* Export (added 2026-11-16) — exports what's on screen, saved or not. */}
           <EmailExportButton
             variant="button"
